@@ -1,0 +1,11 @@
+# Use with /home/justin/nekro/docker-compose.yml after `superlily_bus` exists.
+services:
+  nekro_agent:
+    networks:
+      - nekro_network
+      - superlily_bus
+
+networks:
+  superlily_bus:
+    external: true
+

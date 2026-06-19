@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: superlily
+      POSTGRES_USER: superlily
+      POSTGRES_PASSWORD: ${SUPERLILY_POSTGRES_PASSWORD:?set SUPERLILY_POSTGRES_PASSWORD}
+    volumes:
+      - superlily_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superlily -d superlily"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [core]
+
+  lily-core:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      SUPERLILY_DATABASE_URL: postgresql+asyncpg://superlily:${SUPERLILY_POSTGRES_PASSWORD}@postgres:5432/superlily
+      SUPERLILY_ADMIN_TOKEN: ${SUPERLILY_ADMIN_TOKEN:?set SUPERLILY_ADMIN_TOKEN}
+      SUPERLILY_INGEST_TOKENS_JSON: ${SUPERLILY_INGEST_TOKENS_JSON:?set SUPERLILY_INGEST_TOKENS_JSON}
+      SUPERLILY_STALE_AFTER_SECONDS: ${SUPERLILY_STALE_AFTER_SECONDS:-90}
+      SUPERLILY_RAW_ENABLED: ${SUPERLILY_RAW_ENABLED:-false}
+      SUPERLILY_RAW_MAX_BYTES: ${SUPERLILY_RAW_MAX_BYTES:-32768}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn superlily_core.app:app --host 0.0.0.0 --port 8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SUPERLILY_PORT:-8765}:8000"
+    restart: unless-stopped
+    networks:
+      core: {}
+      bus:
+        aliases: [lily-core]
+
+volumes:
+  superlily_postgres_data:
+
+networks:
+  core:
+  bus:
+    name: superlily_bus
+
