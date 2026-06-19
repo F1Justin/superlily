@@ -7,6 +7,8 @@ services:
       POSTGRES_PASSWORD: ${SUPERLILY_POSTGRES_PASSWORD:?set SUPERLILY_POSTGRES_PASSWORD}
     volumes:
       - superlily_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U superlily -d superlily"]
       interval: 5s
