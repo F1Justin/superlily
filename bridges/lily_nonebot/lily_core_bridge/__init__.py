@@ -2,7 +2,7 @@ import asyncio
 import contextvars
 import time
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 from nonebot import get_bots, get_driver, get_plugin_config
@@ -10,7 +10,7 @@ from nonebot.adapters.onebot.v11 import Bot as OneBotBot
 from nonebot.adapters.onebot.v11 import Event as OneBotEvent
 from nonebot.log import logger
 from nonebot.message import event_postprocessor, event_preprocessor
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, BeforeValidator, Field, SecretStr
 
 from .payloads import (
     conversation_from_api,
@@ -28,7 +28,7 @@ class Config(BaseModel):
     lily_core_url: str = "http://127.0.0.1:8765"
     lily_core_token: SecretStr = SecretStr("")
     lily_core_instance_id: str = "lily-command"
-    lily_core_bot_id: str = ""
+    lily_core_bot_id: Annotated[str, BeforeValidator(str)] = ""
     lily_core_role: str = "command"
     lily_core_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
     lily_core_queue_size: int = Field(default=1000, ge=10, le=10000)
@@ -184,7 +184,7 @@ async def observe_api_result(
 async def heartbeat_loop() -> None:
     while True:
         bots = list(get_bots().values())
-        bot_id = str(bots[0].self_id) if bots else plugin_config.lily_core_bot_id or "unknown"
+        bot_id = str(bots[0].self_id) if bots else str(plugin_config.lily_core_bot_id or "unknown")
         payload = {
             "schema_version": "1.0",
             "instance": instance(bot_id),
