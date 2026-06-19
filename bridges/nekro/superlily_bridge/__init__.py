@@ -159,8 +159,12 @@ def _onebot_message_parts(message: Any) -> tuple[str | None, list[dict[str, Any]
     segments: list[dict[str, Any]] = []
     attachments: list[dict[str, Any]] = []
     for segment in message or []:
-        segment_type = str(getattr(segment, "type", "unknown"))
-        data = dict(getattr(segment, "data", {}) or {})
+        if isinstance(segment, dict):
+            segment_type = str(segment.get("type", "unknown"))
+            data = dict(segment.get("data", {}) or {})
+        else:
+            segment_type = str(getattr(segment, "type", "unknown"))
+            data = dict(getattr(segment, "data", {}) or {})
         data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
         segments.append({"type": segment_type, "data": data})
         if segment_type == "text":
