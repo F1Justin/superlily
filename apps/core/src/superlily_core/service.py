@@ -1,8 +1,13 @@
-from datetime import datetime, timezone
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import threading
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select, text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -10,8 +15,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from superlily_contracts import EventIn, HeartbeatIn, ResponseIn, SanitizationPolicy, sanitize_payload
 
+from .correlation import (
+    CORRELATION_VERSION,
+    advisory_lock_key,
+    canonical_conversation_id,
+    canonical_event_type,
+    event_correlation_fingerprint,
+)
 from .models import BotInstance, EventObservation, InstanceStatusTransition, ResponseRecord, SourceEvent, utc_now
 from .settings import Settings
+
+
+@dataclass
+class _LocalLockEntry:
+    lock: asyncio.Lock
+    users: int = 0
+
+
+_LOCAL_LOCKS: dict[str, _LocalLockEntry] = {}
+_LOCAL_LOCKS_GUARD = threading.Lock()
 
 
 def _metadata_policy(settings: Settings) -> SanitizationPolicy:
@@ -92,37 +114,98 @@ async def ensure_instance(
     return record
 
 
-async def ensure_source_event(session: AsyncSession, payload: EventIn) -> SourceEvent:
-    values = {
-        "id": payload.source_event_id,
-        "platform": payload.instance.platform,
-        "event_type": payload.event_type,
-        "conversation_id": payload.conversation.id,
-        "conversation_type": payload.conversation.type,
-        "message_id": payload.message.id if payload.message else None,
-        "occurred_at": payload.occurred_at,
-        "first_received_at": utc_now(),
-    }
-    dialect = session.bind.dialect.name
-    if dialect == "postgresql":
-        statement = postgresql_insert(SourceEvent).values(**values).on_conflict_do_nothing(
-            index_elements=[SourceEvent.id]
+@asynccontextmanager
+async def _correlation_guard(session: AsyncSession, fingerprint: str | None):
+    if fingerprint is None:
+        yield
+        return
+    if session.bind.dialect.name == "postgresql":
+        await session.execute(
+            sql_text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": advisory_lock_key(fingerprint)},
         )
-        await session.execute(statement)
-    elif dialect == "sqlite":
-        statement = sqlite_insert(SourceEvent).values(**values).on_conflict_do_nothing(
-            index_elements=[SourceEvent.id]
+        yield
+        return
+
+    with _LOCAL_LOCKS_GUARD:
+        entry = _LOCAL_LOCKS.get(fingerprint)
+        if entry is None:
+            entry = _LocalLockEntry(asyncio.Lock())
+            _LOCAL_LOCKS[fingerprint] = entry
+        entry.users += 1
+    await entry.lock.acquire()
+    try:
+        yield
+    finally:
+        entry.lock.release()
+        with _LOCAL_LOCKS_GUARD:
+            entry.users -= 1
+            if entry.users == 0 and _LOCAL_LOCKS.get(fingerprint) is entry:
+                del _LOCAL_LOCKS[fingerprint]
+
+
+async def _existing_observation(
+    session: AsyncSession,
+    instance_id: str,
+    idempotency_key: str,
+    reported_source_event_id: str,
+) -> EventObservation | None:
+    return await session.scalar(
+        select(EventObservation).where(
+            EventObservation.instance_id == instance_id,
+            or_(
+                EventObservation.idempotency_key == idempotency_key,
+                EventObservation.reported_source_event_id == reported_source_event_id,
+            ),
         )
-        await session.execute(statement)
-    else:
-        source = await session.get(SourceEvent, payload.source_event_id)
-        if source is None:
-            source = SourceEvent(**values)
-            session.add(source)
-            await session.flush()
-            return source
-    source = await session.get(SourceEvent, payload.source_event_id, populate_existing=True)
-    assert source is not None
+    )
+
+
+async def ensure_source_event(
+    session: AsyncSession,
+    payload: EventIn,
+    fingerprint: str | None,
+    conversation_id: str,
+    correlation_window_seconds: int,
+) -> SourceEvent:
+    if fingerprint is not None and correlation_window_seconds > 0:
+        observed_by_same_instance = exists(
+            select(EventObservation.id).where(
+                EventObservation.source_event_id == SourceEvent.id,
+                EventObservation.instance_id == payload.instance.instance_id,
+            )
+        )
+        window = timedelta(seconds=correlation_window_seconds)
+        candidates = (
+            await session.scalars(
+                select(SourceEvent)
+                .where(
+                    SourceEvent.correlation_fingerprint == fingerprint,
+                    SourceEvent.occurred_at >= payload.occurred_at - window,
+                    SourceEvent.occurred_at <= payload.occurred_at + window,
+                    ~observed_by_same_instance,
+                )
+                .order_by(SourceEvent.first_received_at)
+                .limit(2)
+            )
+        ).all()
+        if len(candidates) == 1:
+            return candidates[0]
+
+    source = SourceEvent(
+        id=f"event:{uuid4()}",
+        platform=payload.instance.platform,
+        event_type=canonical_event_type(payload.instance.platform, payload.event_type),
+        conversation_id=conversation_id,
+        conversation_type=payload.conversation.type,
+        message_id=None,
+        correlation_fingerprint=fingerprint,
+        correlation_version=CORRELATION_VERSION if fingerprint is not None else None,
+        occurred_at=payload.occurred_at,
+        first_received_at=utc_now(),
+    )
+    session.add(source)
+    await session.flush()
     return source
 
 
@@ -132,50 +215,74 @@ async def ingest_event(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventObservation, bool]:
-    existing = await session.scalar(
-        select(EventObservation).where(
-            EventObservation.instance_id == payload.instance.instance_id,
-            EventObservation.idempotency_key == idempotency_key,
-        )
+    existing = await _existing_observation(
+        session,
+        payload.instance.instance_id,
+        idempotency_key,
+        payload.source_event_id,
     )
     if existing:
         return existing, True
 
-    instance = await ensure_instance(session, payload.instance, settings)
-    source = await ensure_source_event(session, payload)
-
-    metadata = sanitize_payload(payload.metadata, _metadata_policy(settings)) or {}
-    record = EventObservation(
-        source_event_id=source.id,
-        instance_id=instance.id,
-        idempotency_key=idempotency_key,
-        adapter=payload.instance.adapter,
-        bot_id=payload.instance.bot_id,
-        conversation_name=payload.conversation.name,
-        sender_id=payload.sender.id if payload.sender else None,
-        sender_name=payload.sender.name if payload.sender else None,
-        sender_roles_json=payload.sender.roles if payload.sender else [],
-        text=payload.message.text if payload.message else None,
-        segments_json=_dump_list(payload.message.segments if payload.message else [], settings),
-        attachments_json=_dump_list(payload.message.attachments if payload.message else [], settings),
-        raw_json=sanitize_payload(payload.raw, _raw_policy(settings)),
-        metadata_json=metadata,
+    fingerprint = event_correlation_fingerprint(payload)
+    conversation_id = canonical_conversation_id(
+        payload.instance.platform,
+        payload.conversation.type,
+        payload.conversation.id,
     )
-    session.add(record)
-    instance.last_event_at = payload.occurred_at
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        duplicate = await session.scalar(
-            select(EventObservation).where(
-                EventObservation.instance_id == payload.instance.instance_id,
-                EventObservation.idempotency_key == idempotency_key,
-            )
+    async with _correlation_guard(session, fingerprint):
+        existing = await _existing_observation(
+            session,
+            payload.instance.instance_id,
+            idempotency_key,
+            payload.source_event_id,
         )
-        if duplicate:
-            return duplicate, True
-        raise
+        if existing:
+            return existing, True
+
+        instance = await ensure_instance(session, payload.instance, settings)
+        source = await ensure_source_event(
+            session,
+            payload,
+            fingerprint,
+            conversation_id,
+            settings.correlation_window_seconds,
+        )
+
+        metadata = sanitize_payload(payload.metadata, _metadata_policy(settings)) or {}
+        record = EventObservation(
+            source_event_id=source.id,
+            reported_source_event_id=payload.source_event_id,
+            platform_message_id=payload.message.id if payload.message else None,
+            instance_id=instance.id,
+            idempotency_key=idempotency_key,
+            adapter=payload.instance.adapter,
+            bot_id=payload.instance.bot_id,
+            conversation_name=payload.conversation.name,
+            sender_id=payload.sender.id if payload.sender else None,
+            sender_name=payload.sender.name if payload.sender else None,
+            sender_roles_json=payload.sender.roles if payload.sender else [],
+            text=payload.message.text if payload.message else None,
+            segments_json=_dump_list(payload.message.segments if payload.message else [], settings),
+            attachments_json=_dump_list(payload.message.attachments if payload.message else [], settings),
+            raw_json=sanitize_payload(payload.raw, _raw_policy(settings)),
+            metadata_json=metadata,
+        )
+        session.add(record)
+        instance.last_event_at = payload.occurred_at
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            duplicate = await _existing_observation(
+                session,
+                payload.instance.instance_id,
+                idempotency_key,
+                payload.source_event_id,
+            )
+            if duplicate:
+                return duplicate, True
+            raise
     await session.refresh(record)
     return record, False
 
@@ -201,12 +308,22 @@ async def ingest_response(
             detail="trigger_observation_id does not exist",
         )
     instance = await ensure_instance(session, payload.instance, settings)
+    trigger_source_event_id = payload.trigger_source_event_id
+    if trigger_source_event_id:
+        trigger_observation = await session.scalar(
+            select(EventObservation).where(
+                EventObservation.instance_id == payload.instance.instance_id,
+                EventObservation.reported_source_event_id == trigger_source_event_id,
+            )
+        )
+        if trigger_observation is not None:
+            trigger_source_event_id = trigger_observation.source_event_id
     record = ResponseRecord(
         source_response_id=payload.source_response_id,
         instance_id=instance.id,
         idempotency_key=idempotency_key,
         trigger_observation_id=payload.trigger_observation_id,
-        trigger_source_event_id=payload.trigger_source_event_id,
+        trigger_source_event_id=trigger_source_event_id,
         trace_id=payload.trace_id,
         response_type=payload.response_type,
         platform=payload.instance.platform,

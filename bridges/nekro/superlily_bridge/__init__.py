@@ -20,6 +20,7 @@ from nekro_agent.schemas.agent_ctx import AgentCtx
 from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
+from .identity import conversation
 from .reporter import BackgroundReporter, ReportItem
 
 plugin = NekroPlugin(
@@ -74,19 +75,6 @@ def instance(bot_id: str | None = None) -> dict[str, Any]:
         "display_name": "Nekro Agent",
         "version": nekro_version,
     }
-
-
-def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
-    prefix = "onebot_v11-"
-    value = chat_key[len(prefix) :] if chat_key.startswith(prefix) else chat_key
-    if "-" in value:
-        kind, conversation_id = value.split("-", 1)
-    else:
-        kind = str(getattr(chat_type, "value", chat_type) or "unknown")
-        conversation_id = value
-    if kind not in {"group", "private", "channel", "system"}:
-        kind = "unknown"
-    return {"id": conversation_id or "unknown", "type": kind, "name": None}
 
 
 def content_parts(items: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

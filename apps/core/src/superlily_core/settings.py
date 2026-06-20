@@ -17,6 +17,7 @@ class Settings:
     admin_token: str = ""
     ingest_tokens: dict[str, str] = field(default_factory=dict)
     stale_after_seconds: int = 90
+    correlation_window_seconds: int = 2
     raw_enabled: bool = False
     raw_max_bytes: int = 32_768
 
@@ -34,6 +35,7 @@ class Settings:
             admin_token=os.getenv("SUPERLILY_ADMIN_TOKEN", ""),
             ingest_tokens=tokens,
             stale_after_seconds=int(os.getenv("SUPERLILY_STALE_AFTER_SECONDS", "90")),
+            correlation_window_seconds=int(os.getenv("SUPERLILY_CORRELATION_WINDOW_SECONDS", "2")),
             raw_enabled=_as_bool(os.getenv("SUPERLILY_RAW_ENABLED")),
             raw_max_bytes=int(os.getenv("SUPERLILY_RAW_MAX_BYTES", "32768")),
         )

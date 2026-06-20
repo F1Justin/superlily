@@ -11,6 +11,18 @@ The wire schema is version `1.0` and the HTTP surface is under `/v1`.
 Each token is bound to exactly one `instance.instance_id`. A Lily token cannot
 submit a Nekro payload.
 
+For event ingestion, the request's `source_event_id` is the reporting
+account's event identifier. Core stores it as `reported_source_event_id` and
+returns the canonical `source_event_id` in the response. Different bot
+accounts may therefore submit different request IDs and receive the same
+canonical ID. The account-local message ID is retained separately as
+`platform_message_id`.
+
+Cross-account correlation is conservative and currently applies only to QQ
+text messages with a sender. It uses normalized conversation identity, sender,
+text, and the configured short time window. Ambiguous or non-text events stay
+separate rather than risk a false merge.
+
 ## Read APIs
 
 - `GET /health/live` only proves the process is serving HTTP.
@@ -24,4 +36,3 @@ reported status changes append history.
 
 The authoritative Pydantic definitions are in
 `packages/contracts/src/superlily_contracts/models.py`.
-

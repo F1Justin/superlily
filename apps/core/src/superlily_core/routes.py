@@ -98,6 +98,7 @@ async def recent_events(
         {
             "observation_id": observation.id,
             "source_event_id": source.id,
+            "reported_source_event_id": observation.reported_source_event_id,
             "instance_id": observation.instance_id,
             "platform": source.platform,
             "adapter": observation.adapter,
@@ -108,7 +109,8 @@ async def recent_events(
                 "name": observation.conversation_name,
             },
             "sender": {"id": observation.sender_id, "name": observation.sender_name},
-            "message_id": source.message_id,
+            "message_id": observation.platform_message_id,
+            "correlation_version": source.correlation_version,
             "text": observation.text,
             "occurred_at": source.occurred_at,
             "received_at": observation.received_at,
@@ -184,4 +186,3 @@ async def instances(request: Request, session: Session) -> list[dict]:
         }
         for item in rows
     ]
-

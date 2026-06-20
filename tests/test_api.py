@@ -1,16 +1,25 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 from sqlalchemy import select
 
-from superlily_core.models import EventObservation, ResponseRecord
+from superlily_core.models import EventObservation, ResponseRecord, SourceEvent
 
 
-def event_payload(instance_id: str = "lily-command") -> dict:
+def event_payload(
+    instance_id: str = "lily-command",
+    *,
+    source_event_id: str = "qq:group:123:message:456",
+    conversation_id: str = "123",
+    message_id: str = "456",
+    text: str | None = "hello",
+    occurred_at: datetime | None = None,
+    event_type: str = "message",
+) -> dict:
     bot_id = "985393579" if instance_id == "lily-command" else "2022692714"
     return {
         "schema_version": "1.0",
-        "source_event_id": "qq:group:123:message:456",
+        "source_event_id": source_event_id,
         "instance": {
             "instance_id": instance_id,
             "platform": "qq",
@@ -18,16 +27,16 @@ def event_payload(instance_id: str = "lily-command") -> dict:
             "bot_id": bot_id,
             "role": "command" if instance_id == "lily-command" else "talk",
         },
-        "event_type": "message",
-        "conversation": {"id": "123", "type": "group", "name": "Test Group"},
+        "event_type": event_type,
+        "conversation": {"id": conversation_id, "type": "group", "name": "Test Group"},
         "sender": {"id": "789", "name": "Tester", "roles": []},
         "message": {
-            "id": "456",
-            "text": "hello",
-            "segments": [{"type": "text", "data": {"text": "hello"}}],
+            "id": message_id,
+            "text": text,
+            "segments": [{"type": "text", "data": {"text": text}}] if text is not None else [],
             "attachments": [],
         },
-        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "occurred_at": (occurred_at or datetime.now(timezone.utc)).isoformat(),
         "raw": {"access_token": "must-not-survive", "url": "https://example.test/a?secret=1"},
         "metadata": {},
     }
@@ -82,6 +91,161 @@ async def test_two_bots_can_ingest_same_source_event_concurrently(client) -> Non
     lily, nekro = await asyncio.gather(lily_request, nekro_request)
     assert lily.status_code == nekro.status_code == 201
     assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
+
+
+async def test_two_bots_correlate_account_local_message_ids(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    lily_payload = event_payload(
+        "lily-command",
+        source_event_id="qq:group:123:message:lily-456",
+        message_id="lily-456",
+        occurred_at=occurred_at,
+        event_type="message.group.normal",
+    )
+    nekro_payload = event_payload(
+        "nekro-agent",
+        source_event_id="qq:group:group_123:message:nekro-789",
+        conversation_id="group_123",
+        message_id="nekro-789",
+        occurred_at=occurred_at + timedelta(seconds=1),
+    )
+
+    lily = await client.post(
+        "/v1/events",
+        json=lily_payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "local-id-lily"},
+    )
+    nekro = await client.post(
+        "/v1/events",
+        json=nekro_payload,
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "local-id-nekro"},
+    )
+
+    assert lily.status_code == nekro.status_code == 201
+    assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        sources = (await session.scalars(select(SourceEvent))).all()
+        observations = (await session.scalars(select(EventObservation))).all()
+        assert len(sources) == 1
+        assert sources[0].conversation_id == "123"
+        assert sources[0].event_type == "message"
+        assert sources[0].message_id is None
+        assert {item.reported_source_event_id for item in observations} == {
+            lily_payload["source_event_id"],
+            nekro_payload["source_event_id"],
+        }
+        assert {item.platform_message_id for item in observations} == {"lily-456", "nekro-789"}
+
+
+async def test_same_instance_repeating_text_creates_distinct_source_events(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    for suffix, offset in (("first", 0), ("second", 1)):
+        response = await client.post(
+            "/v1/events",
+            json=event_payload(
+                source_event_id=f"qq:group:123:message:{suffix}",
+                message_id=suffix,
+                occurred_at=occurred_at + timedelta(seconds=offset),
+            ),
+            headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": f"repeat-{suffix}"},
+        )
+        assert response.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        assert len((await session.scalars(select(SourceEvent))).all()) == 2
+
+
+async def test_cross_bot_text_outside_window_is_not_correlated(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    lily = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "lily-command",
+            source_event_id="qq:group:123:message:early",
+            message_id="early",
+            occurred_at=occurred_at,
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "outside-lily"},
+    )
+    nekro = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "nekro-agent",
+            source_event_id="qq:group:group_123:message:late",
+            conversation_id="group_123",
+            message_id="late",
+            occurred_at=occurred_at + timedelta(seconds=3),
+        ),
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "outside-nekro"},
+    )
+
+    assert lily.status_code == nekro.status_code == 201
+    assert lily.json()["source_event_id"] != nekro.json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        assert len((await session.scalars(select(SourceEvent))).all()) == 2
+
+
+async def test_non_text_events_are_not_fuzzily_correlated(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    responses = []
+    for instance_id, suffix in (("lily-command", "image-a"), ("nekro-agent", "image-b")):
+        responses.append(
+            await client.post(
+                "/v1/events",
+                json=event_payload(
+                    instance_id,
+                    source_event_id=f"qq:group:123:message:{suffix}",
+                    message_id=suffix,
+                    text=None,
+                    occurred_at=occurred_at,
+                ),
+                headers={
+                    "Authorization": f"Bearer {'lily-secret' if instance_id == 'lily-command' else 'nekro-secret'}",
+                    "Idempotency-Key": f"non-text-{suffix}",
+                },
+            )
+        )
+
+    assert all(response.status_code == 201 for response in responses)
+    assert responses[0].json()["source_event_id"] != responses[1].json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        assert len((await session.scalars(select(SourceEvent))).all()) == 2
+
+
+async def test_response_trigger_resolves_reported_id_to_canonical_event(client, app) -> None:
+    reported_source_id = "qq:group:123:message:account-local-trigger"
+    event = await client.post(
+        "/v1/events",
+        json=event_payload(source_event_id=reported_source_id, message_id="account-local-trigger"),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "trigger-event"},
+    )
+    assert event.status_code == 201
+
+    payload = {
+        "schema_version": "1.0",
+        "source_response_id": "qq:985393579:message:trigger-response",
+        "instance": event_payload()["instance"],
+        "trigger_source_event_id": reported_source_id,
+        "response_type": "message",
+        "conversation": {"id": "123", "type": "group"},
+        "platform_message_id": "trigger-response",
+        "text": "done",
+        "segments": [],
+        "attachments": [],
+        "success": True,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = await client.post(
+        "/v1/responses",
+        json=payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "trigger-response"},
+    )
+    assert response.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        record = await session.scalar(select(ResponseRecord))
+        assert record is not None
+        assert record.trigger_source_event_id == event.json()["source_event_id"]
 
 
 async def test_instance_token_cannot_impersonate_other_instance(client) -> None:

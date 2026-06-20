@@ -45,10 +45,15 @@ class SourceEvent(Base):
     conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
     conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
     message_id: Mapped[str | None] = mapped_column(String(512))
+    correlation_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    correlation_version: Mapped[str | None] = mapped_column(String(32))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     first_received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
-    __table_args__ = (Index("ix_source_events_occurred_at", "occurred_at"),)
+    __table_args__ = (
+        Index("ix_source_events_occurred_at", "occurred_at"),
+        Index("ix_source_events_correlation_time", "correlation_fingerprint", "occurred_at"),
+    )
 
 
 class EventObservation(Base):
@@ -56,6 +61,8 @@ class EventObservation(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False)
+    reported_source_event_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    platform_message_id: Mapped[str | None] = mapped_column(String(512))
     instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     adapter: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -73,6 +80,11 @@ class EventObservation(Base):
 
     __table_args__ = (
         UniqueConstraint("instance_id", "idempotency_key", name="uq_event_observation_idempotency"),
+        UniqueConstraint(
+            "instance_id",
+            "reported_source_event_id",
+            name="uq_event_observation_reported_source",
+        ),
         Index("ix_event_observations_received_at", "received_at"),
         Index("ix_event_observations_source_event_id", "source_event_id"),
     )
@@ -124,4 +136,3 @@ class InstanceStatusTransition(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (Index("ix_status_transitions_instance_created", "instance_id", "created_at"),)
-
