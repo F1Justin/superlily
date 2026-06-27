@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from superlily_contracts import EventIn, HeartbeatIn, ResponseIn
 
 from .auth import ingest_identity, require_admin
+from .command_registry import load_command_registry
 from .dependencies import get_session
 from .models import BotInstance, EventDecision, EventLink, EventObservation, ResponseRecord, SourceEvent
 from .service import effective_status, ingest_event, ingest_heartbeat, ingest_response
@@ -195,6 +196,18 @@ async def recent_decisions(
         }
         for item in rows
     ]
+
+
+@router.get("/v1/command-registry", dependencies=[Depends(require_admin)])
+async def command_registry(request: Request) -> dict:
+    try:
+        registry = load_command_registry(request.app.state.settings.command_registry_path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"command registry unavailable: {type(exc).__name__}",
+        ) from exc
+    return registry.as_dict()
 
 
 @router.get("/v1/events/{source_event_id}/context", dependencies=[Depends(require_admin)])

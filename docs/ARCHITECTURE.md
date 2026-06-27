@@ -35,6 +35,10 @@ change a response, or trigger a retry storm.
   decision for each canonical event, such as `observe_only`, `command`, `talk`,
   or `ignore`. These decisions are audit signals only; bridges do not consult
   them before running existing matchers.
+- Phase 2b.1 moves command detection into a TOML command registry. The
+  registry records deterministic Lily/NoneBot triggers, source plugins,
+  permissions, and sensitive control commands so shadow decisions can be
+  audited before any future claim-lock enforcement.
 - `Idempotency-Key` is scoped to the authenticated instance. Replaying a
   delivery returns the existing observation or response.
 - Responses may have no trigger. Scheduled sends, random replies, and proactive
@@ -42,5 +46,5 @@ change a response, or trigger a retry storm.
 
 Redis is intentionally absent. Claim locks, distributed rate limits, and work
 queues still belong to the later enforcement part of phase two. Phase 2a records
-and resolves references; Phase 2b records shadow decisions. Neither phase takes
-over message sending.
+and resolves references; Phase 2b records shadow decisions and reads the command
+registry. Neither phase takes over message sending.

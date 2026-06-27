@@ -249,6 +249,8 @@ Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解�
 
 Phase 2b 的第一版裁决应保持规则化和可解释，不引入 LLM。明确命令如 /wf、/tex、/fortune、/help 归 command / lily-command；@ 机器人、回复机器人、自然语言触发归 talk / nekro-agent；普通群聊默认 observe_only；notice、recall、poke 等非消息事件默认 ignore 或 admin_candidate。每条 decision 必须记录 policy_version、decision_type、target_instance_id、confidence 和 reason，方便后续对照实际响应。
 
+Phase 2b.1 应将命令识别从代码里的少量硬编码前缀扩展为 command registry。registry 记录当前 Lily/NoneBot 运行面里的确定性触发器，包括 prefix、exact text、regex、所属插件、目标实例、权限等级和敏感标记。它仍然只作为 shadow decision 的输入，不代表 Core 已经拥有或执行这些工具。未确认正在加载的插件只能作为候选，不应默认参与裁决。
+
 此阶段还应提供 recent/debug API，使管理员能查看最近消息、引用关系、Core 的 shadow decision、以及实际 responses 之间是否一致。只有当 shadow decision 在真实群聊中足够稳定后，才进入 Phase 2c 的 claim lock 和响应裁决执行。Phase 2b 不接管发送，不阻断任何现有 matcher，也不迁移工具。
 
 8. 第三阶段：Tool Registry 与现有插件迁移

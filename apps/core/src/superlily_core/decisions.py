@@ -1,19 +1,10 @@
 from dataclasses import dataclass
 from typing import Any
 
-POLICY_VERSION = "shadow-v1"
-COMMAND_TARGET_INSTANCE = "lily-command"
-TALK_TARGET_INSTANCE = "nekro-agent"
+from .command_registry import CommandRegistry
 
-COMMAND_PREFIXES = (
-    "wf ",
-    "wf\n",
-    "tex ",
-    "tex\n",
-    "fortune",
-    "zt",
-    "status",
-)
+POLICY_VERSION = "shadow-v1"
+TALK_TARGET_INSTANCE = "nekro-agent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,16 +14,6 @@ class Decision:
     confidence: int
     reason: str
     features: dict[str, Any]
-
-
-def _text_prefix(text: str) -> str | None:
-    normalized = text.strip().lower()
-    if not normalized:
-        return None
-    for prefix in COMMAND_PREFIXES:
-        if normalized == prefix.strip() or normalized.startswith(prefix):
-            return prefix.strip()
-    return None
 
 
 def _metadata_to_me(metadata: dict[str, Any]) -> bool:
@@ -68,8 +49,10 @@ def decide_event(
     metadata: dict[str, Any],
     has_reply_link: bool,
     reply_to_bot_response: bool,
+    command_registry: CommandRegistry | None = None,
+    command_registry_error: str | None = None,
 ) -> Decision:
-    command_prefix = _text_prefix(text or "")
+    command_match = command_registry.match(text) if command_registry else None
     to_me = _metadata_to_me(metadata)
     mentions_observer = _mentions_observing_bot(segments, observation_bot_id)
     features = {
@@ -77,7 +60,10 @@ def decide_event(
         "text_preview": (text or "")[:200],
         "has_attachments": bool(attachments),
         "conversation_type": conversation_type,
-        "command_prefix": command_prefix,
+        "command_registry_version": command_registry.version if command_registry else None,
+        "command_registry_error": command_registry_error,
+        "command_prefix": command_match.trigger if command_match and command_match.kind == "prefix" else None,
+        "matched_command": command_match.as_feature() if command_match else None,
         "to_me": to_me,
         "mentions_observing_bot": mentions_observer,
         "has_reply_link": has_reply_link,
@@ -87,12 +73,13 @@ def decide_event(
     if source_event_type != "message":
         return Decision("ignore", None, 95, "non_message_event", features)
 
-    if command_prefix:
+    if command_match:
+        reason = f"command_{command_match.kind}:{command_match.trigger}"
         return Decision(
             "command",
-            COMMAND_TARGET_INSTANCE,
-            95,
-            f"command_prefix:{command_prefix}",
+            command_match.target_instance_id,
+            command_match.confidence,
+            reason,
             features,
         )
 

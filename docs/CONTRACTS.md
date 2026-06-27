@@ -31,6 +31,14 @@ decision has a policy version, decision type, optional target instance,
 confidence, reason, and feature snapshot. Decisions are observational; bridges
 do not need to request or obey them in this phase.
 
+Command decisions are driven by the configured command registry, not by a small
+hard-coded prefix list. The default registry lives at
+`apps/core/config/command_registry.toml` and can be overridden with
+`SUPERLILY_COMMAND_REGISTRY_PATH`. Decision features include the registry
+version and the matched command rule, when any. If the registry cannot be read,
+event ingestion stays fail-open and records the registry error in the decision
+features.
+
 Cross-account correlation is conservative and currently applies only to QQ
 text messages with a sender. It uses normalized conversation identity, sender,
 text, and the configured short time window. Ambiguous or non-text events stay
@@ -42,8 +50,8 @@ separate rather than risk a false merge.
 - `GET /health/ready` also checks PostgreSQL.
 - `GET /v1/events/recent`, `/v1/responses/recent`,
   `/v1/event-links/recent`, `/v1/decisions/recent`,
-  `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
-  bearer token.
+  `/v1/command-registry`, `/v1/events/{source_event_id}/context`, and
+  `/v1/instances` require the admin bearer token.
 
 `/v1/instances` derives `offline` when the most recent heartbeat is older than
 the configured threshold. Heartbeats update the latest instance row; only

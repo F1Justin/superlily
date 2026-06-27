@@ -15,6 +15,12 @@ curl http://127.0.0.1:8765/health/ready
 The Compose project creates `superlily_bus` and publishes Core only on host
 loopback.
 
+Command shadow decisions read `apps/core/config/command_registry.toml` by
+default. Set `SUPERLILY_COMMAND_REGISTRY_PATH` only when you intentionally want
+Core to read another registry file. A bad registry must not affect Lily/Nekro
+message handling; Core degrades decision metadata instead of becoming a control
+plane in Phase 2b.
+
 ## 2. Lily bridge
 
 The existing Lily process runs in the `nb` tmux session managed by the enabled

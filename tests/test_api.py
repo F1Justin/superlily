@@ -142,7 +142,9 @@ async def test_command_event_records_shadow_decision_for_lily(client, app) -> No
         assert decision.target_instance_id == "lily-command"
         assert decision.confidence == 95
         assert decision.reason.startswith("command_prefix:wf")
-        assert decision.features_json["command_prefix"] in ("wf", "wf ")
+        assert decision.features_json["command_prefix"] == "wf"
+        assert decision.features_json["matched_command"]["rule_id"] == "lily.wolfram"
+        assert decision.features_json["matched_command"]["source_plugin"] == "plugins.wolfram"
 
 
 async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(client) -> None:
@@ -176,6 +178,18 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
     assert context.json()["source_event"]["source_event_id"] == response.json()["source_event_id"]
     assert context.json()["decisions"][0]["decision_type"] == "talk"
     assert context.json()["observations"][0]["observation_id"] == response.json()["observation_id"]
+
+
+async def test_command_registry_debug_endpoint_is_admin_only(client) -> None:
+    denied = await client.get("/v1/command-registry")
+    allowed = await client.get("/v1/command-registry", headers={"Authorization": "Bearer admin-secret"})
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    payload = allowed.json()
+    assert payload["version"] == "2026-06-27-shadow-seed"
+    assert any(rule["id"] == "lily.wolfram" for rule in payload["rules"])
+    assert any(rule["id"] == "external.updater.control" and rule["sensitive"] for rule in payload["rules"])
 
 
 async def test_reply_to_bot_response_records_talk_shadow_decision(client, app) -> None:

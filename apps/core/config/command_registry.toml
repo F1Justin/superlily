@@ -1,0 +1,104 @@
+version = "2026-06-27-shadow-seed"
+default_target_instance_id = "lily-command"
+
+[[rules]]
+id = "nonebot.builtin.echo"
+kind = "prefix"
+triggers = ["echo"]
+source_plugin = "builtin.echo"
+description = "NoneBot builtin echo command."
+
+[[rules]]
+id = "lily.wolfram"
+kind = "prefix"
+triggers = ["wf"]
+source_plugin = "plugins.wolfram"
+description = "Wolfram calculation engine."
+
+[[rules]]
+id = "lily.tex"
+kind = "prefix"
+triggers = ["tex"]
+source_plugin = "plugins.tex"
+description = "LaTeX formula rendering."
+
+[[rules]]
+id = "lily.touhou_tarots"
+kind = "prefix"
+triggers = ["fortune"]
+source_plugin = "plugins.touhou_tarots"
+description = "Touhou tarot draw."
+
+[[rules]]
+id = "lily.otto_sound"
+kind = "regex"
+triggers = ["^好死miss咯"]
+source_plugin = "plugins.otto_sound"
+description = "Local Otto sound regex matcher."
+
+[[rules]]
+id = "external.picstatus"
+kind = "prefix"
+triggers = ["运行状态", "状态", "zt", "yxzt", "status"]
+source_plugin = "nonebot_plugin_picstatus"
+description = "System status picture command."
+
+[[rules]]
+id = "external.cnrail"
+kind = "prefix"
+triggers = ["train", "列车信息", "查询列车"]
+source_plugin = "nonebot_plugin_cnrail"
+description = "Train information lookup."
+
+[[rules]]
+id = "external.wordcloud.public"
+kind = "prefix"
+triggers = ["词云", "今日词云", "昨日词云", "本周词云", "上周词云", "本月词云", "上月词云", "年度词云", "历史词云"]
+source_plugin = "nonebot_plugin_wordcloud"
+description = "Word cloud generation commands and shortcuts."
+
+[[rules]]
+id = "external.wordcloud.admin"
+kind = "prefix"
+triggers = ["设置词云形状", "设置词云默认形状", "删除词云形状", "删除词云默认形状", "词云定时发送", "词云每日定时发送状态", "开启词云每日定时发送", "关闭词云每日定时发送"]
+source_plugin = "nonebot_plugin_wordcloud"
+permission = "group_admin"
+description = "Word cloud shape and scheduled sending administration."
+
+[[rules]]
+id = "external.today_waifu.public"
+kind = "exact"
+triggers = ["今日老婆", "每日老婆", "换老婆"]
+source_plugin = "nonebot_plugin_today_waifu"
+description = "Today waifu public group commands."
+
+[[rules]]
+id = "external.today_waifu.admin"
+kind = "regex"
+triggers = ["^(刷新|重置)(今日老婆|每日老婆)$", "^设置换老婆次数\\s*\\d+$", "^(开启换老婆|关闭换老婆)$"]
+source_plugin = "nonebot_plugin_today_waifu"
+permission = "group_admin"
+description = "Today waifu group administration commands."
+
+[[rules]]
+id = "external.ottohzys"
+kind = "prefix"
+triggers = ["otto活字印刷", "otto鬼叫", "ottohzys", "电棍活字印刷", "电棍鬼叫", "电棍hzys", "大电老师活字印刷", "大电老师鬼叫", "大电老师hzys"]
+source_plugin = "nonebot_plugin_ottohzys"
+description = "Otto voice synthesis shell command aliases."
+
+[[rules]]
+id = "external.updater.readonly"
+kind = "prefix"
+triggers = ["获取插件列表", "检查插件更新"]
+source_plugin = "nonebot_plugin_updater"
+description = "Plugin updater read-only commands."
+
+[[rules]]
+id = "external.updater.control"
+kind = "prefix"
+triggers = ["更新插件", "安装插件", "卸载插件", "关闭nb", "重启nb"]
+source_plugin = "nonebot_plugin_updater"
+permission = "superuser"
+sensitive = true
+description = "Sensitive NoneBot plugin/runtime control commands."

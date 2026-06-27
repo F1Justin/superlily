@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from superlily_contracts import EventIn, EventReference, HeartbeatIn, ResponseIn, SanitizationPolicy, sanitize_payload
 
+from .command_registry import CommandRegistry, load_command_registry
 from .correlation import (
     CORRELATION_VERSION,
     advisory_lock_key,
@@ -359,6 +360,7 @@ async def record_event_decision(
     payload: EventIn,
     source: SourceEvent,
     observation: EventObservation,
+    settings: Settings,
 ) -> EventDecision | None:
     existing = await session.scalar(
         select(EventDecision).where(EventDecision.source_event_id == observation.source_event_id)
@@ -368,6 +370,12 @@ async def record_event_decision(
 
     has_reply_link = any(reference.type == "reply_to" for reference in payload.references)
     reply_to_bot_response = await _references_bot_response(session, payload)
+    registry_error = None
+    try:
+        command_registry = load_command_registry(settings.command_registry_path)
+    except (OSError, ValueError) as exc:
+        command_registry = CommandRegistry.empty()
+        registry_error = f"{type(exc).__name__}: {exc}"
     decision = decide_event(
         source_event_type=source.event_type,
         conversation_type=source.conversation_type,
@@ -378,6 +386,8 @@ async def record_event_decision(
         metadata=observation.metadata_json,
         has_reply_link=has_reply_link,
         reply_to_bot_response=reply_to_bot_response,
+        command_registry=command_registry,
+        command_registry_error=registry_error,
     )
     record = EventDecision(
         source_event_id=observation.source_event_id,
@@ -457,7 +467,7 @@ async def ingest_event(
         try:
             await session.flush()
             await record_event_links(session, payload, record, settings)
-            await record_event_decision(session, payload, source, record)
+            await record_event_decision(session, payload, source, record, settings)
             await session.commit()
         except IntegrityError:
             await session.rollback()

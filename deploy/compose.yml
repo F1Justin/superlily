@@ -29,6 +29,7 @@ services:
       SUPERLILY_CORRELATION_WINDOW_SECONDS: ${SUPERLILY_CORRELATION_WINDOW_SECONDS:-2}
       SUPERLILY_RAW_ENABLED: ${SUPERLILY_RAW_ENABLED:-false}
       SUPERLILY_RAW_MAX_BYTES: ${SUPERLILY_RAW_MAX_BYTES:-32768}
+      SUPERLILY_COMMAND_REGISTRY_PATH: ${SUPERLILY_COMMAND_REGISTRY_PATH:-apps/core/config/command_registry.toml}
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn superlily_core.app:app --host 0.0.0.0 --port 8000"]
     depends_on:
       postgres:
