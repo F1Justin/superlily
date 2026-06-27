@@ -31,11 +31,16 @@ change a response, or trigger a retry storm.
   observation/source event and may resolve to a canonical target source event.
   If the bridge only knows an account-local target message ID and Core cannot
   resolve it yet, the link stays `unresolved` for later import/backfill.
+- Phase 2b adds `event_decisions` in shadow mode. Core records a rules-based
+  decision for each canonical event, such as `observe_only`, `command`, `talk`,
+  or `ignore`. These decisions are audit signals only; bridges do not consult
+  them before running existing matchers.
 - `Idempotency-Key` is scoped to the authenticated instance. Replaying a
   delivery returns the existing observation or response.
 - Responses may have no trigger. Scheduled sends, random replies, and proactive
   messages are valid first-class records.
 
 Redis is intentionally absent. Claim locks, distributed rate limits, and work
-queues still belong to the later core-decision part of phase two. Phase 2a only
-records and resolves references; it does not take over message sending.
+queues still belong to the later enforcement part of phase two. Phase 2a records
+and resolves references; Phase 2b records shadow decisions. Neither phase takes
+over message sending.

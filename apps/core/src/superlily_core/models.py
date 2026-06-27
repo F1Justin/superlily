@@ -116,6 +116,30 @@ class EventLink(Base):
     )
 
 
+class EventDecision(Base):
+    __tablename__ = "event_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False)
+    deciding_observation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="SET NULL")
+    )
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_instance_id: Mapped[str | None] = mapped_column(String(128))
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    features_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("source_event_id", name="uq_event_decisions_source_event"),
+        Index("ix_event_decisions_created_at", "created_at"),
+        Index("ix_event_decisions_decision_type", "decision_type"),
+        Index("ix_event_decisions_target_instance", "target_instance_id"),
+    )
+
+
 class ResponseRecord(Base):
     __tablename__ = "responses"
 

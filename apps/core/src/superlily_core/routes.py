@@ -9,7 +9,7 @@ from superlily_contracts import EventIn, HeartbeatIn, ResponseIn
 
 from .auth import ingest_identity, require_admin
 from .dependencies import get_session
-from .models import BotInstance, EventLink, EventObservation, ResponseRecord, SourceEvent
+from .models import BotInstance, EventDecision, EventLink, EventObservation, ResponseRecord, SourceEvent
 from .service import effective_status, ingest_event, ingest_heartbeat, ingest_response
 
 router = APIRouter()
@@ -172,6 +172,126 @@ async def recent_event_links(
         }
         for item in rows
     ]
+
+
+@router.get("/v1/decisions/recent", dependencies=[Depends(require_admin)])
+async def recent_decisions(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (await session.scalars(select(EventDecision).order_by(desc(EventDecision.created_at)).limit(limit))).all()
+    return [
+        {
+            "decision_id": item.id,
+            "source_event_id": item.source_event_id,
+            "deciding_observation_id": item.deciding_observation_id,
+            "policy_version": item.policy_version,
+            "decision_type": item.decision_type,
+            "target_instance_id": item.target_instance_id,
+            "confidence": item.confidence,
+            "reason": item.reason,
+            "features": item.features_json,
+            "created_at": item.created_at,
+        }
+        for item in rows
+    ]
+
+
+@router.get("/v1/events/{source_event_id}/context", dependencies=[Depends(require_admin)])
+async def event_context(source_event_id: str, session: Session) -> dict:
+    source = await session.get(SourceEvent, source_event_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source_event_id not found")
+
+    observations = (
+        await session.scalars(
+            select(EventObservation)
+            .where(EventObservation.source_event_id == source_event_id)
+            .order_by(EventObservation.received_at)
+        )
+    ).all()
+    links = (
+        await session.scalars(
+            select(EventLink).where(EventLink.from_source_event_id == source_event_id).order_by(EventLink.created_at)
+        )
+    ).all()
+    decisions = (
+        await session.scalars(
+            select(EventDecision)
+            .where(EventDecision.source_event_id == source_event_id)
+            .order_by(EventDecision.created_at)
+        )
+    ).all()
+    responses = (
+        await session.scalars(
+            select(ResponseRecord)
+            .where(ResponseRecord.trigger_source_event_id == source_event_id)
+            .order_by(ResponseRecord.received_at)
+        )
+    ).all()
+
+    return {
+        "source_event": {
+            "source_event_id": source.id,
+            "platform": source.platform,
+            "event_type": source.event_type,
+            "conversation_id": source.conversation_id,
+            "conversation_type": source.conversation_type,
+            "correlation_version": source.correlation_version,
+            "occurred_at": source.occurred_at,
+            "first_received_at": source.first_received_at,
+        },
+        "observations": [
+            {
+                "observation_id": item.id,
+                "reported_source_event_id": item.reported_source_event_id,
+                "instance_id": item.instance_id,
+                "bot_id": item.bot_id,
+                "platform_message_id": item.platform_message_id,
+                "sender_id": item.sender_id,
+                "sender_name": item.sender_name,
+                "text": item.text,
+                "received_at": item.received_at,
+            }
+            for item in observations
+        ],
+        "links": [
+            {
+                "link_id": item.id,
+                "relation_type": item.relation_type,
+                "to_source_event_id": item.to_source_event_id,
+                "target_platform_message_id": item.target_platform_message_id,
+                "resolver_status": item.resolver_status,
+            }
+            for item in links
+        ],
+        "decisions": [
+            {
+                "decision_id": item.id,
+                "policy_version": item.policy_version,
+                "decision_type": item.decision_type,
+                "target_instance_id": item.target_instance_id,
+                "confidence": item.confidence,
+                "reason": item.reason,
+                "features": item.features_json,
+                "created_at": item.created_at,
+            }
+            for item in decisions
+        ],
+        "responses": [
+            {
+                "response_id": item.id,
+                "source_response_id": item.source_response_id,
+                "instance_id": item.instance_id,
+                "response_type": item.response_type,
+                "platform_message_id": item.platform_message_id,
+                "text": item.text,
+                "success": item.success,
+                "received_at": item.received_at,
+            }
+            for item in responses
+        ],
+    }
 
 
 @router.get("/v1/instances", dependencies=[Depends(require_admin)])

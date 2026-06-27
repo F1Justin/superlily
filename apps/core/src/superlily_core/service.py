@@ -22,7 +22,17 @@ from .correlation import (
     canonical_event_type,
     event_correlation_fingerprint,
 )
-from .models import BotInstance, EventLink, EventObservation, InstanceStatusTransition, ResponseRecord, SourceEvent, utc_now
+from .decisions import POLICY_VERSION, decide_event
+from .models import (
+    BotInstance,
+    EventDecision,
+    EventLink,
+    EventObservation,
+    InstanceStatusTransition,
+    ResponseRecord,
+    SourceEvent,
+    utc_now,
+)
 from .settings import Settings
 
 
@@ -309,6 +319,80 @@ async def record_event_links(
         )
 
 
+async def _references_bot_response(session: AsyncSession, payload: EventIn) -> bool:
+    target_ids = [
+        reference.platform_message_id
+        for reference in payload.references
+        if reference.type == "reply_to" and reference.platform_message_id
+    ]
+    if not target_ids:
+        return False
+
+    conversation_ids: set[str] = {payload.conversation.id}
+    conversation_types: set[str] = {payload.conversation.type}
+    for reference in payload.references:
+        if reference.conversation_id:
+            conversation_ids.add(reference.conversation_id)
+        if reference.conversation_type:
+            conversation_types.add(reference.conversation_type)
+    conversation_ids.update(
+        canonical_conversation_id(payload.instance.platform, payload.conversation.type, item)
+        for item in list(conversation_ids)
+    )
+
+    exists_response = await session.scalar(
+        select(ResponseRecord.id)
+        .where(
+            ResponseRecord.platform == payload.instance.platform,
+            ResponseRecord.conversation_id.in_(conversation_ids),
+            ResponseRecord.conversation_type.in_(conversation_types),
+            ResponseRecord.platform_message_id.in_(target_ids),
+            ResponseRecord.success.is_(True),
+        )
+        .limit(1)
+    )
+    return exists_response is not None
+
+
+async def record_event_decision(
+    session: AsyncSession,
+    payload: EventIn,
+    source: SourceEvent,
+    observation: EventObservation,
+) -> EventDecision | None:
+    existing = await session.scalar(
+        select(EventDecision).where(EventDecision.source_event_id == observation.source_event_id)
+    )
+    if existing is not None:
+        return None
+
+    has_reply_link = any(reference.type == "reply_to" for reference in payload.references)
+    reply_to_bot_response = await _references_bot_response(session, payload)
+    decision = decide_event(
+        source_event_type=source.event_type,
+        conversation_type=source.conversation_type,
+        observation_bot_id=observation.bot_id,
+        text=observation.text,
+        segments=observation.segments_json,
+        attachments=observation.attachments_json,
+        metadata=observation.metadata_json,
+        has_reply_link=has_reply_link,
+        reply_to_bot_response=reply_to_bot_response,
+    )
+    record = EventDecision(
+        source_event_id=observation.source_event_id,
+        deciding_observation_id=observation.id,
+        policy_version=POLICY_VERSION,
+        decision_type=decision.decision_type,
+        target_instance_id=decision.target_instance_id,
+        confidence=decision.confidence,
+        reason=decision.reason,
+        features_json=decision.features,
+    )
+    session.add(record)
+    return record
+
+
 async def ingest_event(
     session: AsyncSession,
     payload: EventIn,
@@ -373,6 +457,7 @@ async def ingest_event(
         try:
             await session.flush()
             await record_event_links(session, payload, record, settings)
+            await record_event_decision(session, payload, source, record)
             await session.commit()
         except IntegrityError:
             await session.rollback()

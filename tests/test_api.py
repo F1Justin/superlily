@@ -3,7 +3,7 @@ import asyncio
 
 from sqlalchemy import select
 
-from superlily_core.models import EventLink, EventObservation, ResponseRecord, SourceEvent
+from superlily_core.models import EventDecision, EventLink, EventObservation, ResponseRecord, SourceEvent
 
 
 def event_payload(
@@ -79,6 +79,36 @@ async def test_two_bots_create_two_observations_of_one_source_event(client) -> N
     assert lily.json()["observation_id"] != nekro.json()["observation_id"]
 
 
+async def test_correlated_event_gets_one_shadow_decision(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    lily = await client.post(
+        "/v1/events",
+        json=event_payload("lily-command", occurred_at=occurred_at),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-lily"},
+    )
+    nekro = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "nekro-agent",
+            source_event_id="qq:group:group_123:message:nekro-shadow",
+            conversation_id="group_123",
+            message_id="nekro-shadow",
+            occurred_at=occurred_at + timedelta(seconds=1),
+        ),
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "decision-nekro"},
+    )
+
+    assert lily.status_code == nekro.status_code == 201
+    assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        decisions = (await session.scalars(select(EventDecision))).all()
+        assert len(decisions) == 1
+        assert decisions[0].source_event_id == lily.json()["source_event_id"]
+        assert decisions[0].decision_type == "observe_only"
+        assert decisions[0].target_instance_id is None
+        assert decisions[0].reason == "ordinary_message"
+
+
 async def test_two_bots_can_ingest_same_source_event_concurrently(client) -> None:
     lily_request = client.post(
         "/v1/events",
@@ -93,6 +123,129 @@ async def test_two_bots_can_ingest_same_source_event_concurrently(client) -> Non
     lily, nekro = await asyncio.gather(lily_request, nekro_request)
     assert lily.status_code == nekro.status_code == 201
     assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
+
+
+async def test_command_event_records_shadow_decision_for_lily(client, app) -> None:
+    response = await client.post(
+        "/v1/events",
+        json=event_payload(text="/wf 1+1", message_id="command", source_event_id="qq:group:123:message:command"),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-command"},
+    )
+    assert response.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        decision = await session.scalar(select(EventDecision))
+        assert decision is not None
+        assert decision.source_event_id == response.json()["source_event_id"]
+        assert decision.policy_version == "shadow-v1"
+        assert decision.decision_type == "command"
+        assert decision.target_instance_id == "lily-command"
+        assert decision.confidence == 95
+        assert decision.reason == "command_prefix:/wf"
+        assert decision.features_json["command_prefix"] == "/wf"
+
+
+async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(client) -> None:
+    payload = event_payload(
+        text="莉莉帮我看看",
+        message_id="to-me",
+        source_event_id="qq:group:123:message:to-me",
+    )
+    payload["metadata"] = {"to_me": True}
+    response = await client.post(
+        "/v1/events",
+        json=payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-to-me"},
+    )
+    assert response.status_code == 201
+
+    denied = await client.get("/v1/decisions/recent")
+    allowed = await client.get("/v1/decisions/recent", headers={"Authorization": "Bearer admin-secret"})
+    context = await client.get(
+        f"/v1/events/{response.json()['source_event_id']}/context",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()[0]["source_event_id"] == response.json()["source_event_id"]
+    assert allowed.json()[0]["decision_type"] == "talk"
+    assert allowed.json()[0]["target_instance_id"] == "nekro-agent"
+    assert allowed.json()[0]["reason"] == "addressed_to_bot"
+    assert context.status_code == 200
+    assert context.json()["source_event"]["source_event_id"] == response.json()["source_event_id"]
+    assert context.json()["decisions"][0]["decision_type"] == "talk"
+    assert context.json()["observations"][0]["observation_id"] == response.json()["observation_id"]
+
+
+async def test_reply_to_bot_response_records_talk_shadow_decision(client, app) -> None:
+    response_payload = {
+        "schema_version": "1.0",
+        "source_response_id": "qq:985393579:message:bot-parent",
+        "instance": event_payload()["instance"],
+        "response_type": "message",
+        "conversation": {"id": "123", "type": "group"},
+        "platform_message_id": "bot-parent",
+        "text": "bot says hi",
+        "segments": [],
+        "attachments": [],
+        "success": True,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    bot_response = await client.post(
+        "/v1/responses",
+        json=response_payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-bot-parent"},
+    )
+    assert bot_response.status_code == 201
+
+    event = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:reply-to-bot",
+            message_id="reply-to-bot",
+            text="继续",
+            references=[
+                {
+                    "type": "reply_to",
+                    "platform_message_id": "bot-parent",
+                    "conversation_id": "123",
+                    "conversation_type": "group",
+                }
+            ],
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-reply-to-bot"},
+    )
+    assert event.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        decision = await session.scalar(select(EventDecision))
+        assert decision is not None
+        assert decision.decision_type == "talk"
+        assert decision.target_instance_id == "nekro-agent"
+        assert decision.reason == "reply_to_bot_response"
+        assert decision.features_json["reply_to_bot_response"] is True
+
+
+async def test_non_message_event_records_ignore_shadow_decision(client, app) -> None:
+    response = await client.post(
+        "/v1/events",
+        json=event_payload(
+            text=None,
+            message_id="notice",
+            source_event_id="qq:group:123:notice:recall",
+            event_type="notice.group_recall",
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-notice"},
+    )
+    assert response.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        decision = await session.scalar(select(EventDecision))
+        assert decision is not None
+        assert decision.decision_type == "ignore"
+        assert decision.target_instance_id is None
+        assert decision.reason == "non_message_event"
 
 
 async def test_two_bots_correlate_account_local_message_ids(client, app) -> None:

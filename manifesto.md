@@ -243,6 +243,14 @@ Nekro Agent 当前可以继续作为自然语言聊天后端。第一阶段只�
 
 Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解析的引用连到 canonical source_event；不能解析的引用以 unresolved 状态留存；recent/debug API 能看到关系线索；测试覆盖同账号 reply、跨账号 canonical event 引用、未解析引用和旧数据导入 dry-run 的基础路径。
 
+7.2 Phase 2b：核心裁决 Shadow Mode
+
+在引入真正 claim lock 之前，Core 应先进入 shadow decision 阶段。此阶段 Core 对每个 canonical event 生成一条 event_decision，记录它认为这条消息应被忽略、交给命令号、交给自然语言号，还是只是潜在工具候选。这个判断只用于审计和调试，不会让 Lily Bot 或 Nekro Agent 改变现有行为。
+
+Phase 2b 的第一版裁决应保持规则化和可解释，不引入 LLM。明确命令如 /wf、/tex、/fortune、/help 归 command / lily-command；@ 机器人、回复机器人、自然语言触发归 talk / nekro-agent；普通群聊默认 observe_only；notice、recall、poke 等非消息事件默认 ignore 或 admin_candidate。每条 decision 必须记录 policy_version、decision_type、target_instance_id、confidence 和 reason，方便后续对照实际响应。
+
+此阶段还应提供 recent/debug API，使管理员能查看最近消息、引用关系、Core 的 shadow decision、以及实际 responses 之间是否一致。只有当 shadow decision 在真实群聊中足够稳定后，才进入 Phase 2c 的 claim lock 和响应裁决执行。Phase 2b 不接管发送，不阻断任何现有 matcher，也不迁移工具。
+
 8. 第三阶段：Tool Registry 与现有插件迁移
 
 第三阶段目标是把现有命令插件逐步改造成结构化工具。wf 应当成为 wolfram.run，tex 应当成为 latex.render，Markdown 帮助图片应当成为 markdown.render_image，状态图应当成为 status.inspect，历史检索应当成为 history.search。命令入口仍然保留，但它们只是工具的一种调用方式。

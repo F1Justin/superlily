@@ -26,6 +26,11 @@ conversation/sender hints. Core currently extracts QQ `reply` segments as
 unresolved or ambiguous links are retained for later backfill instead of being
 dropped.
 
+Phase 2b creates one shadow `event_decision` per canonical source event. A
+decision has a policy version, decision type, optional target instance,
+confidence, reason, and feature snapshot. Decisions are observational; bridges
+do not need to request or obey them in this phase.
+
 Cross-account correlation is conservative and currently applies only to QQ
 text messages with a sender. It uses normalized conversation identity, sender,
 text, and the configured short time window. Ambiguous or non-text events stay
@@ -36,8 +41,9 @@ separate rather than risk a false merge.
 - `GET /health/live` only proves the process is serving HTTP.
 - `GET /health/ready` also checks PostgreSQL.
 - `GET /v1/events/recent`, `/v1/responses/recent`,
-  `/v1/event-links/recent`, and `/v1/instances` require the admin bearer
-  token.
+  `/v1/event-links/recent`, `/v1/decisions/recent`,
+  `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
+  bearer token.
 
 `/v1/instances` derives `offline` when the most recent heartbeat is older than
 the configured threshold. Heartbeats update the latest instance row; only
