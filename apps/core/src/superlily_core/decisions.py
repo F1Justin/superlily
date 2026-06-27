@@ -6,16 +6,13 @@ COMMAND_TARGET_INSTANCE = "lily-command"
 TALK_TARGET_INSTANCE = "nekro-agent"
 
 COMMAND_PREFIXES = (
-    "/wf",
     "wf ",
     "wf\n",
-    "/tex",
     "tex ",
     "tex\n",
-    "/fortune",
-    "/help",
-    "/status",
-    "/wordcloud",
+    "fortune",
+    "zt",
+    "status",
 )
 
 
