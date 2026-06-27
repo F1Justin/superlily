@@ -92,7 +92,7 @@ async def test_correlated_event_gets_one_shadow_decision(client, app) -> None:
             "nekro-agent",
             source_event_id="qq:group:group_123:message:nekro-shadow",
             conversation_id="group_123",
-            message_id="nekro-shadow",
+            message_id="456",
             occurred_at=occurred_at + timedelta(seconds=1),
         ),
         headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "decision-nekro"},
@@ -262,7 +262,7 @@ async def test_non_message_event_records_ignore_shadow_decision(client, app) -> 
         assert decision.reason == "non_message_event"
 
 
-async def test_two_bots_correlate_account_local_message_ids(client, app) -> None:
+async def test_cross_account_different_message_ids_are_not_correlated(client, app) -> None:
     occurred_at = datetime.now(timezone.utc)
     lily_payload = event_payload(
         "lily-command",
@@ -291,14 +291,13 @@ async def test_two_bots_correlate_account_local_message_ids(client, app) -> None
     )
 
     assert lily.status_code == nekro.status_code == 201
-    assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
+    assert lily.json()["source_event_id"] != nekro.json()["source_event_id"]
     async with app.state.database.sessions() as session:
         sources = (await session.scalars(select(SourceEvent))).all()
         observations = (await session.scalars(select(EventObservation))).all()
-        assert len(sources) == 1
-        assert sources[0].conversation_id == "123"
-        assert sources[0].event_type == "message"
-        assert sources[0].message_id is None
+        assert len(sources) == 2
+        assert {item.conversation_id for item in sources} == {"123"}
+        assert {item.event_type for item in sources} == {"message"}
         assert {item.reported_source_event_id for item in observations} == {
             lily_payload["source_event_id"],
             nekro_payload["source_event_id"],
@@ -452,7 +451,7 @@ async def test_cross_account_reply_reference_resolves_to_canonical_source_event(
             "nekro-agent",
             source_event_id="qq:group:group_123:message:nekro-parent",
             conversation_id="group_123",
-            message_id="nekro-parent",
+            message_id="lily-parent",
             text="shared parent",
             occurred_at=occurred_at + timedelta(seconds=1),
         ),
@@ -470,7 +469,7 @@ async def test_cross_account_reply_reference_resolves_to_canonical_source_event(
             references=[
                 {
                     "type": "reply_to",
-                    "platform_message_id": "nekro-parent",
+                    "platform_message_id": "lily-parent",
                     "conversation_id": "group_123",
                     "conversation_type": "group",
                 }

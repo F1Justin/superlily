@@ -6,7 +6,7 @@ import unicodedata
 from superlily_contracts import EventIn
 
 
-CORRELATION_VERSION = "qq-text-v1"
+CORRELATION_VERSION = "qq-message-v2"
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -33,14 +33,16 @@ def normalized_text(value: str | None) -> str | None:
 
 
 def event_correlation_fingerprint(payload: EventIn) -> str | None:
-    """Return a conservative fingerprint for cross-account text correlation."""
+    """Return a conservative fingerprint for cross-account QQ message correlation."""
 
     text = normalized_text(payload.message.text if payload.message else None)
+    message_id = str(payload.message.id).strip() if payload.message and payload.message.id else None
     event_kind = canonical_event_type(payload.instance.platform, payload.event_type)
     if (
         payload.instance.platform != "qq"
         or event_kind != "message"
         or payload.sender is None
+        or message_id is None
         or text is None
     ):
         return None
@@ -55,6 +57,7 @@ def event_correlation_fingerprint(payload: EventIn) -> str | None:
         event_kind,
         payload.conversation.type,
         conversation_id,
+        message_id,
         payload.sender.id,
         text,
     ]

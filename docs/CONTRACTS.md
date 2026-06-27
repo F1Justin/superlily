@@ -40,9 +40,10 @@ event ingestion stays fail-open and records the registry error in the decision
 features.
 
 Cross-account correlation is conservative and currently applies only to QQ
-text messages with a sender. It uses normalized conversation identity, sender,
-text, and the configured short time window. Ambiguous or non-text events stay
-separate rather than risk a false merge.
+text messages with a sender and a platform message ID. It uses normalized
+conversation identity, platform message ID, sender, text, and the configured
+short time window. Ambiguous events, non-text events, and messages without a
+platform message ID stay separate rather than risk a false merge.
 
 ## Read APIs
 

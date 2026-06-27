@@ -239,7 +239,7 @@ Nekro Agent 当前可以继续作为自然语言聊天后端。第一阶段只�
 
 引用关系不应长期藏在 raw payload 里，而应成为 Core 的一等数据。事件上报可以携带 references 数组，Core 将其写入 event_links 表。每条 link 同时保留标准字段、原始线索和解析状态：如果能根据同实例、同会话、平台本地 message_id 找到目标 observation，则解析到 canonical source_event；如果暂时找不到，则保留 unresolved link，后续由 backfill/resolver 在旧数据导入或目标消息迟到后补连。
 
-历史导入也应在此阶段打基础，但不应直接粗暴合并旧库。Lily 与 Nekro 旧记录应作为 observation 导入，保留 original_source、original_pk、原始 message_id、segments 和安全截断 raw。canonical source_event 仍由 Core 的相关性规则生成或复用。Phase 2a 先实现 dry-run importer/解析报告，再决定是否执行真实导入。
+历史导入也应在此阶段打基础，但不应直接粗暴合并旧库。Lily 与 Nekro 旧记录应作为 observation 导入，保留 original_source、original_pk、原始 message_id、segments 和安全截断 raw。canonical source_event 仍由 Core 的相关性规则生成或复用；相关性规则必须优先使用平台 message_id 或更强的原生序列，不能只靠短时间窗口内的 sender+text 合并。Phase 2a 先实现 dry-run importer/解析报告，再决定是否执行真实导入。
 
 Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解析的引用连到 canonical source_event；不能解析的引用以 unresolved 状态留存；recent/debug API 能看到关系线索；测试覆盖同账号 reply、跨账号 canonical event 引用、未解析引用和旧数据导入 dry-run 的基础路径。
 
@@ -250,6 +250,8 @@ Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解�
 Phase 2b 的第一版裁决应保持规则化和可解释，不引入 LLM。明确命令如 /wf、/tex、/fortune、/help 归 command / lily-command；@ 机器人、回复机器人、自然语言触发归 talk / nekro-agent；普通群聊默认 observe_only；notice、recall、poke 等非消息事件默认 ignore 或 admin_candidate。每条 decision 必须记录 policy_version、decision_type、target_instance_id、confidence 和 reason，方便后续对照实际响应。
 
 Phase 2b.1 应将命令识别从代码里的少量硬编码前缀扩展为 command registry。registry 记录当前 Lily/NoneBot 运行面里的确定性触发器，包括 prefix、exact text、regex、所属插件、目标实例、权限等级和敏感标记。它仍然只作为 shadow decision 的输入，不代表 Core 已经拥有或执行这些工具。未确认正在加载的插件只能作为候选，不应默认参与裁决。
+
+Command registry 在 2b.1 仍是静态快照，天然存在与 NoneBot 热更新插件树脑裂的风险。后续进入 2b.2/2c 前，应设计受认证的 registry sync 通道，由 Lily bridge 在插件 load/unload 或配置变化时上报候选变更；在此之前 registry 只用于 shadow 审计，不应用于强制拦截。
 
 此阶段还应提供 recent/debug API，使管理员能查看最近消息、引用关系、Core 的 shadow decision、以及实际 responses 之间是否一致。只有当 shadow decision 在真实群聊中足够稳定后，才进入 Phase 2c 的 claim lock 和响应裁决执行。Phase 2b 不接管发送，不阻断任何现有 matcher，也不迁移工具。
 

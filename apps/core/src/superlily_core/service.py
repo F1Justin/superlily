@@ -209,7 +209,7 @@ async def ensure_source_event(
         event_type=canonical_event_type(payload.instance.platform, payload.event_type),
         conversation_id=conversation_id,
         conversation_type=payload.conversation.type,
-        message_id=None,
+        message_id=payload.message.id if payload.message else None,
         correlation_fingerprint=fingerprint,
         correlation_version=CORRELATION_VERSION if fingerprint is not None else None,
         occurred_at=payload.occurred_at,
