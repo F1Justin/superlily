@@ -198,6 +198,67 @@ async def recent_decisions(
     ]
 
 
+def _compact_text(value: str | None, limit: int = 80) -> str:
+    text = " ".join((value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+@router.get("/v1/decisions/summary", dependencies=[Depends(require_admin)])
+async def decision_summary(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(EventDecision, SourceEvent, EventObservation)
+            .join(SourceEvent, SourceEvent.id == EventDecision.source_event_id)
+            .join(EventObservation, EventObservation.id == EventDecision.deciding_observation_id, isouter=True)
+            .order_by(desc(EventDecision.created_at))
+            .limit(limit)
+        )
+    ).all()
+    result = []
+    for decision, source, observation in rows:
+        conversation = f"{source.conversation_type}:{source.conversation_id}"
+        sender = None
+        text = None
+        instance_id = None
+        if observation is not None:
+            sender = observation.sender_name or observation.sender_id
+            text = observation.text
+            instance_id = observation.instance_id
+        text_preview = _compact_text(text or decision.features_json.get("text_preview"))
+        target = decision.target_instance_id or "-"
+        sender_display = sender or "-"
+        summary = (
+            f"{decision.created_at.isoformat()} | {conversation} | {sender_display} | "
+            f"{text_preview} | {decision.decision_type} -> {target} | {decision.reason}"
+        )
+        result.append(
+            {
+                "summary": summary,
+                "created_at": decision.created_at,
+                "conversation": {
+                    "id": source.conversation_id,
+                    "type": source.conversation_type,
+                    "display": conversation,
+                },
+                "sender": sender,
+                "text_preview": text_preview,
+                "decision_type": decision.decision_type,
+                "target_instance_id": decision.target_instance_id,
+                "reason": decision.reason,
+                "confidence": decision.confidence,
+                "source_event_id": decision.source_event_id,
+                "observation_id": decision.deciding_observation_id,
+                "instance_id": instance_id,
+            }
+        )
+    return result
+
+
 @router.get("/v1/command-registry", dependencies=[Depends(require_admin)])
 async def command_registry(request: Request) -> dict:
     try:

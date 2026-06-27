@@ -163,6 +163,7 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
 
     denied = await client.get("/v1/decisions/recent")
     allowed = await client.get("/v1/decisions/recent", headers={"Authorization": "Bearer admin-secret"})
+    summary = await client.get("/v1/decisions/summary", headers={"Authorization": "Bearer admin-secret"})
     context = await client.get(
         f"/v1/events/{response.json()['source_event_id']}/context",
         headers={"Authorization": "Bearer admin-secret"},
@@ -174,6 +175,12 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
     assert allowed.json()[0]["decision_type"] == "talk"
     assert allowed.json()[0]["target_instance_id"] == "nekro-agent"
     assert allowed.json()[0]["reason"] == "summons_talk_bot"
+    assert summary.status_code == 200
+    assert summary.json()[0]["source_event_id"] == response.json()["source_event_id"]
+    assert summary.json()[0]["text_preview"] == "莉莉帮我看看"
+    assert summary.json()[0]["decision_type"] == "talk"
+    assert summary.json()[0]["target_instance_id"] == "nekro-agent"
+    assert "talk -> nekro-agent" in summary.json()[0]["summary"]
     assert context.status_code == 200
     assert context.json()["source_event"]["source_event_id"] == response.json()["source_event_id"]
     assert context.json()["decisions"][0]["decision_type"] == "talk"

@@ -58,8 +58,13 @@ platform message ID stay separate rather than risk a false merge.
 - `GET /health/ready` also checks PostgreSQL.
 - `GET /v1/events/recent`, `/v1/responses/recent`,
   `/v1/event-links/recent`, `/v1/decisions/recent`,
-  `/v1/command-registry`, `/v1/events/{source_event_id}/context`, and
-  `/v1/instances` require the admin bearer token.
+  `/v1/decisions/summary`, `/v1/command-registry`,
+  `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
+  bearer token.
+
+`/v1/decisions/summary` is the human-readable audit view. It joins the shadow
+decision, source event, and deciding observation into compact rows such as
+`time | group:id | sender | text | decision -> target | reason`.
 
 `/v1/instances` derives `offline` when the most recent heartbeat is older than
 the configured threshold. Heartbeats update the latest instance row; only
