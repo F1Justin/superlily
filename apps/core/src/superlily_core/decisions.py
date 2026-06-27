@@ -20,6 +20,10 @@ def _metadata_to_me(metadata: dict[str, Any]) -> bool:
     return bool(metadata.get("to_me") or metadata.get("is_tome"))
 
 
+def _summons_talk_bot(text: str | None) -> bool:
+    return "莉莉" in (text or "")
+
+
 def _segment_data(segment: dict[str, Any]) -> dict[str, Any]:
     data = segment.get("data")
     if isinstance(data, dict):
@@ -53,7 +57,8 @@ def decide_event(
     command_registry_error: str | None = None,
 ) -> Decision:
     command_match = command_registry.match(text) if command_registry else None
-    to_me = _metadata_to_me(metadata)
+    bridge_to_me = _metadata_to_me(metadata)
+    summons_talk_bot = _summons_talk_bot(text)
     mentions_observer = _mentions_observing_bot(segments, observation_bot_id)
     features = {
         "has_text": bool(text),
@@ -64,7 +69,9 @@ def decide_event(
         "command_registry_error": command_registry_error,
         "command_prefix": command_match.trigger if command_match and command_match.kind == "prefix" else None,
         "matched_command": command_match.as_feature() if command_match else None,
-        "to_me": to_me,
+        "to_me": summons_talk_bot,
+        "bridge_to_me": bridge_to_me,
+        "summons_talk_bot": summons_talk_bot,
         "mentions_observing_bot": mentions_observer,
         "has_reply_link": has_reply_link,
         "reply_to_bot_response": reply_to_bot_response,
@@ -83,8 +90,8 @@ def decide_event(
             features,
         )
 
-    if to_me:
-        return Decision("talk", TALK_TARGET_INSTANCE, 90, "addressed_to_bot", features)
+    if summons_talk_bot:
+        return Decision("talk", TALK_TARGET_INSTANCE, 90, "summons_talk_bot", features)
 
     if mentions_observer:
         return Decision("talk", TALK_TARGET_INSTANCE, 85, "mention_segment_targets_observer", features)

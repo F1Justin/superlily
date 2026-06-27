@@ -173,7 +173,7 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
     assert allowed.json()[0]["source_event_id"] == response.json()["source_event_id"]
     assert allowed.json()[0]["decision_type"] == "talk"
     assert allowed.json()[0]["target_instance_id"] == "nekro-agent"
-    assert allowed.json()[0]["reason"] == "addressed_to_bot"
+    assert allowed.json()[0]["reason"] == "summons_talk_bot"
     assert context.status_code == 200
     assert context.json()["source_event"]["source_event_id"] == response.json()["source_event_id"]
     assert context.json()["decisions"][0]["decision_type"] == "talk"

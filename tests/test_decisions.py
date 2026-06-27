@@ -141,6 +141,46 @@ def test_decision_routes_at_segment_to_talk() -> None:
     assert decision.features["mentions_observing_bot"] is True
 
 
+def test_bridge_to_me_does_not_override_core_summon_policy() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        observation_bot_id="985393579",
+        text="Lily Sol",
+        segments=[{"type": "text", "data": {"text": "Lily Sol"}}],
+        attachments=[],
+        metadata={"to_me": True},
+        has_reply_link=False,
+        reply_to_bot_response=False,
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "ordinary_message"
+    assert decision.features["bridge_to_me"] is True
+    assert decision.features["to_me"] is False
+    assert decision.features["summons_talk_bot"] is False
+
+
+def test_chinese_lily_text_summons_talk_bot() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        observation_bot_id="985393579",
+        text="莉莉 Sol",
+        segments=[{"type": "text", "data": {"text": "莉莉 Sol"}}],
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        reply_to_bot_response=False,
+    )
+
+    assert decision.decision_type == "talk"
+    assert decision.target_instance_id == "nekro-agent"
+    assert decision.reason == "summons_talk_bot"
+    assert decision.features["to_me"] is True
+
+
 def test_decision_routes_reply_to_bot_response_to_talk() -> None:
     decision = decide_event(
         source_event_type="message",

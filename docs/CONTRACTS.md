@@ -31,6 +31,13 @@ decision has a policy version, decision type, optional target instance,
 confidence, reason, and feature snapshot. Decisions are observational; bridges
 do not need to request or obey them in this phase.
 
+Core does not blindly trust bridge `to_me`/`is_tome` flags for talk routing.
+Those adapter/framework signals are retained as `bridge_to_me` in decision
+features. The Core-level `to_me` feature means the text matched Superlily's
+explicit summon policy, currently the Chinese substring `莉莉`. English `Lily`
+alone is ordinary text unless another rule, such as an `@` mention or a reply to
+a bot response, applies.
+
 Command decisions are driven by the configured command registry, not by a small
 hard-coded prefix list. The default registry lives at
 `apps/core/config/command_registry.toml` and can be overridden with
