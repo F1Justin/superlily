@@ -79,6 +79,27 @@ def message_segments(message: Any) -> tuple[str | None, list[dict[str, Any]], li
     return text, segments, attachments
 
 
+def message_references(segments: list[dict[str, Any]], conversation: dict[str, Any]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for segment in segments:
+        if segment.get("type") != "reply":
+            continue
+        data = segment.get("data", {}) or {}
+        reply_id = data.get("id") or data.get("message_id")
+        if reply_id is None:
+            continue
+        references.append(
+            {
+                "type": "reply_to",
+                "platform_message_id": str(reply_id),
+                "conversation_id": conversation["id"],
+                "conversation_type": conversation["type"],
+                "raw": {"segment": segment},
+            }
+        )
+    return references
+
+
 def source_event_id(event: Any, conversation: dict[str, Any], raw: dict[str, Any]) -> str:
     if message_id := getattr(event, "message_id", None):
         return f"qq:{conversation['type']}:{conversation['id']}:message:{message_id}"

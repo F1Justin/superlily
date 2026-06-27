@@ -233,6 +233,16 @@ Nekro Agent 当前可以继续作为自然语言聊天后端。第一阶段只�
 
 第二阶段还应完善平台能力模型。QQ、Telegram、Web、Fumo、皮套等平台支持的发送文本、发送图片、回复、撤回、禁言、Markdown、按钮、文件上传等能力不同，Core 应当通过 capability 自动降级输出。虽然此阶段仍然可以只实现 QQ，但抽象上应当为多平台做好准备。
 
+7.1 Phase 2a：事件引用关系与历史导入基础
+
+在正式进入 claim lock 和响应裁决前，应先补齐事件图谱的基础。Phase 2a 的目标是让 Core 不只知道“发生了哪些消息”，还要知道“这些消息之间如何互相引用”。这包括 QQ reply、quote、forward、mentions 等关系的标准化入口；第一步可以只实现 reply_to，其他关系预留枚举和数据结构。
+
+引用关系不应长期藏在 raw payload 里，而应成为 Core 的一等数据。事件上报可以携带 references 数组，Core 将其写入 event_links 表。每条 link 同时保留标准字段、原始线索和解析状态：如果能根据同实例、同会话、平台本地 message_id 找到目标 observation，则解析到 canonical source_event；如果暂时找不到，则保留 unresolved link，后续由 backfill/resolver 在旧数据导入或目标消息迟到后补连。
+
+历史导入也应在此阶段打基础，但不应直接粗暴合并旧库。Lily 与 Nekro 旧记录应作为 observation 导入，保留 original_source、original_pk、原始 message_id、segments 和安全截断 raw。canonical source_event 仍由 Core 的相关性规则生成或复用。Phase 2a 先实现 dry-run importer/解析报告，再决定是否执行真实导入。
+
+Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解析的引用连到 canonical source_event；不能解析的引用以 unresolved 状态留存；recent/debug API 能看到关系线索；测试覆盖同账号 reply、跨账号 canonical event 引用、未解析引用和旧数据导入 dry-run 的基础路径。
+
 8. 第三阶段：Tool Registry 与现有插件迁移
 
 第三阶段目标是把现有命令插件逐步改造成结构化工具。wf 应当成为 wolfram.run，tex 应当成为 latex.render，Markdown 帮助图片应当成为 markdown.render_image，状态图应当成为 status.inspect，历史检索应当成为 history.search。命令入口仍然保留，但它们只是工具的一种调用方式。

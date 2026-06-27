@@ -3,7 +3,7 @@ import asyncio
 
 from sqlalchemy import select
 
-from superlily_core.models import EventObservation, ResponseRecord, SourceEvent
+from superlily_core.models import EventLink, EventObservation, ResponseRecord, SourceEvent
 
 
 def event_payload(
@@ -15,6 +15,7 @@ def event_payload(
     text: str | None = "hello",
     occurred_at: datetime | None = None,
     event_type: str = "message",
+    references: list[dict] | None = None,
 ) -> dict:
     bot_id = "985393579" if instance_id == "lily-command" else "2022692714"
     return {
@@ -36,6 +37,7 @@ def event_payload(
             "segments": [{"type": "text", "data": {"text": text}}] if text is not None else [],
             "attachments": [],
         },
+        "references": references or [],
         "occurred_at": (occurred_at or datetime.now(timezone.utc)).isoformat(),
         "raw": {"access_token": "must-not-survive", "url": "https://example.test/a?secret=1"},
         "metadata": {},
@@ -210,6 +212,149 @@ async def test_non_text_events_are_not_fuzzily_correlated(client, app) -> None:
     assert responses[0].json()["source_event_id"] != responses[1].json()["source_event_id"]
     async with app.state.database.sessions() as session:
         assert len((await session.scalars(select(SourceEvent))).all()) == 2
+
+
+async def test_event_reply_reference_resolves_to_prior_observation(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    parent = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:parent",
+            message_id="parent",
+            text="parent message",
+            occurred_at=occurred_at,
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-parent"},
+    )
+    child = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:child",
+            message_id="child",
+            text="reply message",
+            occurred_at=occurred_at + timedelta(seconds=1),
+            references=[
+                {
+                    "type": "reply_to",
+                    "platform_message_id": "parent",
+                    "conversation_id": "123",
+                    "conversation_type": "group",
+                    "raw": {
+                        "access_token": "must-not-survive",
+                        "url": "https://example.test/reference?secret=1",
+                    },
+                }
+            ],
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-child"},
+    )
+
+    assert parent.status_code == child.status_code == 201
+    async with app.state.database.sessions() as session:
+        link = await session.scalar(select(EventLink))
+        assert link is not None
+        assert link.from_source_event_id == child.json()["source_event_id"]
+        assert link.to_source_event_id == parent.json()["source_event_id"]
+        assert link.relation_type == "reply_to"
+        assert link.target_platform_message_id == "parent"
+        assert link.target_conversation_id == "123"
+        assert link.resolver_status == "resolved"
+        assert link.confidence == 100
+        assert link.raw_json == {
+            "access_token": "[REDACTED]",
+            "url": "https://example.test/reference",
+        }
+
+
+async def test_cross_account_reply_reference_resolves_to_canonical_source_event(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    lily_parent = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "lily-command",
+            source_event_id="qq:group:123:message:lily-parent",
+            message_id="lily-parent",
+            text="shared parent",
+            occurred_at=occurred_at,
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-cross-lily"},
+    )
+    nekro_parent = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "nekro-agent",
+            source_event_id="qq:group:group_123:message:nekro-parent",
+            conversation_id="group_123",
+            message_id="nekro-parent",
+            text="shared parent",
+            occurred_at=occurred_at + timedelta(seconds=1),
+        ),
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "reference-cross-nekro"},
+    )
+    nekro_child = await client.post(
+        "/v1/events",
+        json=event_payload(
+            "nekro-agent",
+            source_event_id="qq:group:group_123:message:nekro-child",
+            conversation_id="group_123",
+            message_id="nekro-child",
+            text="reply from nekro",
+            occurred_at=occurred_at + timedelta(seconds=2),
+            references=[
+                {
+                    "type": "reply_to",
+                    "platform_message_id": "nekro-parent",
+                    "conversation_id": "group_123",
+                    "conversation_type": "group",
+                }
+            ],
+        ),
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "reference-cross-child"},
+    )
+
+    assert lily_parent.status_code == nekro_parent.status_code == nekro_child.status_code == 201
+    assert lily_parent.json()["source_event_id"] == nekro_parent.json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        link = await session.scalar(select(EventLink))
+        assert link is not None
+        assert link.from_source_event_id == nekro_child.json()["source_event_id"]
+        assert link.to_source_event_id == lily_parent.json()["source_event_id"]
+        assert link.target_conversation_id == "123"
+        assert link.resolver_status == "resolved"
+
+
+async def test_unresolved_event_reference_is_retained_and_visible_in_admin_view(client, app) -> None:
+    event = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:orphan-reply",
+            message_id="orphan-reply",
+            references=[
+                {
+                    "type": "reply_to",
+                    "platform_message_id": "missing-parent",
+                    "conversation_id": "123",
+                    "conversation_type": "group",
+                }
+            ],
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-unresolved"},
+    )
+    assert event.status_code == 201
+
+    denied = await client.get("/v1/event-links/recent")
+    allowed = await client.get("/v1/event-links/recent", headers={"Authorization": "Bearer admin-secret"})
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()[0]["from_source_event_id"] == event.json()["source_event_id"]
+    assert allowed.json()[0]["to_source_event_id"] is None
+    assert allowed.json()[0]["resolver_status"] == "unresolved"
+    assert allowed.json()[0]["target_platform_message_id"] == "missing-parent"
+
+    async with app.state.database.sessions() as session:
+        link = await session.scalar(select(EventLink))
+        assert link is not None
+        assert link.resolver_status == "unresolved"
 
 
 async def test_response_trigger_resolves_reported_id_to_canonical_event(client, app) -> None:

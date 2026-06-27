@@ -18,6 +18,14 @@ accounts may therefore submit different request IDs and receive the same
 canonical ID. The account-local message ID is retained separately as
 `platform_message_id`.
 
+Events may include `references`. Phase 2a records these as first-class
+`event_links`. A reference can provide a canonical or reported
+`source_event_id`, an account-local `platform_message_id`, and optional target
+conversation/sender hints. Core currently extracts QQ `reply` segments as
+`reply_to` references. Resolved links point to a canonical `source_event_id`;
+unresolved or ambiguous links are retained for later backfill instead of being
+dropped.
+
 Cross-account correlation is conservative and currently applies only to QQ
 text messages with a sender. It uses normalized conversation identity, sender,
 text, and the configured short time window. Ambiguous or non-text events stay
@@ -27,8 +35,9 @@ separate rather than risk a false merge.
 
 - `GET /health/live` only proves the process is serving HTTP.
 - `GET /health/ready` also checks PostgreSQL.
-- `GET /v1/events/recent`, `/v1/responses/recent`, and `/v1/instances` require
-  the admin bearer token.
+- `GET /v1/events/recent`, `/v1/responses/recent`,
+  `/v1/event-links/recent`, and `/v1/instances` require the admin bearer
+  token.
 
 `/v1/instances` derives `offline` when the most recent heartbeat is older than
 the configured threshold. Heartbeats update the latest instance row; only

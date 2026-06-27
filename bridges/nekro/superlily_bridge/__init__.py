@@ -97,6 +97,27 @@ def content_parts(items: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
     return segments, attachments
 
 
+def message_references(segments: list[dict[str, Any]], conv: dict[str, Any]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for segment in segments:
+        if segment.get("type") != "reply":
+            continue
+        data = segment.get("data", {}) or {}
+        reply_id = data.get("id") or data.get("message_id")
+        if reply_id is None:
+            continue
+        references.append(
+            {
+                "type": "reply_to",
+                "platform_message_id": str(reply_id),
+                "conversation_id": conv["id"],
+                "conversation_type": conv["type"],
+                "raw": {"segment": segment},
+            }
+        )
+    return references
+
+
 async def _observe_user_message(message: ChatMessage) -> None:
     conv = conversation(message.chat_key, message.chat_type)
     source_id = f"qq:{conv['type']}:{conv['id']}:message:{message.message_id}"
@@ -118,6 +139,7 @@ async def _observe_user_message(message: ChatMessage) -> None:
             "segments": segments,
             "attachments": attachments,
         },
+        "references": message_references(segments, conv),
         "occurred_at": utc_iso(message.send_timestamp),
         "raw": None,
         "metadata": {"is_tome": bool(message.is_tome), "chat_key": message.chat_key},

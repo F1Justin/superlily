@@ -21,3 +21,12 @@ SUPERLILY_TEST_DATABASE_URL=postgresql+asyncpg://superlily:test-only-password@12
 Production schema changes use Alembic; `create_schema` and `drop_schema` exist
 only for disposable tests.
 
+Historical imports start with a write-free dry run. Candidate records should be
+normalized to EventIn-shaped JSONL first, then inspected with:
+
+```bash
+.venv/bin/python -m superlily_core.history_import /path/to/candidates.jsonl
+```
+
+The report validates contracts and counts references, text fields, message IDs,
+and original source labels; it does not write to Core storage.

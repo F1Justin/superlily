@@ -9,7 +9,7 @@ from superlily_contracts import EventIn, HeartbeatIn, ResponseIn
 
 from .auth import ingest_identity, require_admin
 from .dependencies import get_session
-from .models import BotInstance, EventObservation, ResponseRecord, SourceEvent
+from .models import BotInstance, EventLink, EventObservation, ResponseRecord, SourceEvent
 from .service import effective_status, ingest_event, ingest_heartbeat, ingest_response
 
 router = APIRouter()
@@ -143,6 +143,32 @@ async def recent_responses(
             "latency_ms": item.latency_ms,
             "occurred_at": item.occurred_at,
             "received_at": item.received_at,
+        }
+        for item in rows
+    ]
+
+
+@router.get("/v1/event-links/recent", dependencies=[Depends(require_admin)])
+async def recent_event_links(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (await session.scalars(select(EventLink).order_by(desc(EventLink.created_at)).limit(limit))).all()
+    return [
+        {
+            "link_id": item.id,
+            "from_source_event_id": item.from_source_event_id,
+            "from_observation_id": item.from_observation_id,
+            "to_source_event_id": item.to_source_event_id,
+            "relation_type": item.relation_type,
+            "target_source_event_id": item.target_source_event_id,
+            "target_platform_message_id": item.target_platform_message_id,
+            "target_conversation_id": item.target_conversation_id,
+            "target_conversation_type": item.target_conversation_type,
+            "target_sender_id": item.target_sender_id,
+            "confidence": item.confidence,
+            "resolver_status": item.resolver_status,
+            "created_at": item.created_at,
         }
         for item in rows
     ]

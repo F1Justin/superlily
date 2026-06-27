@@ -6,6 +6,7 @@ from .models import (
     BotInstanceRef,
     ConversationRef,
     EventIn,
+    EventReference,
     HeartbeatIn,
     MessageRef,
     ResponseIn,
@@ -19,6 +20,7 @@ __all__ = [
     "BotInstanceRef",
     "ConversationRef",
     "EventIn",
+    "EventReference",
     "HeartbeatIn",
     "MessageRef",
     "ResponseIn",
@@ -26,4 +28,3 @@ __all__ = [
     "SenderRef",
     "sanitize_payload",
 ]
-

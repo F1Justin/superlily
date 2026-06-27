@@ -90,6 +90,32 @@ class EventObservation(Base):
     )
 
 
+class EventLink(Base):
+    __tablename__ = "event_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    from_source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False)
+    from_observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False)
+    to_source_event_id: Mapped[str | None] = mapped_column(ForeignKey("source_events.id", ondelete="SET NULL"))
+    relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_source_event_id: Mapped[str | None] = mapped_column(String(512))
+    target_platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    target_conversation_id: Mapped[str | None] = mapped_column(String(256))
+    target_conversation_type: Mapped[str | None] = mapped_column(String(32))
+    target_sender_id: Mapped[str | None] = mapped_column(String(256))
+    confidence: Mapped[int | None] = mapped_column(Integer)
+    resolver_status: Mapped[str] = mapped_column(String(32), default="unresolved", nullable=False)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_event_links_from_source", "from_source_event_id"),
+        Index("ix_event_links_from_observation", "from_observation_id"),
+        Index("ix_event_links_to_source", "to_source_event_id"),
+        Index("ix_event_links_resolver_status", "resolver_status"),
+    )
+
+
 class ResponseRecord(Base):
     __tablename__ = "responses"
 

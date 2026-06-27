@@ -8,7 +8,7 @@ observation or idempotency key.
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 API_SCHEMA_VERSION = "1.0"
 
@@ -55,6 +55,22 @@ class MessageRef(WireModel):
     attachments: list[Attachment] = Field(default_factory=list, max_length=128)
 
 
+class EventReference(WireModel):
+    type: Literal["reply_to", "quote_of", "forward_of", "mentions", "derived_from"]
+    source_event_id: str | None = Field(default=None, max_length=512)
+    platform_message_id: str | None = Field(default=None, max_length=512)
+    conversation_id: str | None = Field(default=None, max_length=256)
+    conversation_type: Literal["group", "private", "channel", "system", "unknown"] | None = None
+    sender_id: str | None = Field(default=None, max_length=256)
+    raw: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def require_target_hint(self) -> "EventReference":
+        if not (self.source_event_id or self.platform_message_id or self.sender_id):
+            raise ValueError("reference requires source_event_id, platform_message_id, or sender_id")
+        return self
+
+
 class EventIn(WireModel):
     schema_version: Literal["1.0"] = API_SCHEMA_VERSION
     source_event_id: str = Field(min_length=1, max_length=512)
@@ -63,6 +79,7 @@ class EventIn(WireModel):
     conversation: ConversationRef
     sender: SenderRef | None = None
     message: MessageRef | None = None
+    references: list[EventReference] = Field(default_factory=list, max_length=128)
     occurred_at: AwareDatetime
     raw: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -106,4 +123,3 @@ class HeartbeatIn(WireModel):
     error_summary: str | None = Field(default=None, max_length=4096)
     occurred_at: AwareDatetime
     metadata: dict[str, Any] = Field(default_factory=dict)
-

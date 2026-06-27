@@ -13,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from superlily_contracts import EventIn, HeartbeatIn, ResponseIn, SanitizationPolicy, sanitize_payload
+from superlily_contracts import EventIn, EventReference, HeartbeatIn, ResponseIn, SanitizationPolicy, sanitize_payload
 
 from .correlation import (
     CORRELATION_VERSION,
@@ -22,7 +22,7 @@ from .correlation import (
     canonical_event_type,
     event_correlation_fingerprint,
 )
-from .models import BotInstance, EventObservation, InstanceStatusTransition, ResponseRecord, SourceEvent, utc_now
+from .models import BotInstance, EventLink, EventObservation, InstanceStatusTransition, ResponseRecord, SourceEvent, utc_now
 from .settings import Settings
 
 
@@ -209,6 +209,106 @@ async def ensure_source_event(
     return source
 
 
+def _reference_conversation(payload: EventIn, reference: EventReference) -> tuple[str, str]:
+    conversation_type = reference.conversation_type or payload.conversation.type
+    conversation_id = canonical_conversation_id(
+        payload.instance.platform,
+        conversation_type,
+        reference.conversation_id or payload.conversation.id,
+    )
+    return conversation_id, conversation_type
+
+
+async def _resolve_reference_target(
+    session: AsyncSession,
+    payload: EventIn,
+    observation: EventObservation,
+    reference: EventReference,
+    target_conversation_id: str,
+    target_conversation_type: str,
+) -> tuple[str | None, str]:
+    if reference.source_event_id:
+        source = await session.get(SourceEvent, reference.source_event_id)
+        if source is not None:
+            return source.id, "resolved"
+
+        candidates = (
+            await session.scalars(
+                select(EventObservation.source_event_id)
+                .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+                .where(
+                    EventObservation.instance_id == payload.instance.instance_id,
+                    EventObservation.reported_source_event_id == reference.source_event_id,
+                    SourceEvent.platform == payload.instance.platform,
+                )
+                .limit(2)
+            )
+        ).all()
+        if len(candidates) == 1:
+            return candidates[0], "resolved"
+        if len(candidates) > 1:
+            return None, "ambiguous"
+
+    if reference.platform_message_id:
+        candidates = (
+            await session.scalars(
+                select(EventObservation.source_event_id)
+                .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+                .where(
+                    EventObservation.id != observation.id,
+                    EventObservation.instance_id == payload.instance.instance_id,
+                    EventObservation.platform_message_id == reference.platform_message_id,
+                    SourceEvent.platform == payload.instance.platform,
+                    SourceEvent.conversation_id == target_conversation_id,
+                    SourceEvent.conversation_type == target_conversation_type,
+                    SourceEvent.occurred_at <= payload.occurred_at,
+                )
+                .order_by(SourceEvent.occurred_at.desc())
+                .limit(2)
+            )
+        ).all()
+        if len(candidates) == 1:
+            return candidates[0], "resolved"
+        if len(candidates) > 1:
+            return None, "ambiguous"
+
+    return None, "unresolved"
+
+
+async def record_event_links(
+    session: AsyncSession,
+    payload: EventIn,
+    observation: EventObservation,
+    settings: Settings,
+) -> None:
+    for reference in payload.references:
+        target_conversation_id, target_conversation_type = _reference_conversation(payload, reference)
+        to_source_event_id, resolver_status = await _resolve_reference_target(
+            session,
+            payload,
+            observation,
+            reference,
+            target_conversation_id,
+            target_conversation_type,
+        )
+        session.add(
+            EventLink(
+                from_source_event_id=observation.source_event_id,
+                from_observation_id=observation.id,
+                to_source_event_id=to_source_event_id,
+                relation_type=reference.type,
+                target_source_event_id=reference.source_event_id,
+                target_platform_message_id=reference.platform_message_id,
+                target_conversation_id=target_conversation_id,
+                target_conversation_type=target_conversation_type,
+                target_sender_id=reference.sender_id,
+                confidence=100 if to_source_event_id is not None else None,
+                resolver_status=resolver_status,
+                raw_json=sanitize_payload(reference.raw, _metadata_policy(settings)) or {},
+            )
+        )
+
+
 async def ingest_event(
     session: AsyncSession,
     payload: EventIn,
@@ -271,6 +371,8 @@ async def ingest_event(
         session.add(record)
         instance.last_event_at = payload.occurred_at
         try:
+            await session.flush()
+            await record_event_links(session, payload, record, settings)
             await session.commit()
         except IntegrityError:
             await session.rollback()

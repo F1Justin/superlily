@@ -15,6 +15,7 @@ from pydantic import BaseModel, BeforeValidator, Field, SecretStr
 from .payloads import (
     conversation_from_api,
     conversation_from_event,
+    message_references,
     message_segments,
     model_dict,
     source_event_id,
@@ -104,6 +105,7 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
         "conversation": conversation,
         "sender": sender,
         "message": message,
+        "references": message_references(message["segments"], conversation) if message else [],
         "occurred_at": utc_iso(getattr(event, "time", None)),
         "raw": raw if plugin_config.lily_core_include_raw else None,
         "metadata": {"to_me": bool(getattr(event, "to_me", False))},
