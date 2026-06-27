@@ -60,8 +60,12 @@ def message_segments(message: Any) -> tuple[str | None, list[dict[str, Any]], li
     except TypeError:
         return str(message), [], []
     for segment in iterator:
-        segment_type = str(getattr(segment, "type", "unknown"))
-        data = dict(getattr(segment, "data", {}) or {})
+        if isinstance(segment, dict):
+            segment_type = str(segment.get("type", "unknown"))
+            data = dict(segment.get("data", {}) or {})
+        else:
+            segment_type = str(getattr(segment, "type", "unknown"))
+            data = dict(getattr(segment, "data", {}) or {})
         serializable = json.loads(json.dumps(data, ensure_ascii=False, default=str))
         segments.append({"type": segment_type, "data": serializable})
         if segment_type == "text":
@@ -77,6 +81,10 @@ def message_segments(message: Any) -> tuple[str | None, list[dict[str, Any]], li
             )
     text = "".join(texts) or None
     return text, segments, attachments
+
+
+def event_message(event: Any) -> Any:
+    return getattr(event, "original_message", None) or event.get_message()
 
 
 def message_references(segments: list[dict[str, Any]], conversation: dict[str, Any]) -> list[dict[str, Any]]:

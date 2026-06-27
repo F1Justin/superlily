@@ -15,6 +15,7 @@ from pydantic import BaseModel, BeforeValidator, Field, SecretStr
 from .payloads import (
     conversation_from_api,
     conversation_from_event,
+    event_message,
     message_references,
     message_segments,
     model_dict,
@@ -79,7 +80,7 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
     message = None
     if hasattr(event, "get_message"):
         try:
-            text, segments, attachments = message_segments(event.get_message())
+            text, segments, attachments = message_segments(event_message(event))
             message = {
                 "id": str(getattr(event, "message_id", "")) or None,
                 "text": text,

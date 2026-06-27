@@ -21,6 +21,7 @@ from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
 from .identity import conversation
+from .payloads import content_parts, message_references, ref_msg_id_from_ext_data
 from .reporter import BackgroundReporter, ReportItem
 
 plugin = NekroPlugin(
@@ -77,51 +78,11 @@ def instance(bot_id: str | None = None) -> dict[str, Any]:
     }
 
 
-def content_parts(items: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    segments: list[dict[str, Any]] = []
-    attachments: list[dict[str, Any]] = []
-    for item in items:
-        data = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
-        data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
-        segments.append(data)
-        item_type = str(data.get("type", "unknown"))
-        if item_type in {"image", "file", "voice", "video"}:
-            attachments.append(
-                {
-                    "type": item_type,
-                    "name": data.get("file_name"),
-                    "platform_id": None,
-                    "size_bytes": None,
-                }
-            )
-    return segments, attachments
-
-
-def message_references(segments: list[dict[str, Any]], conv: dict[str, Any]) -> list[dict[str, Any]]:
-    references: list[dict[str, Any]] = []
-    for segment in segments:
-        if segment.get("type") != "reply":
-            continue
-        data = segment.get("data", {}) or {}
-        reply_id = data.get("id") or data.get("message_id")
-        if reply_id is None:
-            continue
-        references.append(
-            {
-                "type": "reply_to",
-                "platform_message_id": str(reply_id),
-                "conversation_id": conv["id"],
-                "conversation_type": conv["type"],
-                "raw": {"segment": segment},
-            }
-        )
-    return references
-
-
 async def _observe_user_message(message: ChatMessage) -> None:
     conv = conversation(message.chat_key, message.chat_type)
     source_id = f"qq:{conv['type']}:{conv['id']}:message:{message.message_id}"
     segments, attachments = content_parts(message.content_data)
+    ref_msg_id = ref_msg_id_from_ext_data(message.ext_data)
     payload = {
         "schema_version": "1.0",
         "source_event_id": source_id,
@@ -139,7 +100,7 @@ async def _observe_user_message(message: ChatMessage) -> None:
             "segments": segments,
             "attachments": attachments,
         },
-        "references": message_references(segments, conv),
+        "references": message_references(segments, conv, ref_msg_id),
         "occurred_at": utc_iso(message.send_timestamp),
         "raw": None,
         "metadata": {"is_tome": bool(message.is_tome), "chat_key": message.chat_key},
