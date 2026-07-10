@@ -4,6 +4,26 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 
+NATIVE_IDENTITY_SCHEMA = "onebot_v11.qq.native_identity.v1"
+_NATIVE_IDENTITY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("message_id", ("message_id",)),
+    ("message_seq", ("message_seq",)),
+    ("real_id", ("real_id",)),
+    ("real_seq", ("real_seq",)),
+    ("time", ("time",)),
+    ("group_id", ("group_id",)),
+    ("user_id", ("user_id",)),
+    ("message_type", ("message_type",)),
+    ("sub_type", ("sub_type",)),
+    ("msg_id", ("msg_id", "msgId")),
+    ("msg_seq", ("msg_seq", "msgSeq")),
+    ("msg_random", ("msg_random", "msgRandom")),
+    ("msg_uid", ("msg_uid", "msgUid")),
+    ("peer_uid", ("peer_uid", "peerUid")),
+    ("chat_type", ("chat_type", "chatType")),
+)
+
+
 def utc_iso(timestamp: int | float | None = None) -> str:
     if timestamp is None:
         return datetime.now(timezone.utc).isoformat()
@@ -21,6 +41,45 @@ def model_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "dict"):
         return value.dict()
     return {}
+
+
+def _native_scalar(value: Any, *, max_length: int = 512) -> str | None:
+    if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
+        return None
+    text = str(value).strip()
+    if not text or text.lower().startswith(("http://", "https://", "file://", "base64://", "data:")):
+        return None
+    return text[:max_length]
+
+
+def native_message_identity(*sources: Any) -> dict[str, str]:
+    """Extract a strict, content-free allowlist of OneBot/NapCat identity fields."""
+
+    values: dict[str, str] = {}
+    for canonical, aliases in _NATIVE_IDENTITY_ALIASES:
+        value: Any = None
+        for source in sources:
+            if source is None:
+                continue
+            for alias in aliases:
+                if isinstance(source, dict):
+                    candidate = source.get(alias)
+                else:
+                    candidate = getattr(source, alias, None)
+                if candidate is not None:
+                    value = candidate
+                    break
+            if value is not None:
+                break
+        normalized = _native_scalar(
+            value,
+            max_length=64 if canonical in {"message_type", "sub_type", "chat_type"} else 512,
+        )
+        if normalized is not None:
+            values[canonical] = normalized
+    if not values:
+        return {}
+    return {"schema": NATIVE_IDENTITY_SCHEMA, **values}
 
 
 def _safe_platform_id(value: Any) -> str | None:

@@ -63,6 +63,46 @@ async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
         }
 
 
+async def test_native_identity_is_visible_in_admin_debug_views(client) -> None:
+    payload = event_payload()
+    payload["metadata"] = {
+        "native_identity": {
+            "schema": "onebot_v11.qq.native_identity.v1",
+            "message_id": "456",
+            "real_seq": "778899",
+            "group_id": "123",
+        }
+    }
+    event = await client.post(
+        "/v1/events",
+        json=payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "native-identity-event"},
+    )
+    assert event.status_code == 201
+
+    assert (await client.get("/v1/native-identities/recent")).status_code == 401
+    headers = {"Authorization": "Bearer admin-secret"}
+    recent = await client.get("/v1/native-identities/recent", headers=headers)
+    events = await client.get("/v1/events/recent", headers=headers)
+    context = await client.get(f"/v1/events/{event.json()['source_event_id']}/context", headers=headers)
+    coverage = await client.get("/v1/native-identities/coverage?hours=1", headers=headers)
+
+    assert recent.status_code == events.status_code == context.status_code == coverage.status_code == 200
+    assert recent.json()[0]["native_identity"]["real_seq"] == "778899"
+    assert "real_seq=778899" in recent.json()[0]["summary"]
+    assert events.json()[0]["native_identity"]["real_seq"] == "778899"
+    assert context.json()["observations"][0]["native_identity"]["real_seq"] == "778899"
+    assert coverage.json()["instances"] == [
+        {
+            "instance_id": "lily-command",
+            "observations": 1,
+            "with_native_identity": 1,
+            "fields": {"message_id": 1, "real_seq": 1, "group_id": 1},
+            "coverage_percent": 100.0,
+        }
+    ]
+
+
 async def test_two_bots_create_two_observations_of_one_source_event(client) -> None:
     lily = await client.post(
         "/v1/events",

@@ -20,8 +20,8 @@ from nekro_agent.schemas.agent_ctx import AgentCtx
 from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
-from .identity import conversation
-from .payloads import content_parts, message_references, ref_msg_id_from_ext_data
+from .identity import NativeIdentityCache, conversation, native_identity_cache_key
+from .payloads import content_parts, message_references, native_message_identity, ref_msg_id_from_ext_data
 from .reporter import BackgroundReporter, ReportItem
 
 plugin = NekroPlugin(
@@ -83,6 +83,19 @@ async def _observe_user_message(message: ChatMessage) -> None:
     source_id = f"qq:{conv['type']}:{conv['id']}:message:{message.message_id}"
     segments, attachments = content_parts(message.content_data)
     ref_msg_id = ref_msg_id_from_ext_data(message.ext_data)
+    native_identity = _take_native_identity(conv, message.message_id)
+    if native_identity is None:
+        fallback_identity = {
+            "message_id": message.message_id,
+            "user_id": message.platform_userid or message.sender_id,
+            "message_type": conv["type"],
+        }
+        if conv["type"] == "group":
+            fallback_identity["group_id"] = conv["id"]
+        native_identity = native_message_identity(message.ext_data, fallback_identity)
+    metadata: dict[str, Any] = {"is_tome": bool(message.is_tome), "chat_key": message.chat_key}
+    if native_identity:
+        metadata["native_identity"] = native_identity
     payload = {
         "schema_version": "1.0",
         "source_event_id": source_id,
@@ -103,7 +116,7 @@ async def _observe_user_message(message: ChatMessage) -> None:
         "references": message_references(segments, conv, ref_msg_id),
         "occurred_at": utc_iso(message.send_timestamp),
         "raw": None,
-        "metadata": {"is_tome": bool(message.is_tome), "chat_key": message.chat_key},
+        "metadata": metadata,
     }
     reporter.enqueue(ReportItem("/v1/events", payload, stable_key(config.INSTANCE_ID, source_id)))
 
@@ -123,6 +136,48 @@ def _event_dict(event: Any) -> dict[str, Any]:
     if hasattr(event, "dict"):
         return event.dict()
     return {}
+
+
+_NATIVE_IDENTITY_CACHE_ATTR = "_superlily_native_identity_cache_v1"
+_NATIVE_IDENTITY_HOOK_ATTR = "_superlily_native_identity_hook_v1"
+
+
+def _native_identity_cache() -> NativeIdentityCache:
+    cache = getattr(nonebot_message, _NATIVE_IDENTITY_CACHE_ATTR, None)
+    if cache is None:
+        cache = NativeIdentityCache()
+        setattr(nonebot_message, _NATIVE_IDENTITY_CACHE_ATTR, cache)
+    return cache
+
+
+def _onebot_conversation(raw: dict[str, Any]) -> dict[str, str]:
+    if raw.get("group_id") is not None:
+        return {"id": str(raw["group_id"]), "type": "group"}
+    return {"id": str(raw.get("user_id") or raw.get("target_id") or "unknown"), "type": "private"}
+
+
+def _take_native_identity(conv: dict[str, Any], message_id: Any) -> dict[str, str] | None:
+    return _native_identity_cache().pop(native_identity_cache_key(conv, message_id))
+
+
+if not getattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, False):
+
+    @event_preprocessor
+    async def capture_native_identity(bot: OneBotBot, event: OneBotEvent) -> None:
+        try:
+            raw = _event_dict(event)
+            if raw.get("post_type") != "message" or raw.get("message_id") is None:
+                return
+            conv = _onebot_conversation(raw)
+            identity = native_message_identity(raw, event)
+            _native_identity_cache().put(
+                native_identity_cache_key(conv, raw["message_id"]),
+                identity,
+            )
+        except Exception:
+            logger.exception("Lily Core native identity capture failed open")
+
+    setattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, True)
 
 
 def _onebot_message_parts(message: Any) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:

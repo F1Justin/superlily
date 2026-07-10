@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -111,6 +111,7 @@ async def recent_events(
             },
             "sender": {"id": observation.sender_id, "name": observation.sender_name},
             "message_id": observation.platform_message_id,
+            "native_identity": observation.metadata_json.get("native_identity"),
             "correlation_version": source.correlation_version,
             "text": observation.text,
             "occurred_at": source.occurred_at,
@@ -203,6 +204,100 @@ def _compact_text(value: str | None, limit: int = 80) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+@router.get("/v1/native-identities/recent", dependencies=[Depends(require_admin)])
+async def recent_native_identities(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(EventObservation, SourceEvent)
+            .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .order_by(desc(EventObservation.received_at))
+            .limit(min(limit * 5, 2500))
+        )
+    ).all()
+    result = []
+    for observation, source in rows:
+        native_identity = observation.metadata_json.get("native_identity")
+        if not isinstance(native_identity, dict) or not native_identity:
+            continue
+        text_preview = _compact_text(observation.text)
+        conversation = f"{source.conversation_type}:{source.conversation_id}"
+        summary = (
+            f"{source.occurred_at.isoformat()} | {conversation} | {observation.instance_id} | "
+            f"sender={observation.sender_id or '-'} | message_id={native_identity.get('message_id', '-')} | "
+            f"real_seq={native_identity.get('real_seq', '-')} | {text_preview}"
+        )
+        result.append(
+            {
+                "summary": summary,
+                "source_event_id": source.id,
+                "observation_id": observation.id,
+                "instance_id": observation.instance_id,
+                "conversation": {
+                    "id": source.conversation_id,
+                    "type": source.conversation_type,
+                    "display": conversation,
+                },
+                "sender_id": observation.sender_id,
+                "text_preview": text_preview,
+                "platform_message_id": observation.platform_message_id,
+                "native_identity": native_identity,
+                "occurred_at": source.occurred_at,
+                "received_at": observation.received_at,
+            }
+        )
+        if len(result) >= limit:
+            break
+    return result
+
+
+@router.get("/v1/native-identities/coverage", dependencies=[Depends(require_admin)])
+async def native_identity_coverage(
+    session: Session,
+    hours: Annotated[int, Query(ge=1, le=168)] = 24,
+) -> dict:
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    observations = (
+        await session.scalars(
+            select(EventObservation)
+            .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .where(EventObservation.received_at >= since)
+            .where(SourceEvent.event_type == "message")
+            .order_by(desc(EventObservation.received_at))
+        )
+    ).all()
+    by_instance: dict[str, dict] = {}
+    for observation in observations:
+        stats = by_instance.setdefault(
+            observation.instance_id,
+            {"observations": 0, "with_native_identity": 0, "fields": {}},
+        )
+        stats["observations"] += 1
+        native_identity = observation.metadata_json.get("native_identity")
+        if not isinstance(native_identity, dict) or not native_identity:
+            continue
+        stats["with_native_identity"] += 1
+        for field in native_identity:
+            if field == "schema":
+                continue
+            stats["fields"][field] = stats["fields"].get(field, 0) + 1
+
+    instances = []
+    for instance_id, stats in sorted(by_instance.items()):
+        total = stats["observations"]
+        captured = stats["with_native_identity"]
+        instances.append(
+            {
+                "instance_id": instance_id,
+                **stats,
+                "coverage_percent": round(captured * 100 / total, 2) if total else 0.0,
+            }
+        )
+    return {"since": since, "hours": hours, "observations": len(observations), "instances": instances}
 
 
 @router.get("/v1/decisions/summary", dependencies=[Depends(require_admin)])
@@ -322,6 +417,7 @@ async def event_context(source_event_id: str, session: Session) -> dict:
                 "instance_id": item.instance_id,
                 "bot_id": item.bot_id,
                 "platform_message_id": item.platform_message_id,
+                "native_identity": item.metadata_json.get("native_identity"),
                 "sender_id": item.sender_id,
                 "sender_name": item.sender_name,
                 "text": item.text,

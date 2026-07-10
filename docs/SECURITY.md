@@ -19,6 +19,9 @@
   are discarded without a preview.
 - Attachment bytes and remote URLs are never copied in phase one; only metadata
   summaries are accepted.
+- Phase 2a.1 native identity capture is an explicit scalar allowlist. It never
+  stores raw message bodies, sender objects, attachment locations, access
+  tokens, cookies, or arbitrary adapter extension dictionaries.
 - Event text is personal chat data even when it contains no credentials. Set a
   retention policy before enabling broad group ingestion.
 
@@ -30,4 +33,3 @@ Recommended starting retention:
 
 Automated retention deletion is intentionally not enabled until the operator
 confirms these periods.
-

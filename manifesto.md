@@ -243,6 +243,14 @@ Nekro Agent 当前可以继续作为自然语言聊天后端。第一阶段只�
 
 Phase 2a 的完成标准是：新消息的 reply 引用可以被记录；能解析的引用连到 canonical source_event；不能解析的引用以 unresolved 状态留存；recent/debug API 能看到关系线索；测试覆盖同账号 reply、跨账号 canonical event 引用、未解析引用和旧数据导入 dry-run 的基础路径。
 
+7.1.1 Phase 2a.1：跨账号原生消息身份验证
+
+Lily 与 Nekro 通过两个 QQ 账号观察同一条消息时，NapCat 下发的 OneBot `message_id` 可能不同，因此在进入真实 claim lock 前必须先验证更强的原生身份线索。两个 bridge 应只采集内容无关的白名单字段，例如 `message_id`、`message_seq`、`real_id`、`real_seq`、平台时间、会话 ID、发送者 ID 和消息类型；不得为了关联而保存整份 NapCat payload、附件 URL 或额外消息正文。
+
+Phase 2a.1 只负责采集和审计，不立即修改 canonical correlation。Core 应提供 recent/debug 视图，能够对照 Lily 与 Nekro 对同一可见消息记录的原生字段。如果实测证明 `real_seq` 或其他组合键跨账号稳定，再设计 correlation v3；如果不存在稳定强键，则保留独立 source_event，并使用显式的疑似同源关系或权威入口策略，不能退回 sender+text+短时间窗口的强制合并。
+
+Phase 2a.1 的完成标准是：两个 bridge 均能上报 `metadata.native_identity`；Core 能展示字段来源和覆盖情况；受控样本能判断 `real_seq` 是否跨账号一致；采集失败保持 fail-open；在验证结论形成前，现有 correlation v2 和 bot 回复行为完全不变。
+
 7.2 Phase 2b：核心裁决 Shadow Mode
 
 在引入真正 claim lock 之前，Core 应先进入 shadow decision 阶段。此阶段 Core 对每个 canonical event 生成一条 event_decision，记录它认为这条消息应被忽略、交给命令号、交给自然语言号，还是只是潜在工具候选。这个判断只用于审计和调试，不会让 Lily Bot 或 Nekro Agent 改变现有行为。

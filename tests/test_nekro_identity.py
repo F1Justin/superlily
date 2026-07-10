@@ -28,3 +28,22 @@ def test_onebot_chat_key_uses_bare_conversation_id() -> None:
         "type": "private",
         "name": None,
     }
+
+
+def test_native_identity_cache_is_bounded_and_expires() -> None:
+    identity = load_identity_module()
+    cache = identity.NativeIdentityCache(max_entries=2, ttl_seconds=10)
+
+    cache.put("first", {"message_id": "1"}, now=0)
+    cache.put("second", {"message_id": "2"}, now=1)
+    cache.put("third", {"message_id": "3"}, now=2)
+
+    assert cache.pop("first", now=2) is None
+    assert cache.pop("second", now=2) == {"message_id": "2"}
+    assert cache.pop("third", now=13) is None
+
+
+def test_native_identity_cache_key_includes_conversation() -> None:
+    identity = load_identity_module()
+
+    assert identity.native_identity_cache_key({"type": "group", "id": "123"}, "456") == "group:123:456"

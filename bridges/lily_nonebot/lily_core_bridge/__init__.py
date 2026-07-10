@@ -19,6 +19,7 @@ from .payloads import (
     message_references,
     message_segments,
     model_dict,
+    native_message_identity,
     source_event_id,
     stable_key,
     utc_iso,
@@ -98,6 +99,10 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
             "name": getattr(sender_obj, "card", None) or getattr(sender_obj, "nickname", None),
             "roles": [str(getattr(sender_obj, "role", "member"))],
         }
+    metadata: dict[str, Any] = {"to_me": bool(getattr(event, "to_me", False))}
+    native_identity = native_message_identity(raw, event) if raw.get("post_type") == "message" else {}
+    if native_identity:
+        metadata["native_identity"] = native_identity
     payload = {
         "schema_version": "1.0",
         "source_event_id": event_id,
@@ -109,7 +114,7 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
         "references": message_references(message["segments"], conversation) if message else [],
         "occurred_at": utc_iso(getattr(event, "time", None)),
         "raw": raw if plugin_config.lily_core_include_raw else None,
-        "metadata": {"to_me": bool(getattr(event, "to_me", False))},
+        "metadata": metadata,
     }
     reporter.enqueue(
         ReportItem("/v1/events", payload, stable_key(plugin_config.lily_core_instance_id, event_id))

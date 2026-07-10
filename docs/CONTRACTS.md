@@ -52,19 +52,36 @@ conversation identity, platform message ID, sender, text, and the configured
 short time window. Ambiguous events, non-text events, and messages without a
 platform message ID stay separate rather than risk a false merge.
 
+QQ bridges may include `metadata.native_identity` using schema
+`onebot_v11.qq.native_identity.v1`. This is a strict scalar allowlist for
+identity diagnostics, currently covering `message_id`, `message_seq`,
+`real_id`, `real_seq`, `time`, `group_id`, `user_id`, message/sub types, and a
+small set of optional NapCat native ID aliases. It is evidence for Phase 2a.1,
+not yet a trusted canonical key.
+
 ## Read APIs
 
 - `GET /health/live` only proves the process is serving HTTP.
 - `GET /health/ready` also checks PostgreSQL.
 - `GET /v1/events/recent`, `/v1/responses/recent`,
   `/v1/event-links/recent`, `/v1/decisions/recent`,
-  `/v1/decisions/summary`, `/v1/command-registry`,
+  `/v1/decisions/summary`, `/v1/native-identities/recent`,
+  `/v1/native-identities/coverage`, `/v1/command-registry`,
   `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
   bearer token.
 
 `/v1/decisions/summary` is the human-readable audit view. It joins the shadow
 decision, source event, and deciding observation into compact rows such as
 `time | group:id | sender | text | decision -> target | reason`.
+
+`/v1/native-identities/recent` shows the same observations with compact
+`message_id` and `real_seq` summaries plus the complete safe identity
+allowlist, so cross-account samples can be compared without enabling raw
+payload storage.
+
+`/v1/native-identities/coverage` reports per-instance identity capture and
+per-field coverage for canonical message events over a bounded one-to-168-hour
+window; notices and other non-message events are excluded.
 
 `/v1/instances` derives `offline` when the most recent heartbeat is older than
 the configured threshold. Heartbeats update the latest instance row; only
