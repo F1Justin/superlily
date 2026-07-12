@@ -1,10 +1,12 @@
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any
 
 from .command_registry import CommandRegistry
 
-POLICY_VERSION = "shadow-v1"
+POLICY_VERSION = "qq-v3-policy-v2"
 TALK_TARGET_INSTANCE = "nekro-agent"
+COMMAND_TARGET_INSTANCE = "lily-command"
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,42 +26,29 @@ def _summons_talk_bot(text: str | None) -> bool:
     return "莉莉" in (text or "")
 
 
-def _segment_data(segment: dict[str, Any]) -> dict[str, Any]:
-    data = segment.get("data")
-    if isinstance(data, dict):
-        return data
-    return segment
-
-
-def _mentions_observing_bot(segments: list[dict[str, Any]], bot_id: str) -> bool:
-    for segment in segments:
-        if segment.get("type") != "at":
-            continue
-        data = _segment_data(segment)
-        target = data.get("qq") or data.get("target") or data.get("target_platform_userid")
-        if str(target) == str(bot_id):
-            return True
-    return False
-
-
 def decide_event(
     *,
     source_event_type: str,
     conversation_type: str,
-    observation_bot_id: str,
     text: str | None,
-    segments: list[dict[str, Any]],
     attachments: list[dict[str, Any]],
     metadata: dict[str, Any],
     has_reply_link: bool,
-    reply_to_bot_response: bool,
+    reply_target_instance_id: str | None = None,
+    reply_target_status: str = "none",
+    mentioned_bot_instance_ids: Sequence[str] = (),
+    observation_count: int = 1,
     command_registry: CommandRegistry | None = None,
     command_registry_error: str | None = None,
+    command_registry_runtime: dict[str, Any] | None = None,
+    sender_bot_instance_id: str | None = None,
 ) -> Decision:
-    command_match = command_registry.match(text) if command_registry else None
+    bot_message = sender_bot_instance_id is not None
+    command_match = command_registry.match(text) if command_registry and not bot_message else None
     bridge_to_me = _metadata_to_me(metadata)
-    summons_talk_bot = _summons_talk_bot(text)
-    mentions_observer = _mentions_observing_bot(segments, observation_bot_id)
+    summons_talk_bot = _summons_talk_bot(text) if not bot_message else False
+    mentioned_instances = sorted(set(mentioned_bot_instance_ids))
+    mentions_known_bot = bool(mentioned_instances)
     features = {
         "has_text": bool(text),
         "text_preview": (text or "")[:200],
@@ -67,21 +56,33 @@ def decide_event(
         "conversation_type": conversation_type,
         "command_registry_version": command_registry.version if command_registry else None,
         "command_registry_error": command_registry_error,
-        "command_prefix": command_match.trigger if command_match and command_match.kind == "prefix" else None,
+        "command_registry_runtime": command_registry_runtime,
+        "command_prefix": (
+            command_match.trigger if command_match and command_match.kind in {"command", "prefix"} else None
+        ),
         "matched_command": command_match.as_feature() if command_match else None,
         "to_me": summons_talk_bot,
         "bridge_to_me": bridge_to_me,
         "summons_talk_bot": summons_talk_bot,
-        "mentions_observing_bot": mentions_observer,
+        "mentions_observing_bot": mentions_known_bot,
+        "mentioned_bot_instance_ids": mentioned_instances,
         "has_reply_link": has_reply_link,
-        "reply_to_bot_response": reply_to_bot_response,
+        "reply_to_bot_response": reply_target_instance_id is not None,
+        "reply_target_instance_id": reply_target_instance_id,
+        "reply_target_status": reply_target_status,
+        "observation_count": observation_count,
+        "sender_bot_instance_id": sender_bot_instance_id,
     }
 
     if source_event_type != "message":
         return Decision("ignore", None, 95, "non_message_event", features)
 
+    if bot_message:
+        return Decision("observe_only", None, 100, "bot_message_observed", features)
+
     if command_match:
-        reason = f"command_{command_match.kind}:{command_match.trigger}"
+        reason_kind = "prefix" if command_match.kind == "command" else command_match.kind
+        reason = f"command_{reason_kind}:{command_match.trigger}"
         return Decision(
             "command",
             command_match.target_instance_id,
@@ -93,16 +94,23 @@ def decide_event(
     if summons_talk_bot:
         return Decision("talk", TALK_TARGET_INSTANCE, 90, "summons_talk_bot", features)
 
-    if mentions_observer:
-        return Decision("talk", TALK_TARGET_INSTANCE, 85, "mention_segment_targets_observer", features)
+    if has_reply_link:
+        if reply_target_instance_id == TALK_TARGET_INSTANCE:
+            return Decision("talk", TALK_TARGET_INSTANCE, 95, "reply_to_talk_response", features)
+        if mentions_known_bot:
+            return Decision("talk", TALK_TARGET_INSTANCE, 85, "explicit_bot_mention_with_reply", features)
+        if reply_target_instance_id == COMMAND_TARGET_INSTANCE:
+            return Decision("observe_only", None, 90, "reply_to_command_response_observed", features)
+        if reply_target_status == "resolved_other":
+            return Decision("observe_only", None, 75, "reply_to_other_observed", features)
+        if reply_target_status in {"ambiguous", "conflict"}:
+            return Decision("observe_only", None, 50, "reply_target_conflict_observed", features)
+        return Decision("observe_only", None, 60, "reply_reference_observed", features)
 
-    if reply_to_bot_response:
-        return Decision("talk", TALK_TARGET_INSTANCE, 80, "reply_to_bot_response", features)
+    if mentions_known_bot:
+        return Decision("talk", TALK_TARGET_INSTANCE, 85, "explicit_bot_mention", features)
 
     if conversation_type == "private":
         return Decision("talk", TALK_TARGET_INSTANCE, 75, "private_message", features)
-
-    if has_reply_link:
-        return Decision("observe_only", None, 60, "reply_reference_observed", features)
 
     return Decision("observe_only", None, 70, "ordinary_message", features)
