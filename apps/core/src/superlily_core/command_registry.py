@@ -2,14 +2,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
+import json
 from pathlib import Path
 import re
 import tomllib
+from collections.abc import Iterable
 from typing import Any, Literal
 
 DEFAULT_COMMAND_REGISTRY_PATH = "apps/core/config/command_registry.toml"
-CommandRuleKind = Literal["prefix", "exact", "regex"]
+CommandRuleKind = Literal["command", "token", "prefix", "exact", "suffix", "contains", "regex"]
 COMMAND_PERMISSIONS = {"public", "group_admin", "superuser"}
+
+
+def runtime_registry_snapshot_hash(
+    plugins: Iterable[dict[str, Any]],
+    candidates: Iterable[dict[str, Any]],
+) -> str:
+    def canonical_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        encoded = {
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")): row
+            for row in rows
+        }
+        return [encoded[key] for key in sorted(encoded)]
+
+    material = {
+        "plugins": canonical_rows(plugins),
+        "candidates": canonical_rows(candidates),
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,9 +92,17 @@ class CommandRegistry:
 
         for rule in self.rules:
             for trigger in rule.triggers:
-                if rule.kind == "prefix" and _matches_prefix(normalized, trigger):
+                if rule.kind == "prefix" and normalized.startswith(trigger.strip().casefold()):
+                    return _match_from_rule(rule, trigger)
+                if rule.kind == "command" and normalized.startswith(trigger.strip().casefold()):
+                    return _match_from_rule(rule, trigger)
+                if rule.kind == "token" and _matches_token(normalized, trigger):
                     return _match_from_rule(rule, trigger)
                 if rule.kind == "exact" and normalized == trigger.strip().casefold():
+                    return _match_from_rule(rule, trigger)
+                if rule.kind == "suffix" and normalized.endswith(trigger.strip().casefold()):
+                    return _match_from_rule(rule, trigger)
+                if rule.kind == "contains" and trigger.strip().casefold() in normalized:
                     return _match_from_rule(rule, trigger)
                 if rule.kind == "regex" and re.match(trigger, raw, flags=re.IGNORECASE | re.DOTALL):
                     return _match_from_rule(rule, trigger)
@@ -97,6 +127,13 @@ class CommandRegistry:
             ],
         }
 
+    def active_for_runtime_plugins(self, plugins: Iterable[dict[str, Any]]) -> "CommandRegistry":
+        aliases = runtime_plugin_aliases(plugins)
+        return CommandRegistry(
+            version=self.version,
+            rules=tuple(rule for rule in self.rules if source_plugin_loaded(rule.source_plugin, aliases)),
+        )
+
 
 def _match_from_rule(rule: CommandRule, trigger: str) -> CommandMatch:
     return CommandMatch(
@@ -112,7 +149,7 @@ def _match_from_rule(rule: CommandRule, trigger: str) -> CommandMatch:
     )
 
 
-def _matches_prefix(normalized_text: str, trigger: str) -> bool:
+def _matches_token(normalized_text: str, trigger: str) -> bool:
     normalized_trigger = trigger.strip().casefold()
     if not normalized_trigger:
         return False
@@ -121,6 +158,113 @@ def _matches_prefix(normalized_text: str, trigger: str) -> bool:
     if not normalized_text.startswith(normalized_trigger):
         return False
     return normalized_text[len(normalized_trigger)].isspace()
+
+
+def runtime_plugin_aliases(plugins: Iterable[dict[str, Any]]) -> set[str]:
+    aliases: set[str] = set()
+    for plugin in plugins:
+        for raw in (plugin.get("plugin_id"), plugin.get("module_name")):
+            if not raw:
+                continue
+            value = str(raw).casefold()
+            aliases.add(value)
+            aliases.add(value.rsplit(".", 1)[-1])
+    return aliases
+
+
+def source_plugin_loaded(source_plugin: str, aliases: set[str]) -> bool:
+    source = source_plugin.casefold()
+    candidates = {source, source.rsplit(".", 1)[-1]}
+    if source.startswith("plugins."):
+        candidates.add(source.removeprefix("plugins."))
+    if source.startswith("builtin."):
+        candidates.add(source.removeprefix("builtin."))
+    return bool(candidates & aliases)
+
+
+def match_runtime_candidates(candidates: Iterable[dict[str, Any]], text: str | None) -> list[dict[str, Any]]:
+    if text is None:
+        return []
+    raw = text.strip()
+    if not raw:
+        return []
+    matches: list[dict[str, Any]] = []
+    for candidate in candidates:
+        kind = candidate.get("kind")
+        ignore_case = bool(candidate.get("ignore_case"))
+        candidate_raw = raw.casefold() if ignore_case else raw
+        for raw_trigger in candidate.get("triggers", []):
+            trigger = str(raw_trigger)
+            candidate_trigger = trigger.casefold() if ignore_case else trigger
+            matched = False
+            if kind in {"command", "prefix"}:
+                matched = candidate_raw.startswith(candidate_trigger)
+            elif kind == "token":
+                matched = candidate_raw == candidate_trigger or (
+                    candidate_raw.startswith(candidate_trigger)
+                    and len(candidate_raw) > len(candidate_trigger)
+                    and candidate_raw[len(candidate_trigger)].isspace()
+                )
+            elif kind == "exact":
+                matched = candidate_raw == candidate_trigger
+            elif kind == "suffix":
+                matched = candidate_raw.endswith(candidate_trigger)
+            elif kind == "contains":
+                matched = candidate_trigger in candidate_raw
+            elif kind == "regex":
+                try:
+                    flags = int(candidate.get("regex_flags") or 0)
+                    matched = re.search(trigger, raw[:4_096], flags=flags) is not None
+                except (re.error, TypeError, ValueError):
+                    matched = False
+            if matched:
+                matches.append(
+                    {
+                        "plugin_id": candidate.get("plugin_id"),
+                        "module_name": candidate.get("module_name"),
+                        "kind": kind,
+                        "trigger": trigger,
+                        "complete": candidate.get("complete") is True,
+                        "rule_checker_count": candidate.get("rule_checker_count"),
+                        "unknown_rule_checkers": candidate.get("unknown_rule_checkers", []),
+                        "permission_checker_count": candidate.get("permission_checker_count"),
+                    }
+                )
+                break
+    return matches
+
+
+def match_runtime_candidate(
+    candidates: Iterable[dict[str, Any]],
+    text: str | None,
+) -> dict[str, Any] | None:
+    matches = match_runtime_candidates(candidates, text)
+    return matches[0] if matches else None
+
+
+def runtime_match_supports_command(runtime_match: dict[str, Any], command_match: CommandMatch) -> bool:
+    aliases = runtime_plugin_aliases([runtime_match])
+    return (
+        source_plugin_loaded(command_match.source_plugin, aliases)
+        and runtime_match.get("kind") == command_match.kind
+        and str(runtime_match.get("trigger", "")).strip().casefold()
+        == command_match.trigger.strip().casefold()
+    )
+
+
+def runtime_candidate_trigger_reviewed(
+    registry: CommandRegistry,
+    candidate: dict[str, Any],
+    trigger: Any,
+) -> bool:
+    normalized_trigger = str(trigger).strip().casefold()
+    aliases = runtime_plugin_aliases([candidate])
+    return any(
+        source_plugin_loaded(rule.source_plugin, aliases)
+        and candidate.get("kind") == rule.kind
+        and normalized_trigger in {item.strip().casefold() for item in rule.triggers}
+        for rule in registry.rules
+    )
 
 
 def _load_triggers(raw: Any, *, rule_id: str) -> tuple[str, ...]:
@@ -160,7 +304,7 @@ def load_command_registry(path: str | Path = DEFAULT_COMMAND_REGISTRY_PATH) -> C
             continue
         rule_id = str(raw_rule.get("id") or f"rule-{index}")
         kind = str(raw_rule.get("kind", "prefix"))
-        if kind not in {"prefix", "exact", "regex"}:
+        if kind not in {"command", "token", "prefix", "exact", "suffix", "contains", "regex"}:
             raise ValueError(f"command registry rule {rule_id!r} has unsupported kind {kind!r}")
         confidence = int(raw_rule.get("confidence", 95))
         if confidence < 0 or confidence > 100:
