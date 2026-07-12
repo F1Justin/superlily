@@ -1,3 +1,4 @@
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -5,13 +6,37 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from superlily_contracts import EventIn, HeartbeatIn, ResponseIn
+from superlily_contracts import CommandRegistrySnapshotIn, EventIn, HeartbeatIn, ResponseIn
 
+from .audit import classify_decision_outcome
 from .auth import ingest_identity, require_admin
-from .command_registry import load_command_registry
+from .command_registry import (
+    load_command_registry,
+    runtime_candidate_trigger_reviewed,
+    runtime_plugin_aliases,
+    source_plugin_loaded,
+)
 from .dependencies import get_session
-from .models import BotInstance, EventDecision, EventLink, EventObservation, ResponseRecord, SourceEvent
-from .service import effective_status, ingest_event, ingest_heartbeat, ingest_response
+from .models import (
+    BotInstance,
+    CommandRegistrySnapshot,
+    EventClaim,
+    EventDecision,
+    EventLink,
+    EventObservation,
+    ResponseRecord,
+    SourceEvent,
+)
+from .service import (
+    claim_record_payload,
+    effective_status,
+    evaluate_event_claim,
+    ingest_command_registry_snapshot,
+    ingest_event,
+    ingest_heartbeat,
+    ingest_response,
+    resolve_pending_links,
+)
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -56,6 +81,23 @@ async def post_event(
     return {"observation_id": record.id, "source_event_id": record.source_event_id, "duplicate": duplicate}
 
 
+@router.post("/v1/claims/evaluate", status_code=status.HTTP_200_OK)
+async def post_claim(
+    payload: EventIn,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    _verify_identity(authenticated_instance, payload.instance.instance_id)
+    record, duplicate = await evaluate_event_claim(
+        session,
+        payload,
+        idempotency_key,
+        session.info["settings"],
+    )
+    return {**claim_record_payload(record), "duplicate": duplicate}
+
+
 @router.post("/v1/responses", status_code=status.HTTP_201_CREATED)
 async def post_response(
     payload: ResponseIn,
@@ -80,6 +122,25 @@ async def post_heartbeat(
     _verify_identity(authenticated_instance, payload.instance.instance_id)
     record = await ingest_heartbeat(session, payload, session.info["settings"])
     return {"instance_id": record.id, "reported_status": record.reported_status}
+
+
+@router.post("/v1/command-registry/snapshots", status_code=status.HTTP_201_CREATED)
+async def post_command_registry_snapshot(
+    payload: CommandRegistrySnapshotIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict[str, str | bool]:
+    _verify_identity(authenticated_instance, payload.instance.instance_id)
+    if authenticated_instance != "lily-command":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="only lily-command may publish the runtime command registry",
+        )
+    record, duplicate = await ingest_command_registry_snapshot(session, payload, session.info["settings"])
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return {"snapshot_id": record.id, "snapshot_hash": record.snapshot_hash, "duplicate": duplicate}
 
 
 @router.get("/v1/events/recent", dependencies=[Depends(require_admin)])
@@ -112,6 +173,7 @@ async def recent_events(
             "sender": {"id": observation.sender_id, "name": observation.sender_name},
             "message_id": observation.platform_message_id,
             "native_identity": observation.metadata_json.get("native_identity"),
+            "correlation_diagnostic": observation.metadata_json.get("correlation"),
             "correlation_version": source.correlation_version,
             "text": observation.text,
             "occurred_at": source.occurred_at,
@@ -176,12 +238,20 @@ async def recent_event_links(
     ]
 
 
+@router.post("/v1/event-links/resolve", dependencies=[Depends(require_admin)])
+async def resolve_event_links(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 5000,
+) -> dict[str, int]:
+    return await resolve_pending_links(session, session.info["settings"], limit)
+
+
 @router.get("/v1/decisions/recent", dependencies=[Depends(require_admin)])
 async def recent_decisions(
     session: Session,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict]:
-    rows = (await session.scalars(select(EventDecision).order_by(desc(EventDecision.created_at)).limit(limit))).all()
+    rows = (await session.scalars(select(EventDecision).order_by(desc(EventDecision.updated_at)).limit(limit))).all()
     return [
         {
             "decision_id": item.id,
@@ -193,10 +263,46 @@ async def recent_decisions(
             "confidence": item.confidence,
             "reason": item.reason,
             "features": item.features_json,
+            "revision": item.revision,
             "created_at": item.created_at,
+            "updated_at": item.updated_at,
         }
         for item in rows
     ]
+
+
+@router.get("/v1/claims/recent", dependencies=[Depends(require_admin)])
+async def recent_claims(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (await session.scalars(select(EventClaim).order_by(desc(EventClaim.created_at)).limit(limit))).all()
+    return [claim_record_payload(item) for item in rows]
+
+
+@router.get("/v1/claims/summary", dependencies=[Depends(require_admin)])
+async def claim_summary(
+    request: Request,
+    session: Session,
+    hours: Annotated[int, Query(ge=1, le=168)] = 24,
+) -> dict:
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = (
+        await session.scalars(
+            select(EventClaim).where(EventClaim.created_at >= since).order_by(EventClaim.created_at)
+        )
+    ).all()
+    return {
+        "since": since,
+        "hours": hours,
+        "mode": request.app.state.settings.claim_mode,
+        "canary_conversations": sorted(request.app.state.settings.claim_canary_conversations),
+        "claims": len(rows),
+        "actions": dict(sorted(Counter(item.action for item in rows).items())),
+        "enforced": dict(sorted(Counter(item.action for item in rows if item.enforced).items())),
+        "reasons": dict(sorted(Counter(item.reason for item in rows).items())),
+        "by_instance": dict(sorted(Counter(item.instance_id for item in rows).items())),
+    }
 
 
 def _compact_text(value: str | None, limit: int = 80) -> str:
@@ -310,7 +416,7 @@ async def decision_summary(
             select(EventDecision, SourceEvent, EventObservation)
             .join(SourceEvent, SourceEvent.id == EventDecision.source_event_id)
             .join(EventObservation, EventObservation.id == EventDecision.deciding_observation_id, isouter=True)
-            .order_by(desc(EventDecision.created_at))
+            .order_by(desc(EventDecision.updated_at))
             .limit(limit)
         )
     ).all()
@@ -335,6 +441,8 @@ async def decision_summary(
             {
                 "summary": summary,
                 "created_at": decision.created_at,
+                "updated_at": decision.updated_at,
+                "revision": decision.revision,
                 "conversation": {
                     "id": source.conversation_id,
                     "type": source.conversation_type,
@@ -354,6 +462,100 @@ async def decision_summary(
     return result
 
 
+@router.get("/v1/decisions/outcomes", dependencies=[Depends(require_admin)])
+async def decision_outcomes(
+    session: Session,
+    hours: Annotated[int, Query(ge=1, le=168)] = 24,
+    grace_seconds: Annotated[int, Query(ge=0, le=3600)] = 30,
+    detail_limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=hours)
+    decision_rows = (
+        await session.execute(
+            select(EventDecision, SourceEvent, EventObservation)
+            .join(SourceEvent, SourceEvent.id == EventDecision.source_event_id)
+            .join(EventObservation, EventObservation.id == EventDecision.deciding_observation_id, isouter=True)
+            .where(SourceEvent.first_received_at >= since)
+            .order_by(desc(EventDecision.updated_at))
+        )
+    ).all()
+    source_ids = {decision.source_event_id for decision, _, _ in decision_rows}
+    responses = (
+        await session.scalars(
+            select(ResponseRecord)
+            .where(ResponseRecord.received_at >= since)
+            .order_by(ResponseRecord.received_at)
+        )
+    ).all()
+    responses_by_source: dict[str, list[ResponseRecord]] = defaultdict(list)
+    for response in responses:
+        if response.trigger_source_event_id:
+            responses_by_source[response.trigger_source_event_id].append(response)
+
+    outcome_counts: Counter[str] = Counter()
+    details = []
+    for decision, source, observation in decision_rows:
+        linked = responses_by_source.get(source.id, [])
+        successful = {item.instance_id for item in linked if item.success}
+        failed = {item.instance_id for item in linked if not item.success}
+        first_received_at = source.first_received_at
+        if first_received_at.tzinfo is None:
+            first_received_at = first_received_at.replace(tzinfo=timezone.utc)
+        age_seconds = max(0, int((now - first_received_at).total_seconds()))
+        outcome = classify_decision_outcome(
+            decision_type=decision.decision_type,
+            target_instance_id=decision.target_instance_id,
+            successful_instances=successful,
+            failed_instances=failed,
+            age_seconds=age_seconds,
+            grace_seconds=grace_seconds,
+        )
+        outcome_counts[outcome] += 1
+        if outcome not in {"matched", "matched_no_response"} and len(details) < detail_limit:
+            details.append(
+                {
+                    "source_event_id": source.id,
+                    "conversation": f"{source.conversation_type}:{source.conversation_id}",
+                    "sender": observation.sender_name or observation.sender_id if observation else None,
+                    "text_preview": _compact_text(observation.text if observation else None),
+                    "decision_type": decision.decision_type,
+                    "target_instance_id": decision.target_instance_id,
+                    "reason": decision.reason,
+                    "outcome": outcome,
+                    "successful_instances": sorted(successful),
+                    "failed_instances": sorted(failed),
+                    "age_seconds": age_seconds,
+                    "updated_at": decision.updated_at,
+                }
+            )
+
+    linked_responses = [item for item in responses if item.trigger_source_event_id in source_ids]
+    unlinked_responses = [item for item in responses if item.trigger_source_event_id is None]
+    outside_window_responses = [
+        item
+        for item in responses
+        if item.trigger_source_event_id is not None and item.trigger_source_event_id not in source_ids
+    ]
+    return {
+        "since": since,
+        "hours": hours,
+        "grace_seconds": grace_seconds,
+        "decisions": len(decision_rows),
+        "outcomes": dict(sorted(outcome_counts.items())),
+        "responses": {
+            "total": len(responses),
+            "linked": len(linked_responses),
+            "unlinked": len(unlinked_responses),
+            "linked_outside_decision_window": len(outside_window_responses),
+            "unlinked_by_instance": dict(
+                sorted(Counter(item.instance_id for item in unlinked_responses).items())
+            ),
+        },
+        "details": details,
+    }
+
+
 @router.get("/v1/command-registry", dependencies=[Depends(require_admin)])
 async def command_registry(request: Request) -> dict:
     try:
@@ -364,6 +566,111 @@ async def command_registry(request: Request) -> dict:
             detail=f"command registry unavailable: {type(exc).__name__}",
         ) from exc
     return registry.as_dict()
+
+
+@router.get("/v1/command-registry/runtime", dependencies=[Depends(require_admin)])
+async def runtime_command_registry(request: Request, session: Session) -> dict:
+    rows = (
+        await session.scalars(
+            select(CommandRegistrySnapshot).order_by(
+                CommandRegistrySnapshot.instance_id,
+                desc(CommandRegistrySnapshot.received_at),
+            )
+        )
+    ).all()
+    latest: dict[str, CommandRegistrySnapshot] = {}
+    for row in rows:
+        latest.setdefault(row.instance_id, row)
+
+    try:
+        registry = load_command_registry(request.app.state.settings.command_registry_path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"command registry unavailable: {type(exc).__name__}",
+        ) from exc
+
+    snapshots = []
+    combined_aliases: set[str] = set()
+    uncovered_candidates: list[dict] = []
+    now = datetime.now(timezone.utc)
+    for row in latest.values():
+        aliases = runtime_plugin_aliases(row.plugins_json)
+        combined_aliases.update(aliases)
+        for candidate in row.candidates_json:
+            uncovered = [
+                trigger
+                for trigger in candidate.get("triggers", [])
+                if not runtime_candidate_trigger_reviewed(registry, candidate, trigger)
+            ]
+            if uncovered:
+                uncovered_candidates.append(
+                    {**candidate, "instance_id": row.instance_id, "uncovered_triggers": uncovered}
+                )
+        received_at = row.received_at
+        if received_at.tzinfo is None:
+            received_at = received_at.replace(tzinfo=timezone.utc)
+        age_seconds = max(0, int((now - received_at).total_seconds()))
+        snapshots.append(
+            {
+                "instance_id": row.instance_id,
+                "snapshot_hash": row.snapshot_hash,
+                "observed_at": row.observed_at,
+                "received_at": row.received_at,
+                "age_seconds": age_seconds,
+                "status": (
+                    "fresh"
+                    if age_seconds <= request.app.state.settings.command_registry_snapshot_stale_seconds
+                    else "stale"
+                ),
+                "plugins": row.plugins_json,
+                "candidates": row.candidates_json,
+            }
+        )
+
+    static_rules = []
+    serialized_rules = {item["id"]: item for item in registry.as_dict()["rules"]}
+    for rule in registry.rules:
+        payload = dict(serialized_rules[rule.id])
+        payload["runtime_loaded"] = source_plugin_loaded(rule.source_plugin, combined_aliases) if latest else None
+        static_rules.append(payload)
+
+    return {
+        "registry_version": registry.version,
+        "snapshots": snapshots,
+        "static_rules": static_rules,
+        "uncovered_candidates": uncovered_candidates,
+        "summary": {
+            "snapshot_instances": len(snapshots),
+            "fresh_snapshot_instances": sum(1 for item in snapshots if item["status"] == "fresh"),
+            "stale_snapshot_instances": sum(1 for item in snapshots if item["status"] == "stale"),
+            "loaded_plugins": sum(len(item["plugins"]) for item in snapshots),
+            "runtime_matchers": sum(
+                int(plugin.get("matcher_count", 0))
+                for item in snapshots
+                for plugin in item["plugins"]
+            ),
+            "unclassified_matchers": sum(
+                max(
+                    0,
+                    int(plugin.get("matcher_count", 0))
+                    - int(plugin.get("classified_matcher_count", 0)),
+                )
+                for item in snapshots
+                for plugin in item["plugins"]
+            ),
+            "runtime_candidates": sum(len(item["candidates"]) for item in snapshots),
+            "incomplete_runtime_candidates": sum(
+                1
+                for item in snapshots
+                for candidate in item["candidates"]
+                if candidate.get("complete") is not True
+            ),
+            "uncovered_candidate_triggers": sum(len(item["uncovered_triggers"]) for item in uncovered_candidates),
+            "static_rules_loaded": sum(1 for item in static_rules if item["runtime_loaded"] is True),
+            "static_rules_not_loaded": sum(1 for item in static_rules if item["runtime_loaded"] is False),
+        },
+    }
 
 
 @router.get("/v1/events/{source_event_id}/context", dependencies=[Depends(require_admin)])
@@ -398,6 +705,13 @@ async def event_context(source_event_id: str, session: Session) -> dict:
             .order_by(ResponseRecord.received_at)
         )
     ).all()
+    claims = (
+        await session.scalars(
+            select(EventClaim)
+            .where(EventClaim.source_event_id == source_event_id)
+            .order_by(EventClaim.created_at)
+        )
+    ).all()
 
     return {
         "source_event": {
@@ -418,6 +732,7 @@ async def event_context(source_event_id: str, session: Session) -> dict:
                 "bot_id": item.bot_id,
                 "platform_message_id": item.platform_message_id,
                 "native_identity": item.metadata_json.get("native_identity"),
+                "correlation_diagnostic": item.metadata_json.get("correlation"),
                 "sender_id": item.sender_id,
                 "sender_name": item.sender_name,
                 "text": item.text,
@@ -444,7 +759,9 @@ async def event_context(source_event_id: str, session: Session) -> dict:
                 "confidence": item.confidence,
                 "reason": item.reason,
                 "features": item.features_json,
+                "revision": item.revision,
                 "created_at": item.created_at,
+                "updated_at": item.updated_at,
             }
             for item in decisions
         ],
@@ -461,6 +778,7 @@ async def event_context(source_event_id: str, session: Session) -> dict:
             }
             for item in responses
         ],
+        "claims": [claim_record_payload(item) for item in claims],
     }
 
 
@@ -499,6 +817,7 @@ async def instances(request: Request, session: Session) -> list[dict]:
             "last_heartbeat_at": item.last_heartbeat_at,
             "last_event_at": item.last_event_at,
             "last_response_at": item.last_response_at,
+            "capabilities": item.metadata_json.get("capabilities"),
         }
         for item in rows
     ]

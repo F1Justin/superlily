@@ -18,7 +18,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Lily Core",
-        version="0.1.0",
+        version="0.2.0",
         description="Fail-open observability spine for Lily and Nekro",
         lifespan=lifespan,
     )
@@ -29,4 +29,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

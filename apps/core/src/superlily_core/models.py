@@ -2,7 +2,18 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -87,6 +98,11 @@ class EventObservation(Base):
         ),
         Index("ix_event_observations_received_at", "received_at"),
         Index("ix_event_observations_source_event_id", "source_event_id"),
+        Index(
+            "ix_event_observations_instance_message",
+            "instance_id",
+            "platform_message_id",
+        ),
     )
 
 
@@ -113,6 +129,13 @@ class EventLink(Base):
         Index("ix_event_links_from_observation", "from_observation_id"),
         Index("ix_event_links_to_source", "to_source_event_id"),
         Index("ix_event_links_resolver_status", "resolver_status"),
+        Index(
+            "ix_event_links_pending_target",
+            "resolver_status",
+            "target_platform_message_id",
+            "target_conversation_id",
+            "target_conversation_type",
+        ),
     )
 
 
@@ -130,11 +153,14 @@ class EventDecision(Base):
     confidence: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     features_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("source_event_id", name="uq_event_decisions_source_event"),
         Index("ix_event_decisions_created_at", "created_at"),
+        Index("ix_event_decisions_updated_at", "updated_at"),
         Index("ix_event_decisions_decision_type", "decision_type"),
         Index("ix_event_decisions_target_instance", "target_instance_id"),
     )
@@ -172,6 +198,13 @@ class ResponseRecord(Base):
     __table_args__ = (
         UniqueConstraint("instance_id", "idempotency_key", name="uq_response_idempotency"),
         Index("ix_responses_received_at", "received_at"),
+        Index("ix_responses_trigger_source", "trigger_source_event_id"),
+        Index(
+            "ix_responses_platform_message",
+            "platform",
+            "conversation_type",
+            "platform_message_id",
+        ),
     )
 
 
@@ -186,3 +219,53 @@ class InstanceStatusTransition(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (Index("ix_status_transitions_instance_created", "instance_id", "created_at"),)
+
+
+class CommandRegistrySnapshot(Base):
+    __tablename__ = "command_registry_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    plugins_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    candidates_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "snapshot_hash", name="uq_command_registry_snapshot_hash"),
+        Index("ix_command_registry_snapshots_instance_received", "instance_id", "received_at"),
+    )
+
+
+class EventClaim(Base):
+    __tablename__ = "event_claims"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    decision_id: Mapped[str | None] = mapped_column(ForeignKey("event_decisions.id", ondelete="SET NULL"))
+    decision_revision: Mapped[int | None] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    ready: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    enforced: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    features_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "idempotency_key", name="uq_event_claim_idempotency"),
+        UniqueConstraint("source_event_id", "instance_id", name="uq_event_claim_source_instance"),
+        Index(
+            "uq_event_claim_enforced_allow_owner",
+            "source_event_id",
+            unique=True,
+            postgresql_where=sql_text("enforced AND action = 'allow'"),
+            sqlite_where=sql_text("enforced = 1 AND action = 'allow'"),
+        ),
+        Index("ix_event_claims_source_event", "source_event_id"),
+        Index("ix_event_claims_created_at", "created_at"),
+        Index("ix_event_claims_action", "action"),
+    )

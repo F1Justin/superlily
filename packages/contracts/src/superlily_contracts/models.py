@@ -12,6 +12,23 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 API_SCHEMA_VERSION = "1.0"
 
+PlatformCapabilityName = Literal[
+    "send_text",
+    "send_image",
+    "send_file",
+    "send_voice",
+    "send_video",
+    "reply",
+    "mention",
+    "recall_own",
+    "markdown",
+    "buttons",
+    "reactions",
+    "edit",
+    "thread",
+    "ephemeral",
+]
+
 
 class WireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -114,6 +131,31 @@ class ResponseIn(WireModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlatformCapabilities(WireModel):
+    profile: str = Field(min_length=1, max_length=128)
+    supported: list[PlatformCapabilityName] = Field(default_factory=list, max_length=64)
+    limits: dict[str, int] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("supported")
+    @classmethod
+    def normalize_supported(
+        cls,
+        value: list[PlatformCapabilityName],
+    ) -> list[PlatformCapabilityName]:
+        if len(value) != len(set(value)):
+            raise ValueError("supported capabilities must be unique")
+        return sorted(value)
+
+    @field_validator("limits")
+    @classmethod
+    def validate_limits(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(not key.strip() or len(key) > 128 for key in value):
+            raise ValueError("capability limit names must be non-empty and at most 128 characters")
+        if any(limit < 0 for limit in value.values()):
+            raise ValueError("capability limits must be non-negative")
+        return dict(sorted(value.items()))
+
+
 class HeartbeatIn(WireModel):
     schema_version: Literal["1.0"] = API_SCHEMA_VERSION
     instance: BotInstanceRef
@@ -122,4 +164,58 @@ class HeartbeatIn(WireModel):
     last_event_at: AwareDatetime | None = None
     error_summary: str | None = Field(default=None, max_length=4096)
     occurred_at: AwareDatetime
+    capabilities: PlatformCapabilities | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimePlugin(WireModel):
+    plugin_id: str = Field(min_length=1, max_length=256)
+    module_name: str = Field(min_length=1, max_length=512)
+    display_name: str | None = Field(default=None, max_length=512)
+    matcher_count: int = Field(default=0, ge=0, le=100_000)
+    classified_matcher_count: int = Field(default=0, ge=0, le=100_000)
+
+    @model_validator(mode="after")
+    def classified_count_cannot_exceed_total(self) -> "RuntimePlugin":
+        if self.classified_matcher_count > self.matcher_count:
+            raise ValueError("classified_matcher_count cannot exceed matcher_count")
+        return self
+
+
+class RuntimeCommandCandidate(WireModel):
+    plugin_id: str = Field(min_length=1, max_length=256)
+    module_name: str = Field(min_length=1, max_length=512)
+    matcher_type: str = Field(min_length=1, max_length=128)
+    kind: Literal["command", "token", "prefix", "exact", "regex", "suffix", "contains"]
+    triggers: list[str] = Field(min_length=1, max_length=256)
+    priority: int | None = None
+    block: bool | None = None
+    ignore_case: bool | None = None
+    regex_flags: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    complete: bool
+    rule_checker_count: int = Field(ge=0, le=1_024)
+    unknown_rule_checkers: list[str] = Field(max_length=64)
+    permission_checker_count: int = Field(ge=0, le=1_024)
+
+    @field_validator("triggers")
+    @classmethod
+    def validate_triggers(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 2_048 for item in value):
+            raise ValueError("runtime command triggers must be non-empty and at most 2048 characters")
+        return value
+
+    @field_validator("unknown_rule_checkers")
+    @classmethod
+    def validate_checker_labels(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 512 for item in value):
+            raise ValueError("runtime checker labels must be non-empty and at most 512 characters")
+        return value
+
+
+class CommandRegistrySnapshotIn(WireModel):
+    schema_version: Literal["1.0"] = API_SCHEMA_VERSION
+    instance: BotInstanceRef
+    snapshot_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    observed_at: AwareDatetime
+    plugins: list[RuntimePlugin] = Field(default_factory=list, max_length=2_048)
+    candidates: list[RuntimeCommandCandidate] = Field(default_factory=list, max_length=4_096)
