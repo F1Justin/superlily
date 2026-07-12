@@ -168,7 +168,8 @@ def message_references(segments: list[dict[str, Any]], conversation: dict[str, A
 
 
 def source_event_id(event: Any, conversation: dict[str, Any], raw: dict[str, Any]) -> str:
-    if message_id := getattr(event, "message_id", None):
+    message_id = getattr(event, "message_id", None)
+    if message_id is not None and str(message_id):
         return f"qq:{conversation['type']}:{conversation['id']}:message:{message_id}"
     event_name = event.get_event_name() if hasattr(event, "get_event_name") else raw.get("post_type", "event")
     fingerprint = stable_key(

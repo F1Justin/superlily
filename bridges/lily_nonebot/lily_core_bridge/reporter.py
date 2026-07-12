@@ -29,6 +29,7 @@ class BackgroundReporter:
         self.queue: asyncio.Queue[ReportItem] = asyncio.Queue(maxsize=queue_size)
         self.timeout_seconds = timeout_seconds
         self.dropped = 0
+        self.claim_failures = 0
         self._client: httpx.AsyncClient | None = None
         self._worker: asyncio.Task | None = None
         self._last_warning = 0.0
@@ -40,7 +41,7 @@ class BackgroundReporter:
     async def start(self) -> None:
         if not self.enabled or self._worker:
             return
-        self._client = httpx.AsyncClient(timeout=self.timeout_seconds)
+        self._client = httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False)
         self._worker = asyncio.create_task(self._run(), name="lily-core-reporter")
 
     async def stop(self) -> None:
@@ -55,20 +56,45 @@ class BackgroundReporter:
             await self._client.aclose()
             self._client = None
 
-    def enqueue(self, item: ReportItem) -> None:
+    def enqueue(self, item: ReportItem) -> bool:
         if not self.enabled:
-            return
+            return False
         try:
             self.queue.put_nowait(item)
+            return True
         except asyncio.QueueFull:
             self.dropped += 1
             self._warn_limited("Lily Core queue full; telemetry dropped")
+            return False
 
-    def _warn_limited(self, message: str) -> None:
+    def _warn_limited(self, message: str, total: int | None = None) -> None:
         now = time.monotonic()
         if now - self._last_warning >= 60:
-            logger.warning("%s (total dropped=%d)", message, self.dropped)
+            logger.warning("%s (total=%d)", message, self.dropped if total is None else total)
             self._last_warning = now
+
+    async def request_claim(self, payload: dict[str, Any], idempotency_key: str) -> dict[str, Any] | None:
+        if not self.enabled or self._client is None:
+            return None
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/v1/claims/evaluate",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Idempotency-Key": idempotency_key,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body if isinstance(body, dict) else None
+        except Exception as exc:
+            self.claim_failures += 1
+            self._warn_limited(
+                f"Lily Core claim failed open: {type(exc).__name__}",
+                self.claim_failures,
+            )
+            return None
 
     async def _run(self) -> None:
         assert self._client is not None
@@ -84,9 +110,8 @@ class BackgroundReporter:
                     headers=headers,
                 )
                 response.raise_for_status()
-            except (httpx.HTTPError, ValueError) as exc:
+            except Exception as exc:
                 self.dropped += 1
                 self._warn_limited(f"Lily Core report failed: {type(exc).__name__}")
             finally:
                 self.queue.task_done()
-
