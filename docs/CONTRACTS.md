@@ -7,6 +7,12 @@ The wire schema is version `1.0` and the HTTP surface is under `/v1`.
 - `POST /v1/events` requires a bearer token and `Idempotency-Key`.
 - `POST /v1/responses` requires a bearer token and `Idempotency-Key`.
 - `POST /v1/heartbeats` requires a bearer token.
+- `POST /v1/command-registry/snapshots` requires the Lily instance token. Core
+  recomputes the canonical SHA-256 over plugins and candidates before storing
+  or refreshing the snapshot.
+- `POST /v1/claims/evaluate` requires an instance token and
+  `Idempotency-Key`. It ingests/reuses the event and returns `allow`, `deny`, or
+  `abstain`, plus `ready` and `enforced`.
 
 Each token is bound to exactly one `instance.instance_id`. A Lily token cannot
 submit a Nekro payload.
@@ -26,10 +32,10 @@ conversation/sender hints. Core currently extracts QQ `reply` segments as
 unresolved or ambiguous links are retained for later backfill instead of being
 dropped.
 
-Phase 2b creates one shadow `event_decision` per canonical source event. A
+Phase 2b creates one canonical `event_decision` per canonical source event. A
 decision has a policy version, decision type, optional target instance,
-confidence, reason, and feature snapshot. Decisions are observational; bridges
-do not need to request or obey them in this phase.
+confidence, reason, feature snapshot, revision, and update time. It is
+recomputed from all observations rather than duplicated per observing account.
 
 Core does not blindly trust bridge `to_me`/`is_tome` flags for talk routing.
 Those adapter/framework signals are retained as `bridge_to_me` in decision
@@ -46,18 +52,34 @@ version and the matched command rule, when any. If the registry cannot be read,
 event ingestion stays fail-open and records the registry error in the decision
 features.
 
-Cross-account correlation is conservative and currently applies only to QQ
-text messages with a sender and a platform message ID. It uses normalized
-conversation identity, platform message ID, sender, text, and the configured
-short time window. Ambiguous events, non-text events, and messages without a
-platform message ID stay separate rather than risk a false merge.
+Cross-account correlation v3 is conservative and applies only to QQ group
+message events with a sender and native `real_seq`. Private chats remain
+uncorrelated until separately validated. The key uses normalized conversation,
+sender, and `real_seq`; text and account-local IDs never participate. Native
+time and the configured short window are conflict guards. Ambiguous, missing,
+or conflicting identity stays separate rather than risk a false merge.
 
 QQ bridges may include `metadata.native_identity` using schema
 `onebot_v11.qq.native_identity.v1`. This is a strict scalar allowlist for
 identity diagnostics, currently covering `message_id`, `message_seq`,
 `real_id`, `real_seq`, `time`, `group_id`, `user_id`, message/sub types, and a
-small set of optional NapCat native ID aliases. It is evidence for Phase 2a.1,
-not yet a trusted canonical key.
+small set of optional NapCat native ID aliases. The verified `real_seq`
+combination is the v3 key; other account-local fields remain diagnostic only.
+
+Runtime command candidates distinguish NoneBot commands, token-boundary
+commands, startswith/fullmatch/regex/keyword/endswith rules, and Alconna main
+commands/shortcuts where runtime objects expose them. A runtime candidate is
+only inventory. Static rules retain authority over target, permission, and
+sensitive status. Candidate completeness also records whether the matcher has
+extra rule or permission checkers that cannot be represented by the trigger.
+
+Claim enforcement is narrower than decision generation. Only `command` and
+`talk` are actionable. `observe_only`, missing v3 identity, a single
+observation, stale/missing runtime inventory, an uncovered runtime trigger,
+uncertain reply target, low confidence, or an offline target returns
+`abstain`. Incomplete matcher introspection, sensitive commands, and commands
+whose permission is not `public` also abstain. `shadow` never enforces;
+`canary` enforces only exact configured `platform:type:id` conversations.
 
 ## Read APIs
 
@@ -65,10 +87,14 @@ not yet a trusted canonical key.
 - `GET /health/ready` also checks PostgreSQL.
 - `GET /v1/events/recent`, `/v1/responses/recent`,
   `/v1/event-links/recent`, `/v1/decisions/recent`,
-  `/v1/decisions/summary`, `/v1/native-identities/recent`,
-  `/v1/native-identities/coverage`, `/v1/command-registry`,
+  `/v1/decisions/summary`, `/v1/decisions/outcomes`,
+  `/v1/claims/recent`, `/v1/claims/summary`,
+  `/v1/native-identities/recent`, `/v1/native-identities/coverage`,
+  `/v1/command-registry`, `/v1/command-registry/runtime`,
   `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
   bearer token.
+- `POST /v1/event-links/resolve` is also admin-only and retries unresolved or
+  ambiguous references without guessing.
 
 `/v1/decisions/summary` is the human-readable audit view. It joins the shadow
 decision, source event, and deciding observation into compact rows such as
@@ -83,9 +109,10 @@ payload storage.
 per-field coverage for canonical message events over a bounded one-to-168-hour
 window; notices and other non-message events are excluded.
 
-`/v1/instances` derives `offline` when the most recent heartbeat is older than
-the configured threshold. Heartbeats update the latest instance row; only
-reported status changes append history.
+`/v1/instances` derives `offline` from the earlier of Core receipt time and the
+bridge-reported time. A delayed queue or future-skewed bridge clock therefore
+cannot keep an instance online. The reported timestamp remains in instance
+metadata. Only reported status changes append history.
 
 The authoritative Pydantic definitions are in
 `packages/contracts/src/superlily_contracts/models.py`.

@@ -7,10 +7,11 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 _SENSITIVE_KEY = re.compile(
-    r"(?:^|_)(?:access_?token|api_?key|authorization|cookie|password|secret|session|ticket)(?:$|_)",
+    r"(?:^|_)(?:access_?token|api_?key|authorization|cookie|credential|database_?(?:dsn|url)|dsn|password|private_?key|secret|session|ticket|token)(?:$|_)",
     re.IGNORECASE,
 )
 _URL_KEY = re.compile(r"(?:url|uri|link)$", re.IGNORECASE)
+_JSON_STRING_KEY = re.compile(r"(?:^|_)(?:data|content|json|payload)(?:$|_)", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +30,8 @@ def _strip_url_query(value: str) -> str:
         return value
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return value
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    netloc = parsed.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _sanitize(value: Any, policy: SanitizationPolicy, depth: int, key: str = "") -> Any:
@@ -57,6 +59,29 @@ def _sanitize(value: Any, policy: SanitizationPolicy, depth: int, key: str = "")
             return "[BINARY_DATA]"
         if key.lower() in {"file", "local_path"} and lowered.startswith("file://"):
             return "[LOCAL_FILE]"
+        if _JSON_STRING_KEY.search(key) and value.lstrip().startswith(("{", "[")):
+            try:
+                nested = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            else:
+                if isinstance(nested, (dict, list)):
+                    sanitized_nested = _sanitize(nested, policy, depth + 1, key)
+                    encoded_nested = json.dumps(
+                        sanitized_nested,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    if len(encoded_nested) > policy.max_string:
+                        return json.dumps(
+                            {
+                                "_truncated": True,
+                                "_sanitized_chars": len(encoded_nested),
+                            },
+                            separators=(",", ":"),
+                        )
+                    value = encoded_nested
+                    lowered = value.lower()
         if _URL_KEY.search(key) or lowered.startswith(("http://", "https://")):
             value = _strip_url_query(value)
         if len(value) > policy.max_string:

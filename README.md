@@ -1,11 +1,13 @@
 # Superlily
 
-Superlily is the observability-first Lily Core described in
-[`manifesto.md`](manifesto.md). The first milestone records normalized events,
-responses, and instance liveness without taking control of Lily or Nekro.
+Superlily is the Lily Core described in [`manifesto.md`](manifesto.md). Phase 1
+provides the observability spine; Phase 2 adds canonical correlation,
+deterministic decisions, authenticated runtime command inventory, outcome
+auditing, and an opt-in fail-open claim canary. Tool execution remains outside
+Core until Phase 3.
 
-The runtime is deliberately fail-open: bridge delivery failures must never
-block either existing bot.
+The runtime is deliberately fail-open: telemetry failures never block either
+bot, and claim failures preserve their existing behavior.
 
 ## Layout
 
@@ -17,4 +19,3 @@ block either existing bot.
 - `docs`: operations, security, and acceptance criteria.
 
 See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for local setup.
-

@@ -1,6 +1,13 @@
 import pytest
 
-from superlily_core.command_registry import CommandRegistry, CommandRule, load_command_registry
+from superlily_core.command_registry import (
+    CommandRegistry,
+    CommandRule,
+    load_command_registry,
+    match_runtime_candidate,
+    match_runtime_candidates,
+    runtime_match_supports_command,
+)
 from superlily_core.decisions import decide_event
 
 
@@ -20,13 +27,10 @@ def test_decision_routes_registered_prefix_command_to_lily() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="group",
-        observation_bot_id="985393579",
         text="wf 1+1",
-        segments=[{"type": "text", "data": {"text": "wf 1+1"}}],
         attachments=[],
         metadata={"to_me": True},
         has_reply_link=False,
-        reply_to_bot_response=False,
         command_registry=registry,
     )
 
@@ -69,10 +73,24 @@ def test_command_registry_matches_exact_and_regex_without_broad_prefix_false_pos
             ),
             CommandRule(
                 id="test.status",
-                kind="prefix",
+                kind="token",
                 triggers=("status",),
                 target_instance_id="lily-command",
                 source_plugin="nonebot_plugin_picstatus",
+            ),
+            CommandRule(
+                id="test.keyword",
+                kind="contains",
+                triggers=("magic",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.demo",
+            ),
+            CommandRule(
+                id="test.suffix",
+                kind="suffix",
+                triggers=("结束",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.demo",
             ),
         ),
     )
@@ -82,6 +100,8 @@ def test_command_registry_matches_exact_and_regex_without_broad_prefix_false_pos
     assert registry.match("设置换老婆次数 3").permission == "group_admin"
     assert registry.match("status now").rule_id == "test.status"
     assert registry.match("statusquo") is None
+    assert registry.match("prefix magic suffix").rule_id == "test.keyword"
+    assert registry.match("现在结束").rule_id == "test.suffix"
 
 
 def test_default_registry_covers_known_external_commands() -> None:
@@ -90,6 +110,10 @@ def test_default_registry_covers_known_external_commands() -> None:
     train = registry.match("查询列车 G1")
     waifu = registry.match("今日老婆")
     sensitive = registry.match("重启nb")
+    compact_wolfram = registry.match("wf1+1")
+    false_train_prefix = registry.match("trainwreck")
+    period_wordcloud = registry.match("我的本周词云")
+    event_help = registry.match("eventhelp")
 
     assert train is not None
     assert train.source_plugin == "nonebot_plugin_cnrail"
@@ -98,6 +122,13 @@ def test_default_registry_covers_known_external_commands() -> None:
     assert sensitive is not None
     assert sensitive.permission == "superuser"
     assert sensitive.sensitive is True
+    assert compact_wolfram is not None
+    assert compact_wolfram.rule_id == "lily.wolfram"
+    assert false_train_prefix is None
+    assert period_wordcloud is not None
+    assert period_wordcloud.rule_id == "external.wordcloud.period"
+    assert event_help is not None
+    assert event_help.rule_id == "external.eventmonitor.help"
 
 
 def test_command_registry_rejects_unknown_permission(tmp_path) -> None:
@@ -119,25 +150,57 @@ permission = "owner"
         load_command_registry(registry_path)
 
 
-def test_decision_routes_at_segment_to_talk() -> None:
+def test_runtime_candidates_follow_reported_matcher_semantics() -> None:
+    candidates = [
+        {"plugin_id": "demo", "module_name": "demo", "kind": "token", "triggers": ["train"]},
+        {"plugin_id": "demo", "module_name": "demo", "kind": "regex", "triggers": ["demo\\d+"]},
+    ]
+    assert match_runtime_candidate(candidates, "train G1")["trigger"] == "train"
+    assert match_runtime_candidate(candidates, "trainwreck") is None
+    assert match_runtime_candidate(candidates, "prefix demo42 suffix")["kind"] == "regex"
+
+
+def test_runtime_command_coverage_is_bound_to_the_reviewed_plugin() -> None:
+    registry = CommandRegistry(
+        version="test",
+        rules=(
+            CommandRule(
+                id="test.wolfram",
+                kind="command",
+                triggers=("wf",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.wolfram",
+            ),
+        ),
+    )
+    candidates = [
+        {"plugin_id": "collision", "module_name": "plugins.collision", "kind": "command", "triggers": ["wf"]},
+        {"plugin_id": "wolfram", "module_name": "plugins.wolfram", "kind": "command", "triggers": ["wf"]},
+    ]
+
+    static_match = registry.match("wf 1+1")
+    runtime_matches = match_runtime_candidates(candidates, "wf 1+1")
+
+    assert static_match is not None
+    assert len(runtime_matches) == 2
+    assert runtime_match_supports_command(runtime_matches[0], static_match) is False
+    assert runtime_match_supports_command(runtime_matches[1], static_match) is True
+
+
+def test_decision_routes_explicit_bot_mention_to_talk() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="group",
-        observation_bot_id="985393579",
         text="看看这个",
-        segments=[
-            {"type": "at", "data": {"qq": "985393579"}},
-            {"type": "text", "data": {"text": "看看这个"}},
-        ],
         attachments=[],
         metadata={},
         has_reply_link=False,
-        reply_to_bot_response=False,
+        mentioned_bot_instance_ids=["lily-command"],
     )
 
     assert decision.decision_type == "talk"
     assert decision.target_instance_id == "nekro-agent"
-    assert decision.reason == "mention_segment_targets_observer"
+    assert decision.reason == "explicit_bot_mention"
     assert decision.features["mentions_observing_bot"] is True
 
 
@@ -145,13 +208,10 @@ def test_bridge_to_me_does_not_override_core_summon_policy() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="group",
-        observation_bot_id="985393579",
         text="Lily Sol",
-        segments=[{"type": "text", "data": {"text": "Lily Sol"}}],
         attachments=[],
         metadata={"to_me": True},
         has_reply_link=False,
-        reply_to_bot_response=False,
     )
 
     assert decision.decision_type == "observe_only"
@@ -162,17 +222,47 @@ def test_bridge_to_me_does_not_override_core_summon_policy() -> None:
     assert decision.features["summons_talk_bot"] is False
 
 
+def test_known_bot_message_is_observed_without_retriggering_policy() -> None:
+    registry = CommandRegistry(
+        version="test",
+        rules=(
+            CommandRule(
+                id="test.wolfram",
+                kind="prefix",
+                triggers=("wf",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.wolfram",
+            ),
+        ),
+    )
+
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="莉莉，wf 1+1",
+        attachments=[],
+        metadata={"to_me": True},
+        has_reply_link=False,
+        command_registry=registry,
+        sender_bot_instance_id="nekro-agent",
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "bot_message_observed"
+    assert decision.features["sender_bot_instance_id"] == "nekro-agent"
+    assert decision.features["to_me"] is False
+    assert decision.features["summons_talk_bot"] is False
+
+
 def test_chinese_lily_text_summons_talk_bot() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="group",
-        observation_bot_id="985393579",
         text="莉莉 Sol",
-        segments=[{"type": "text", "data": {"text": "莉莉 Sol"}}],
         attachments=[],
         metadata={},
         has_reply_link=False,
-        reply_to_bot_response=False,
     )
 
     assert decision.decision_type == "talk"
@@ -181,35 +271,48 @@ def test_chinese_lily_text_summons_talk_bot() -> None:
     assert decision.features["to_me"] is True
 
 
-def test_decision_routes_reply_to_bot_response_to_talk() -> None:
+def test_decision_routes_reply_to_nekro_response_to_talk() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="group",
-        observation_bot_id="985393579",
         text="继续",
-        segments=[{"type": "text", "data": {"text": "继续"}}],
         attachments=[],
         metadata={},
         has_reply_link=True,
-        reply_to_bot_response=True,
+        reply_target_instance_id="nekro-agent",
+        reply_target_status="resolved_bot",
     )
 
     assert decision.decision_type == "talk"
     assert decision.target_instance_id == "nekro-agent"
-    assert decision.reason == "reply_to_bot_response"
+    assert decision.reason == "reply_to_talk_response"
+
+
+def test_decision_observes_reply_to_lily_response() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="继续",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_instance_id="lily-command",
+        reply_target_status="resolved_bot",
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "reply_to_command_response_observed"
 
 
 def test_decision_routes_private_message_to_talk() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="private",
-        observation_bot_id="985393579",
         text="你好",
-        segments=[{"type": "text", "data": {"text": "你好"}}],
         attachments=[],
         metadata={},
         has_reply_link=False,
-        reply_to_bot_response=False,
     )
 
     assert decision.decision_type == "talk"

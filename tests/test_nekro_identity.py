@@ -47,3 +47,35 @@ def test_native_identity_cache_key_includes_conversation() -> None:
     identity = load_identity_module()
 
     assert identity.native_identity_cache_key({"type": "group", "id": "123"}, "456") == "group:123:456"
+
+
+def test_claim_targets_requested_instance() -> None:
+    identity = load_identity_module()
+
+    assert identity.claim_targets_instance(
+        {
+            "ready": True,
+            "action": "allow",
+            "reason": "decision_target:nekro-agent",
+        },
+        "nekro-agent",
+    )
+
+
+def test_claim_target_rejects_non_allowing_or_malformed_results() -> None:
+    identity = load_identity_module()
+
+    assert not identity.claim_targets_instance(
+        {"ready": True, "action": "allow", "reason": "decision_target:lily-command"},
+        "nekro-agent",
+    )
+    assert not identity.claim_targets_instance(
+        {"ready": False, "action": "allow", "reason": "decision_target:nekro-agent"},
+        "nekro-agent",
+    )
+    assert not identity.claim_targets_instance(
+        {"ready": True, "action": "deny", "reason": "decision_target:nekro-agent"},
+        "nekro-agent",
+    )
+    assert not identity.claim_targets_instance(None, "nekro-agent")
+    assert not identity.claim_targets_instance("allow", "nekro-agent")

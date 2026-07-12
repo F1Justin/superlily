@@ -10,7 +10,7 @@
 
 2. 当前基础
 
-当前系统已经存在两套独立 QQ bot。Lily Bot 基于 NoneBot2、FastAPI Driver 和 OneBot V11，接入 QQ 985393579，经 NapCat 提供 QQ 协议服务。它目前主要承担命令式工具箱功能，包括 LaTeX 公式渲染、Wolfram Engine 计算、东方运势、语音触发、梗图检测、词云、服务器状态等能力。Nekro Agent 独立运行于 Docker Compose，接入 QQ 2022692714，主要承担自然语言聊天、模型路由、沙箱代码执行、Qdrant 记忆和插件式 AI 能力。
+当前系统已经存在两套独立 QQ bot。Lily Bot 基于 NoneBot2、FastAPI Driver 和 OneBot V11，当前接入 QQ 3643287298（历史记录中仍包含旧账号 985393579），经 NapCat 提供 QQ 协议服务。它目前主要承担命令式工具箱功能，包括 LaTeX 公式渲染、Wolfram Engine 计算、东方运势、语音触发、梗图检测、词云、服务器状态等能力。Nekro Agent 独立运行于 Docker Compose，接入 QQ 2022692714，主要承担自然语言聊天、模型路由、沙箱代码执行、Qdrant 记忆和插件式 AI 能力。
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者完全独立，拥有不同 QQ 号、不同数据库、不同配置和不同代码架构。管理员 QQ 号在两个系统中均为超管。这个分裂状态短期可用，但长期会造成工具重复、记忆分裂、权限分裂、响应抢答、灾备困难和多平台扩展困难。
 
@@ -251,6 +251,16 @@ Phase 2a.1 只负责采集和审计，不立即修改 canonical correlation。Co
 
 Phase 2a.1 的完成标准是：两个 bridge 均能上报 `metadata.native_identity`；Core 能展示字段来源和覆盖情况；受控样本能判断 `real_seq` 是否跨账号一致；采集失败保持 fail-open；在验证结论形成前，现有 correlation v2 和 bot 回复行为完全不变。
 
+7.1.2 Phase 2a.2：Canonical Correlation v3 与确定性裁决输入
+
+Phase 2a.1 的线上验证确认，NapCat `real_seq` 在同一 QQ 群会话内可以稳定标识 Lily 与 Nekro 共同观察到的同一条消息，而 `message_id`、`message_seq`、`real_id` 均为账号局部值。Correlation v3 应仅对已验证的群消息使用平台、标准化会话、`real_seq` 和发送者组成强身份键；私聊在获得独立证据前继续保持不关联。平台时间只用于冲突保护，文本和账号局部 ID 不得进入跨账号键。缺少强身份字段或发生冲突时必须 fail-open，保留独立 source event，不能退回 sender、text 和短时间窗口的模糊强制合并。
+
+同一 canonical event 的 shadow decision 不得取决于 Lily 或 Nekro 哪个 observation 先到。Core 应在每次新 observation 或引用解析结果加入后，根据该 source event 的全部 observations、event links 和已知 bot response 重新生成确定性 decision。命令识别优先使用 Lily 的原始观察；引用路由则以被引用消息的发送实例为准，而不是以 QQ 自动附加的 `at` 是否仍然存在为准。
+
+QQ 回复 Nekro 消息时，无论用户保留还是删除 QQ 自动添加的 `at`，都应路由为 `talk / nekro-agent`，允许 Nekro 继续回复。QQ 回复 Lily Command 消息、普通群友消息或无法安全确定目标的引用时，默认只记录为 `observe_only`。引用中的、指向被引用发送者的自动 `at` 只是展示装饰，不是独立触发器；非引用的直接 mention、引用中额外 mention 了不同 bot、明确命令或包含“莉莉”的文本召唤仍按各自规则处理。
+
+Phase 2a.2 的完成标准是：共同消息稳定形成一个 source event、两个 observations 和一个 decision；快速连续发送相同文本但 `real_seq` 不同的消息绝不合并；decision 与 observation 到达顺序无关；回复 Nekro/Lily 且自动 `at` 保留或删除的四种组合均有测试；线上 shadow 验证不再出现跨账号 source event 与 decision 翻倍，并且身份冲突可见、可审计、不会阻塞现有 bot。
+
 7.2 Phase 2b：核心裁决 Shadow Mode
 
 在引入真正 claim lock 之前，Core 应先进入 shadow decision 阶段。此阶段 Core 对每个 canonical event 生成一条 event_decision，记录它认为这条消息应被忽略、交给命令号、交给自然语言号，还是只是潜在工具候选。这个判断只用于审计和调试，不会让 Lily Bot 或 Nekro Agent 改变现有行为。
@@ -262,6 +272,24 @@ Phase 2b.1 应将命令识别从代码里的少量硬编码前缀扩展为 comma
 Command registry 在 2b.1 仍是静态快照，天然存在与 NoneBot 热更新插件树脑裂的风险。后续进入 2b.2/2c 前，应设计受认证的 registry sync 通道，由 Lily bridge 在插件 load/unload 或配置变化时上报候选变更；在此之前 registry 只用于 shadow 审计，不应用于强制拦截。
 
 此阶段还应提供 recent/debug API，使管理员能查看最近消息、引用关系、Core 的 shadow decision、以及实际 responses 之间是否一致。只有当 shadow decision 在真实群聊中足够稳定后，才进入 Phase 2c 的 claim lock 和响应裁决执行。Phase 2b 不接管发送，不阻断任何现有 matcher，也不迁移工具。
+
+7.2.1 Phase 2b.2：运行时命令清单与响应对照
+
+Lily bridge 应从当前已加载的 NoneBot 插件树生成确定性运行时快照，覆盖能够安全内省的 CommandRule、ShellCommandRule、AlconnaRule、fullmatch、startswith、endswith、keyword 和 regex。快照通过现有实例 token 认证，并由 Core 重新计算内容哈希；相同插件树的周期上报只刷新存活时间。运行时候选只证明“这个 matcher 当前存在”，不能自动获得目标实例、权限或敏感级别，后者必须继续由人工审阅的静态 registry 覆盖。若 matcher 还带有无法表示的复合 rule 或 permission，必须标记为不完整而不能假装已完全识别。运行时存在但静态未登记的触发器必须可见，并在 2c 强制路径中导致 abstain。
+
+Core 还应把 canonical decision 与实际 response 自动对照，区分 matched、missed、wrong_instance、failed、unexpected_response 和 pending。Lily 可使用当前事件上下文记录原生触发关系；Nekro 公共 hook 若拿不到原生 trigger，只允许使用一次性的、明确标注为 inference 的会话内 ToMe 关联，不能把后续主动消息长期挂到旧事件上。
+
+Phase 2b.2 的完成标准是：运行时插件树新增、删除或不变都能在有界时间内反映到 Core；坏哈希被拒绝；同哈希刷新不会误判 stale；静态规则能区分已加载、未加载和未覆盖候选；未覆盖候选不参与强制裁决；管理员能直接查看 decision/response 对照结果。
+
+7.3 Phase 2c：Fail-open Claim Lock Canary
+
+2c 不应立即让 Core 执行工具，而只在两个现有 bot 的响应入口前增加短时 claim。claim 以 canonical source event 为单位，在 PostgreSQL 事务与 advisory lock 下记录每个实例的 allow、deny 或 abstain。只有 command/talk 这类明确有目标实例的 decision 可以进入 allow/deny；observe_only 在首轮 canary 中始终 abstain，避免未知被动 matcher 导致消息被吞。
+
+强制 claim 必须同时满足 correlation v3、两个账号 observation、最低置信度、最新运行时 registry、没有未登记的运行时命令命中、引用目标确定、目标实例在线以及精确会话 allowlist。命令还必须是完整内省、公开且非敏感的 matcher；需要群管或超级用户权限的命令在 Core 建立发送者授权模型前一律 abstain。任一条件缺失、Core 超时、网络失败或响应格式异常都必须 abstain 并维持旧行为。Lily 的 deny 只抑制本事件产生的 send API，不停止 chatrecorder 和其他观察 matcher；Nekro 使用保留历史记录的 BLOCK_TRIGGER。
+
+Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。完成标准是：命令只允许 Lily、自然语言召唤或回复 Nekro 只允许 Nekro、回复 Lily 不触发 Nekro、普通消息不被 claim 破坏、Core 停机时两个 bot 自动回到旧行为，并且所有 claim 与被抑制发送均可审计。通过稳定窗口后，第二阶段完成，方可进入 Phase 3 Tool Registry。
+
+截至 2026-07-12，Phase 2a.2 与 2b.2 已实现并部署：Correlation v3、canonical decision、运行时命令清单、response outcome、唯一引用解析和双桥 shadow claim 均已上线。当前位于 Phase 2c 验收期；Core 两分钟故障回退已经通过，仍需完成单测试群 canary 的 command/talk/reply/ordinary 样本及部署后 24 小时稳定窗口。在这些证据写入 `docs/ACCEPTANCE.md` 前，不开始第三阶段工具注册。
 
 8. 第三阶段：Tool Registry 与现有插件迁移
 

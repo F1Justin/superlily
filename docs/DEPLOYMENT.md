@@ -21,6 +21,17 @@ Core to read another registry file. A bad registry must not affect Lily/Nekro
 message handling; Core degrades decision metadata instead of becoming a control
 plane in Phase 2b.
 
+Runtime registry snapshots use the existing Lily ingest token; no additional
+secret is required. Claim settings default to a fully disabled state:
+
+```dotenv
+SUPERLILY_CLAIM_MODE=off
+SUPERLILY_CLAIM_CANARY_CONVERSATIONS_JSON=[]
+SUPERLILY_CLAIM_MINIMUM_CONFIDENCE=85
+SUPERLILY_CLAIM_REQUIRED_OBSERVATIONS=2
+SUPERLILY_CLAIM_COALESCE_MILLISECONDS=200
+```
+
 ## 2. Lily bridge
 
 The existing Lily process runs in the `nb` tmux session managed by the enabled
@@ -46,7 +57,26 @@ kromiose/nekro-agent@sha256:88193fa55c4501d3378f5511430bcf32071597d24b880762e650
 Copy the plugin as described in `bridges/nekro/README.md`, join
 `superlily_bus` with the provided Compose override, and restart Nekro once.
 
-## 4. Rollback
+## 4. Phase 2c canary sequence
+
+Do not jump directly from shadow to enforcement.
+
+1. Deploy Core and both bridge versions with bridge claims disabled.
+2. Confirm a fresh `/v1/command-registry/runtime` snapshot and review every
+   uncovered trigger. Uncovered triggers may remain, but they must force
+   abstention rather than enforcement.
+3. Run `/v1/decisions/outcomes` and controlled reply/command cases in shadow.
+4. Set Core to `shadow`, enable claim requests on both bridges, and verify
+   `/v1/claims/summary` records decisions with zero enforced rows.
+5. Set one exact `qq:group:<id>` key in the canary JSON and switch Core to
+   `canary`; every other conversation remains fail-open.
+6. Verify a Lily command, explicit Nekro summon, reply to each bot, ordinary
+   message, and simulated Core outage. Only the non-target response path may be
+   suppressed; ordinary messages and outages retain existing behavior.
+7. Roll back by setting both bridge claim flags false or Core mode `off`. No
+   token or database rollback is required.
+
+## 5. Rollback
 
 - Lily: remove `plugins.lily_core_bridge` from the explicit plugin list and
   restart Lily.

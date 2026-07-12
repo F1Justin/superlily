@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superlily"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lily Core observability spine and bridge contracts"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -31,4 +31,3 @@ package-dir = {superlily_core = "apps/core/src/superlily_core", superlily_contra
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-

@@ -24,6 +24,28 @@
   tokens, cookies, or arbitrary adapter extension dictionaries.
 - Event text is personal chat data even when it contains no credentials. Set a
   retention policy before enabling broad group ingestion.
+- Runtime plugin snapshots contain plugin IDs, module names, matcher types,
+  deterministic triggers, priority, and block flags. They do not include
+  handler source, plugin configuration, secrets, or arbitrary matcher state.
+- Runtime discovery never grants authority. Target instance, permission, and
+  sensitive status require a reviewed static rule. Uncovered runtime commands
+  make claim evaluation abstain.
+- Composite/custom matcher rules and matcher-level permissions are reported as
+  incomplete. Sensitive or non-public commands remain shadow-only until Core
+  has a sender authorization model.
+
+## Claim safety
+
+- Claim mode defaults to `off`; bridge-side claim requests also default off.
+- Canary scope is an exact allowlist of canonical conversation keys. There is
+  no wildcard interpretation.
+- Core errors and timeouts are fail-open. A deny is enforced only when every
+  readiness gate passes.
+- The current canary never enforces `observe_only`, so an unknown passive
+  matcher cannot cause a message to disappear.
+- Lily suppresses send APIs but still runs chat recording and other observers.
+  Nekro uses its public history-preserving `BLOCK_TRIGGER` signal.
+- Claim attempts and suppressed/failed responses remain auditable.
 
 Recommended starting retention:
 
