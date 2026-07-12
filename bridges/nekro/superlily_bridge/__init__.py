@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from functools import wraps
@@ -20,7 +21,12 @@ from nekro_agent.schemas.agent_ctx import AgentCtx
 from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
-from .identity import NativeIdentityCache, conversation, native_identity_cache_key
+from .identity import (
+    NativeIdentityCache,
+    claim_targets_instance,
+    conversation,
+    native_identity_cache_key,
+)
 from .payloads import content_parts, message_references, native_message_identity, ref_msg_id_from_ext_data
 from .reporter import BackgroundReporter, ReportItem
 
@@ -28,7 +34,7 @@ plugin = NekroPlugin(
     name="Lily Core Bridge",
     module_name="core_bridge",
     description="Fail-open event, response, and heartbeat reporting to Lily Core",
-    version="0.1.0",
+    version="0.2.0",
     author="Superlily",
     url="",
     support_adapter=["onebot_v11"],
@@ -44,11 +50,19 @@ class BridgeConfig(ConfigBase):
     HEARTBEAT_SECONDS: int = Field(default=30, ge=5, le=300, title="Heartbeat interval")
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
     TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="HTTP timeout")
+    CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
 
 
 config: BridgeConfig = plugin.get_config(BridgeConfig)
 reporter = BackgroundReporter(config.CORE_URL, config.CORE_TOKEN, config.QUEUE_SIZE, config.TIMEOUT_SECONDS)
 heartbeat_task: asyncio.Task | None = None
+_TRIGGER_CACHE_ATTR = "_superlily_recent_tome_triggers_v1"
+_TRIGGER_TTL_SECONDS = 180.0
+ONEBOT_QQ_CAPABILITIES = {
+    "profile": "onebot_v11.qq.v1",
+    "supported": ["mention", "reply", "send_image", "send_text"],
+    "limits": {},
+}
 
 try:
     nekro_version = version("nekro-agent")
@@ -78,9 +92,44 @@ def instance(bot_id: str | None = None) -> dict[str, Any]:
     }
 
 
-async def _observe_user_message(message: ChatMessage) -> None:
+def _trigger_cache() -> dict[tuple[str, str], tuple[str, float]]:
+    cache = getattr(nonebot_message, _TRIGGER_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(nonebot_message, _TRIGGER_CACHE_ATTR, cache)
+    return cache
+
+
+def _remember_trigger(conv: dict[str, Any], source_id: str, should_remember: bool) -> None:
+    if not should_remember:
+        return
+    now = time.monotonic()
+    cache = _trigger_cache()
+    for key, (_, created_at) in list(cache.items()):
+        if now - created_at > _TRIGGER_TTL_SECONDS:
+            cache.pop(key, None)
+    cache[(str(conv["type"]), str(conv["id"]))] = (source_id, now)
+
+
+def _take_recent_trigger(conv: dict[str, Any]) -> str | None:
+    key = (str(conv["type"]), str(conv["id"]))
+    item = _trigger_cache().pop(key, None)
+    if item is None:
+        return None
+    source_id, created_at = item
+    if time.monotonic() - created_at > _TRIGGER_TTL_SECONDS:
+        return None
+    return source_id
+
+
+def _forget_trigger(conv: dict[str, Any]) -> None:
+    _trigger_cache().pop((str(conv["type"]), str(conv["id"])), None)
+
+
+async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], str]:
     conv = conversation(message.chat_key, message.chat_type)
     source_id = f"qq:{conv['type']}:{conv['id']}:message:{message.message_id}"
+    _remember_trigger(conv, source_id, bool(message.is_tome))
     segments, attachments = content_parts(message.content_data)
     ref_msg_id = ref_msg_id_from_ext_data(message.ext_data)
     native_identity = _take_native_identity(conv, message.message_id)
@@ -118,13 +167,25 @@ async def _observe_user_message(message: ChatMessage) -> None:
         "raw": None,
         "metadata": metadata,
     }
-    reporter.enqueue(ReportItem("/v1/events", payload, stable_key(config.INSTANCE_ID, source_id)))
+    idempotency_key = stable_key(config.INSTANCE_ID, source_id)
+    reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
+    return payload, idempotency_key
 
 
 @plugin.mount_on_user_message()
 async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
     try:
-        await _observe_user_message(message)
+        payload, idempotency_key = await _observe_user_message(message)
+        if config.CLAIM_ENABLED:
+            claim = await reporter.request_claim(payload, idempotency_key)
+            if claim_targets_instance(claim, config.INSTANCE_ID):
+                _remember_trigger(payload["conversation"], payload["source_event_id"], True)
+            if claim and claim.get("enforced") is True and claim.get("action") == "deny":
+                _forget_trigger(payload["conversation"])
+                logger.info(
+                    f"Lily Core claim denied event {claim.get('source_event_id')} ({claim.get('reason')})"
+                )
+                return MsgSignal.BLOCK_TRIGGER
     except Exception:
         logger.exception("Lily Core user-message observation failed open")
     return MsgSignal.CONTINUE
@@ -239,7 +300,12 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
             conv = {"id": str(raw.get("target_id") or raw.get("user_id") or "unknown"), "type": "private", "name": None}
         text, segments, attachments = _onebot_message_parts(getattr(event, "message", None))
         message_id = raw.get("message_id")
-        source_response = f"qq:{bot.self_id}:message:{message_id}"
+        source_response = (
+            f"qq:{bot.self_id}:message:{message_id}"
+            if message_id is not None
+            else f"qq:{bot.self_id}:sent-attempt:{uuid4()}"
+        )
+        trigger_source_event_id = _take_recent_trigger(conv)
         reply_id = None
         for segment in segments:
             if segment.get("type") == "reply":
@@ -249,6 +315,7 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
             "schema_version": "1.0",
             "source_response_id": source_response,
             "instance": instance(bot.self_id),
+            "trigger_source_event_id": trigger_source_event_id,
             "response_type": "message_sent",
             "conversation": conv,
             "platform_message_id": str(message_id) if message_id is not None else None,
@@ -259,7 +326,13 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
             "success": True,
             "occurred_at": utc_iso(raw.get("time")),
             "raw": None,
-            "metadata": {},
+            "metadata": {
+                "trigger_inference": (
+                    "recent_core_target_or_tome_conversation_once"
+                    if trigger_source_event_id
+                    else None
+                ),
+            },
         }
         reporter.enqueue(
             ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
@@ -285,11 +358,13 @@ if not getattr(OneBotBot, "_superlily_failed_send_hook", False):
         else:
             conv = {"id": str(data.get("user_id") or "unknown"), "type": "private", "name": None}
         source_response = f"qq:{bot.self_id}:failed-attempt:{uuid4()}"
+        trigger_source_event_id = _take_recent_trigger(conv)
         text, segments, attachments = _onebot_message_parts(data.get("message"))
         payload = {
             "schema_version": "1.0",
             "source_response_id": source_response,
             "instance": instance(bot.self_id),
+            "trigger_source_event_id": trigger_source_event_id,
             "response_type": api,
             "conversation": conv,
             "text": text,
@@ -299,7 +374,13 @@ if not getattr(OneBotBot, "_superlily_failed_send_hook", False):
             "error": str(exception),
             "occurred_at": utc_iso(),
             "raw": None,
-            "metadata": {},
+            "metadata": {
+                "trigger_inference": (
+                    "recent_core_target_or_tome_conversation_once"
+                    if trigger_source_event_id
+                    else None
+                ),
+            },
         }
         reporter.enqueue(
             ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
@@ -321,10 +402,14 @@ async def heartbeat_loop() -> None:
                     "process_status": "running",
                     "connection_status": "connected" if bots else "disconnected",
                     "occurred_at": utc_iso(),
+                    "capabilities": ONEBOT_QQ_CAPABILITIES,
                     "metadata": {
                         "connected_bots": len(bots),
                         "queue_depth": reporter.queue.qsize(),
                         "dropped": reporter.dropped,
+                        "claim_enabled": config.CLAIM_ENABLED,
+                        "claim_failures": reporter.claim_failures,
+                        "bridge_version": "0.2.0",
                     },
                 },
             )

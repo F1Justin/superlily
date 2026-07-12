@@ -17,6 +17,7 @@ panel:
 - `CORE_TOKEN=<nekro-agent instance token>`
 - `INSTANCE_ID=nekro-agent`
 - `BOT_ID=2022692714`
+- `CLAIM_ENABLED=false`
 
 The container must join the `superlily_bus` network; see
 `deploy/nekro-compose.override.yml`.
@@ -25,3 +26,6 @@ Do not hot-reload this plugin during the first smoke test. Its global NoneBot
 hooks are guarded against duplicate registration, but a clean process restart
 is easier to audit.
 
+With `CLAIM_ENABLED=true`, only an enforced deny returns Nekro's
+`BLOCK_TRIGGER`: the incoming message remains in Nekro history but does not
+start the agent. Failure to reach Core returns `CONTINUE`.

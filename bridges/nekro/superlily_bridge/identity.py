@@ -39,6 +39,17 @@ def native_identity_cache_key(conv: dict[str, Any], message_id: Any) -> str:
     return f"{conv.get('type', 'unknown')}:{conv.get('id', 'unknown')}:{message_id}"
 
 
+def claim_targets_instance(claim: Any, instance_id: str) -> bool:
+    """Return whether Core selected this bridge instance to handle the event."""
+
+    return bool(
+        isinstance(claim, dict)
+        and claim.get("ready") is True
+        and claim.get("action") == "allow"
+        and claim.get("reason") == f"decision_target:{instance_id}"
+    )
+
+
 def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
     """Parse Nekro chat keys without leaking the type prefix into the ID."""
 
@@ -63,4 +74,9 @@ def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
     return {"id": conversation_id or "unknown", "type": kind, "name": None}
 
 
-__all__ = ["NativeIdentityCache", "conversation", "native_identity_cache_key"]
+__all__ = [
+    "NativeIdentityCache",
+    "claim_targets_instance",
+    "conversation",
+    "native_identity_cache_key",
+]
