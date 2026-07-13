@@ -22,5 +22,8 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for local setup.
 The implementation sequence and cross-phase gates are in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); the next-phase protocol is specified in
 [`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md).
+Renderer, agent, Watchdog, platform, memory, event, avatar, and optional
+runtime-replacement plans are decomposed in
+[`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md).
 The final Phase 2 production gate is reproducible from
 [`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md).

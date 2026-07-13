@@ -403,3 +403,24 @@ Phase 3 implementation may begin only when Phase 2 acceptance records:
 - SQLite/PostgreSQL suites, migration head, production drift, backup, and
   rollback evidence;
 - committed Phase 2 code and documentation.
+
+## Handoff to later phases
+
+Phase 3 must leave stable seams for `FUTURE_PHASES_DESIGN.md` without
+implementing them early:
+
+- validated structured output remains distinct from RenderDocument and
+  platform delivery;
+- artifact identity/reservation can be generalized by Phase 4 without a
+  second competing artifact ledger;
+- invocation, principal, policy, capability, provider, budget, and outcome
+  snapshots are immutable inputs to future AgentRun audit;
+- provider leases/fencing are reusable by renderer, failover, and operations
+  workers rather than copied into phase-specific queues;
+- descriptors do not embed QQ segments, model prompts, renderer markup,
+  Watchdog policy, memory retrieval, or device commands.
+
+The detailed Phase 4–11 work packets and release dependencies are in
+`docs/FUTURE_PHASES_DESIGN.md`. Their design may be reviewed during Phase 3,
+but their migrations, endpoints, credentials, and production authority remain
+disabled until the numbered gates in `ROADMAP.md` pass.

@@ -398,3 +398,5 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 第一阶段的意义在于让莉莉从“两个独立 bot”开始变成“一个统一大脑”。只要这个核心立住，后续的 Wolfram、LaTeX、自然语言、Watchdog、多平台、Fumo、皮套和活动系统都可以作为能力逐渐接入。否则继续堆插件只会让莉莉越来越强，但也越来越分裂、越来越不可控。
 
 当前执行路线以 `docs/ROADMAP.md` 为准，第二阶段证据以 `docs/ACCEPTANCE.md` 和 `docs/PHASE2_REVIEW.md` 为准，第三阶段协议以 `docs/PHASE3_TOOL_REGISTRY.md` 为准。愿景、合同、实现和验收由此分开维护。
+
+第四至第十一阶段的共享契约、内部工作包、故障模型、权限提升点和退出门槛见 `docs/FUTURE_PHASES_DESIGN.md`。该文档用于提前消除架构歧义，不代表允许跳过当前阶段门禁并行上线后续功能。

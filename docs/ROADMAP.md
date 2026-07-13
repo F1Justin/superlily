@@ -5,6 +5,10 @@ event-routing foundation. `manifesto.md` remains the architectural vision;
 phase-specific design documents define implementable contracts and acceptance
 gates.
 
+Detailed post-Tool-Registry design: `docs/FUTURE_PHASES_DESIGN.md`. It defines
+the shared boundaries, internal work packets, failure models, and exit gates
+for Phases 4–11 without authorizing those phases to start early.
+
 ## Current position
 
 Phase 2 is in its final production gate. Policy v2, correlation v3, runtime
@@ -119,6 +123,8 @@ compatibility remains; no natural-language model has execution authority yet.
 
 ## Phase 4: Unified Renderer
 
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-4-unified-renderer-and-delivery-boundary`.
+
 ### Deliverables
 
 - Define a versioned `RenderDocument` intermediate representation for text,
@@ -140,6 +146,8 @@ help results render identically through command and tool paths, with QQ text
 and image fallbacks tested. Tools no longer call platform send APIs directly.
 
 ## Phase 5: Natural-language Tool Calling
+
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-5-natural-language-planning-and-controlled-tool-loop`.
 
 ### 5a. Planner without execution
 
@@ -171,6 +179,8 @@ covered; command behavior remains independent of model availability.
 
 ## Phase 6: Three-account coordination and Watchdog
 
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-6-watchdog-incidents-and-role-failover`.
+
 - Model Command, Talk, and Watchdog as explicit roles with capability and
   health snapshots, not hard-coded account IDs.
 - Define a degradation matrix per tool: primary provider, permitted fallback,
@@ -184,6 +194,8 @@ Exit gate: loss of each bot, NapCat, provider, Core, PostgreSQL, and network
 path has a tested outcome; failback does not duplicate a reply or invocation.
 
 ## Phase 7: Additional platform entry points
+
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-7-additional-platforms-and-web-admin`.
 
 Order: Telegram administrator private chat, Web Admin, then lower-priority
 WeChat/Discord/email/live-stream adapters.
@@ -202,6 +214,8 @@ platform without platform-specific branches in tool providers.
 
 ## Phase 8: Memory as Tool
 
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-8-retrieval-and-memory-as-tool`.
+
 Build in privacy order:
 
 1. `state.get`: explicit structured group/task/event state.
@@ -217,6 +231,8 @@ requirements, not later cleanup.
 
 ## Phase 9: Event operations
 
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-9-event-operations`.
+
 - Treat programs, tickets, check-in, raffle pools, staff actions, timers, OBS
   scenes, and announcements as structured state and tools.
 - Use an event-scoped role model and a rehearsal/simulation mode.
@@ -231,6 +247,8 @@ compensation behavior.
 
 ## Phase 10: Fumo and avatar adapters
 
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-10-fumo-and-avatar-adapters`.
+
 - Define versioned output intents: `speak`, `subtitle`, `emotion`, `action`,
   `display_card`, and `attention`.
 - Devices and Live2D/OBS clients render intents but own no planning or tool
@@ -243,6 +261,8 @@ and operator override are tested; no device credential grants Core admin tool
 authority.
 
 ## Phase 11: Optional legacy runtime replacement
+
+Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-11-optional-legacy-runtime-replacement`.
 
 Replacement is evidence-driven and component-by-component. A custom OneBot or
 Satori adapter, plugin host, agent loop, runner, sandbox, or admin UI replaces
