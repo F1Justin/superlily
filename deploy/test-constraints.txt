@@ -1,0 +1,9 @@
+# Test-only dependency set used with deploy/constraints.txt.
+# Update intentionally and rerun the complete SQLite/PostgreSQL suite.
+aiosqlite==0.22.1
+iniconfig==2.3.0
+packaging==26.2
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==8.4.2
+pytest-asyncio==0.26.0

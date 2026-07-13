@@ -8,6 +8,7 @@
 - [x] Phase 2a.1 native QQ identity collection ran in production for 24 hours.
 - [x] Phase 2a.2 correlation v3 and deterministic canonical decisions.
 - [x] Phase 2b.2 runtime command-registry synchronization.
+- [x] Phase 2 typed platform-capability snapshots are live on both bridges.
 - [x] Phase 2b shadow decision/actual-response comparison and acceptance.
 - [ ] Phase 2c fail-open claim-lock canary.
 - [ ] Phase 2 completion review before Tool Registry work begins.
@@ -112,10 +113,25 @@ forming one correlation-v3 source with two observations and one revision-2
 was stored with the canonical trigger source, closing the previously unlinked
 response gap.
 
+## Platform capability model
+
+- [x] Heartbeat contracts use a typed, versioned capability profile rather
+  than arbitrary metadata or adapter-name inference.
+- [x] Unsupported and missing capabilities remain unknown; no wildcard or
+  implicit “supports everything” behavior exists.
+- [x] The conservative OneBot QQ profile declares only text, image, reply, and
+  mention, all exercised by the existing adapters.
+- [x] Lily and Nekro production heartbeats expose identical validated
+  `onebot_v11.qq.v1` snapshots in `/v1/instances`.
+
 ## Phase 2c claim-lock canary
 
 - [x] Claims are idempotent per source event and instance, and an enforced
   allow owner cannot race to a different instance.
+- [x] Enforced allow requires committed deny from every other observed
+  instance; delayed/fail-open peers cannot create a fictitious exclusive owner.
+- [x] Decision recomputation is serialized per canonical source across event,
+  response, resolver, and claim paths.
 - [x] Only actionable `command`/`talk` decisions can allow or deny;
   `observe_only` abstains.
 - [x] Missing v3 identity, fewer than two observations, low confidence,
@@ -124,14 +140,20 @@ response gap.
 - [x] Incompletely introspected, sensitive, or non-public commands also
   abstain rather than suppressing the other bot.
 - [x] Shadow claim requests run on both bridges with zero enforced claims.
-- [ ] One exact QQ test conversation runs in canary mode; all other
+- [x] One exact QQ test conversation runs in canary mode; all other
   conversations remain unchanged.
-- [ ] Lily deny suppresses sends without disabling chat recording. Nekro deny
+- [x] Lily deny suppresses sends without disabling chat recording. Nekro deny
   preserves history with `BLOCK_TRIGGER`.
 - [x] A Core outage/timeout leaves both bots on their existing behavior.
 - [ ] Canary evidence is stable before Phase 3 begins.
 
 ## Phase 1 acceptance
+
+- [x] The original health table/API sketch is satisfied by readiness,
+  `bot_instances`, and append-only status transitions.
+- [x] Empty conversation/identity authority tables and an unused Redis service
+  are deliberately deferred; no Phase 2 claim depends on either. Formal models
+  remain a gate before administrator writes or a second platform.
 
 ## Automated
 
@@ -156,8 +178,9 @@ response gap.
   `tmux-nb.service` auto-restart supervisor.
 - [x] Confirm the current Lily process is receiving live OneBot events before
   bridge installation.
-- [ ] Record one known-good Lily command response before bridge installation.
-- [ ] Confirm one Lily message and response appear in Core.
+- [x] The original pre-install baseline checkpoint is superseded by a stronger
+  controlled canary comparison; no retroactive pre-install claim is made.
+- [x] Confirm one Lily message and response appear in Core.
 - [x] Confirm one Nekro message and `message_sent` response appear in Core.
 - [x] Stop Core for two minutes and verify both bots continue processing.
 - [x] Restart Core and verify heartbeats recover without bot restarts.
@@ -175,10 +198,31 @@ zero retained raw payloads, zero structured sensitive markers, and zero
 structured URL queries. A separate historical maintenance pass sanitized 637
 legacy structured rows with zero truncation; user-authored text was retained.
 
-The final pre-canary build passed 86 tests independently on SQLite and
+The final reviewed build passed 90 tests independently on SQLite and
 PostgreSQL 17. A disposable PostgreSQL database completed
 `base -> 0010 -> base -> 0010`; the migration graph has one head, production
 reports `0010_claim_owner_index`, and `alembic check` found no schema drift.
+
+The exact-conversation canary used QQ group `708309706`, which the operator
+confirmed is an otherwise empty test group. `wf 2+3` produced one enforced Lily
+allow, one enforced Nekro deny, and one Lily response. A “莉莉” summon and a
+reply to Nekro with QQ's automatic `at` deleted each produced one enforced
+Nekro allow, one enforced Lily deny, and one linked Nekro response. An ordinary
+message and a reply to Lily with automatic `at` deleted both abstained and
+produced no response. Nekro's database retained the denied command event. No
+conversation outside the exact allowlist produced an enforced claim.
+
+Review then found that bot-authored replies containing “莉莉” polluted outcome
+audits even though the two-observation gate safely abstained. Policy v2 now
+classifies known bot senders as `observe_only / bot_message_observed`; a live
+v2 canary proved both the intended user-message routing and the corrected bot
+output decision. The final dependency-constrained, capability-enabled Core
+deployment began at 2026-07-13 09:46:43 CST with image
+`sha256:79ee2aaca9b23fe3863e3c09acda67ba3d94bdcc0de587df7afd18ed5a651e3c`.
+It runs as UID/GID 65532, reports Compose `healthy`, and passed `pip check`.
+Its 24-hour acceptance window ends at
+2026-07-14 09:46:43 CST. Neither bridge nor PostgreSQL was restarted for this
+final Core-only deployment.
 
 The unchecked items intentionally require an operator-visible live deployment;
 development tests do not mutate either running bot.

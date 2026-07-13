@@ -168,6 +168,14 @@ conversation_configs
 identity_mappings
 预留跨平台身份映射。第一阶段可以只存 platform、external_user_id、display_name、person_id、metadata。
 
+当前实现没有为了满足初稿名称而创建空的 `health_checks`、
+`conversation_configs` 和 `identity_mappings` 表。健康证据由 readiness、
+`bot_instances` 与 append-only `instance_status_transitions` 等价承担；当前
+canary 配置仍是启动时环境配置。会话策略与跨平台身份映射必须等 principal、
+权限和第二平台合同定型后再建，不能让昵称或未经验证的平台角色提前成为权限
+依据。这个取舍不阻塞只读/公开工具的 Phase 3a/3b，但任何管理员写工具、跨平台
+转发或第二平台上线前必须补齐正式模型与迁移。
+
 6.4 统一事件草案
 
 第一阶段的统一事件模型不必完美，但必须避免 QQ 特化。建议采用如下结构。
@@ -220,6 +228,11 @@ Nekro Agent 当前可以继续作为自然语言聊天后端。第一阶段只�
 第一阶段应当实现最小心跳机制。NoneBot Lily、Nekro Agent、NapCat 实例和未来 Watchdog 都应定时向 Core 上报状态。心跳内容可以包括实例名、进程状态、连接状态、当前账号、最后一条消息时间、错误摘要和版本信息。
 
 建议心跳间隔为 30 秒。Core 如果超过 90 秒没有收到某实例心跳，可以将其实例状态标记为 degraded 或 offline。第一阶段不需要自动告警，但应当在 /health 中体现异常，为后续 Watchdog 打基础。
+
+初稿建议的 Redis 没有成为 Phase 1/2 依赖：当前规模下，PostgreSQL 事务、唯一
+约束和 advisory lock 已覆盖 correlation 与 claim；短期队列由 bridge 的有界
+内存队列承担。Redis 只有在 Phase 3 的分布式 rate limit/lease/queue 证明需要时
+才引入，不能因为早期技术栈清单而增加一个尚无 correctness 职责的服务。
 
 6.8 第一阶段完成标准
 
@@ -289,7 +302,7 @@ Phase 2b.2 的完成标准是：运行时插件树新增、删除或不变都能
 
 Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。完成标准是：命令只允许 Lily、自然语言召唤或回复 Nekro 只允许 Nekro、回复 Lily 不触发 Nekro、普通消息不被 claim 破坏、Core 停机时两个 bot 自动回到旧行为，并且所有 claim 与被抑制发送均可审计。通过稳定窗口后，第二阶段完成，方可进入 Phase 3 Tool Registry。
 
-截至 2026-07-12，Phase 2a.2 与 2b.2 已实现并部署：Correlation v3、canonical decision、运行时命令清单、response outcome、唯一引用解析和双桥 shadow claim 均已上线。当前位于 Phase 2c 验收期；Core 两分钟故障回退已经通过，仍需完成单测试群 canary 的 command/talk/reply/ordinary 样本及部署后 24 小时稳定窗口。在这些证据写入 `docs/ACCEPTANCE.md` 前，不开始第三阶段工具注册。
+截至 2026-07-13，Phase 2a.2 与 2b.2 已实现并部署：Correlation v3、canonical decision policy v2、运行时命令清单、response outcome、唯一引用解析、平台 capability snapshot 和双桥 claim 均已上线。单测试群 canary 的 command/talk/reply/ordinary 样本已经通过，Core 两分钟故障回退也已通过；当前只等待最终部署后的 24 小时稳定窗口与安全审计。在这些证据写入 `docs/ACCEPTANCE.md` 前，不开始第三阶段工具执行。
 
 8. 第三阶段：Tool Registry 与现有插件迁移
 
@@ -297,11 +310,17 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 每个工具必须声明名称、描述、参数 schema、返回类型、权限要求、超时、频率限制、是否允许自然语言调用、是否需要确认。自然语言 agent 后续只能申请调用已注册工具，不能绕过 Core 直接执行底层操作。
 
+第三阶段进一步拆成四步。3a 只建立经过人工审阅的 tool descriptor 和经过实例认证的 runtime provider snapshot，不执行工具；3b 建立 invocation、attempt、confirmation、lease、fencing token、deadline、budget、artifact 的完整账本和 provider 拉取协议；3c 依次迁移 status.inspect、wolfram.run、latex.render 等低风险工具；3d 才让旧命令入口在 shadow/canary 后切到同一工具协议。运行时发现只证明“实现正在加载”，不能自动获得权限。工具 provider 不运行在 Core API 进程内，也不开放 Lily/Nekro 的入站执行端口，而是从 Core 拉取有界 lease。
+
+第三阶段完成时，命令入口仍然存在，自然语言模型仍然没有工具执行权。详细字段、状态机、数据库表、API、迁移顺序和验收标准见 `docs/PHASE3_TOOL_REGISTRY.md`；跨阶段依赖和门禁见 `docs/ROADMAP.md`。
+
 9. 第四阶段：统一 Renderer
 
 第四阶段目标是建立统一渲染系统。所有长文本、Markdown、LaTeX、Wolfram 图形、代码块、状态卡片、抽奖结果、活动流程、OBS 字幕卡片都应当通过 Renderer 生成标准输出。工具只返回结构化结果，不直接发送 QQ 消息。平台 adapter 根据自身能力发送文本、图片、HTML、Markdown、语音或字幕。
 
 这一阶段会显著提升莉莉的输出质感，也会使 /wf、/tex、自然语言解释、帮助页、活动现场展示和皮套字幕共享同一套渲染能力。
+
+Renderer 必须以版本化 RenderDocument 中间表示和内容寻址 artifact 为核心，记录 MIME、hash、大小、尺寸、来源、TTL 与访问范围。平台 adapter 按 Phase 2 capability snapshot 做显式降级，并记录 Markdown 转图片、图片转文本等降级路径。未受信 HTML/SVG/Markdown、远程资源和本地文件都必须经过独立安全策略。完成标准不是“能画图”，而是工具不再直接调用平台 send API，同一结构化结果可以在 QQ 及第二个平台得到可解释的输出。
 
 10. 第五阶段：自然语言 Tool Calling
 
@@ -309,11 +328,15 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 这一阶段不采用默认 RAG。历史、文档、配置和记忆都作为工具存在。模型需要时主动调用 docs.search、history.search、state.get 等工具。默认回复仍然保持轻上下文。
 
+自然语言工具调用先经过 planner-only shadow，再开放受预算限制的只读调用，最后才开放绑定精确参数和有效期的确认写操作。Core 必须限制最大 tool turns、总时长、token/cost、provider 并发和结果大小；tool result 仍视为不可信输入。模型不可用时，命令路径和确定性工具不能受到影响。
+
 11. 第六阶段：三账号协同与 Watchdog
 
 第六阶段目标是实现 Command、Talk、Watchdog 三账号分工。Command 号负责命令和确定性工具，Talk 号负责自然语言和解释，Watchdog 号负责健康检查、告警和灾备降级。Watchdog 平时不参与普通聊天，只在实例离线、NapCat 断连、工具异常、风控下线或管理员查询时响应。
 
 灾备策略应当支持降级矩阵。Command 号下线时，Talk 号可以接管部分低风险命令。Talk 号下线时，Command 号保留命令功能但关闭自然语言。两者均异常时，Watchdog 只进行管理员告警和基础状态查询，避免灾备号也被风控。
+
+降级矩阵必须按工具声明主 provider、允许的 fallback、降级限额和禁止接管项，并使用 lease/fencing 防止故障恢复时双执行。Watchdog 只消费健康和 incident 事件，默认不观察普通聊天；恢复需要 cooldown、hysteresis 和管理员可见的事件时间线。
 
 12. 第七阶段：多平台入口
 
@@ -321,11 +344,15 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 多平台扩展必须坚持 adapter 薄层原则。平台差异只存在于 adapter，不应渗透到 Core、Tool Registry 和 Agent Runtime。
 
+接入顺序优先 Telegram 管理私聊和只读 Web Admin，再考虑微信、Discord、邮件和直播入口。跨平台身份必须显式绑定，不能用昵称等价；跨平台转发属于需要权限和确认的写工具。第二个平台验收时，同一事件、工具和 Renderer contract 不应在 provider 内出现平台分支。
+
 13. 第八阶段：Memory as Tool
 
 第八阶段目标是建立保守、可控、按需调用的记忆系统。莉莉不应默认向每次对话注入长期记忆，而应当将记忆视为工具。短期上下文用于局部话题，结构化状态用于群配置、活动状态和任务状态，历史搜索用于明确的“之前”“上次”“谁说过”场景，长期画像只保存稳定、低敏、长期有价值的信息。
 
 优先实现 history.search、docs.search、state.get 和 memory.lookup。向量检索可以作为后续增强，不应成为第一版默认路径。能用精确查询就不用向量召回，能用结构化状态就不用自然语言记忆。
+
+顺序应为 state.get、docs.search、带会话授权的 history.search、带来源和过期时间的 memory.lookup，最后才是 embedding/rerank。每个结果必须携带 source、scope、time、confidence 和 redaction；写记忆是单独的受审工具，不允许把模型推断的人物画像静默持久化。删除、导出、保留期和同意机制属于第一版验收条件。
 
 14. 第九阶段：活动现场系统
 
@@ -333,11 +360,15 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 这一阶段尤其适合东方济悠樱、上高联例会和校内活动。莉莉可以逐渐从群聊工具变成活动现场助手。
 
+节目单、票务、签到、抽奖、Staff 权限、计时器、OBS scene 和公告都应成为结构化状态与工具。上线前必须有 rehearsal/simulation；抽奖输入与结果可复现，现场网络中断有离线/降级 runbook，所有写动作记录操作人、确认和补偿/回滚方式。
+
 15. 第十阶段：Lily Fumo 与 Neuro-Lily-sama
 
 第十阶段目标是给莉莉增加实体身体和虚拟身体。Lily Fumo 是线下实体终端，可以通过麦克风、扬声器、按钮、LED、小屏幕、摄像头扫码、NFC 等方式和 Lily Core 交互。Neuro-Lily-sama 是 OBS / Live2D / PNGTuber 皮套前端，可以负责语音、字幕、表情、动作、报幕、抽奖和现场展示。
 
 Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily Core。Core 输出统一的 speak、emotion、action、subtitle 和 display_card，不同身体自行表现。
+
+身体 adapter 只消费带版本、时序和过期时间的 intent；需要 session lease、急停/静音、麦克风摄像头隐私指示、队列上限和离线安全状态。设备凭据不能获得 Core 管理工具权限，过期或重复动作不能在重连后再次执行。
 
 16. 第十一阶段：自研 Runtime 替换旧系统
 
@@ -345,20 +376,20 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 最终目标是形成完整 Lily Harness。NoneBot 和 Nekro 在早期是可复用资产，在中期是外围器官，在长期可以逐步退役。真正的长期资产是 Lily Core 的事件模型、工具协议、权限系统、渲染系统、记忆工具、审计轨迹和多平台 adapter。
 
+替换必须逐组件进行，每个自研 adapter、plugin host、agent loop、runner 或 sandbox 都要先 shadow 真实流量，比较行为、延迟、资源和故障边界，并保留即时回滚。只要旧 runtime 能作为健康 provider 服从稳定合同，项目并不以“全部重写”为完成条件。
+
 17. 近期优先级
 
-近期优先级应当是先完成第一阶段，而不是继续堆新插件。建议顺序如下：
+当前近期优先级已经从第一阶段推进到第二阶段最终验收：
 
-1. 整理 docs：LILY.md、TOOLS.md、SERVICES.md、GROUPS.md、ROADMAP.md。
-2. 建立 lily-core FastAPI 项目。
-3. 建立 PostgreSQL schema 和基础 ORM。
-4. 实现 /events、/responses、/heartbeat、/health。
-5. 编写 NoneBot lily_core_bridge 插件，上报消息和心跳。
-6. 编写 Nekro 上报 hook 或外部适配层。
-7. 实现最近事件查看和实例状态查看。
-8. 确认现有 Lily/Nekro 行为不受影响。
+1. 完成 2026-07-13 最终部署后的 24 小时 canary、安全和稳定性审计。
+2. 固化 Phase 2 acceptance、项目 review、迁移/回滚证据并提交。
+3. 按 `docs/PHASE3_TOOL_REGISTRY.md` 先实现 3a descriptor/registry，保持执行关闭。
+4. 再实现 3b invocation ledger 与 provider lease/fencing，不接自然语言模型。
+5. 依次迁移 status.inspect、wolfram.run、latex.render；每个工具单独 shadow/canary。
+6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置。
 
-第一阶段完成后，再进入核心裁决和 Tool Registry。不要在第一阶段追求自然语言 tool calling、Fumo、皮套、WebUI 全功能或完整多平台，否则项目会过早复杂化。
+不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 
 18. 项目判断
 
@@ -366,4 +397,4 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 第一阶段的意义在于让莉莉从“两个独立 bot”开始变成“一个统一大脑”。只要这个核心立住，后续的 Wolfram、LaTeX、自然语言、Watchdog、多平台、Fumo、皮套和活动系统都可以作为能力逐渐接入。否则继续堆插件只会让莉莉越来越强，但也越来越分裂、越来越不可控。
 
-这个初稿可以先落到仓库里，之后第一阶段做完以后再把“第二阶段核心裁决”和“Tool Registry 协议”拆成单独设计文档。
+当前执行路线以 `docs/ROADMAP.md` 为准，第二阶段证据以 `docs/ACCEPTANCE.md` 和 `docs/PHASE2_REVIEW.md` 为准，第三阶段协议以 `docs/PHASE3_TOOL_REGISTRY.md` 为准。愿景、合同、实现和验收由此分开维护。

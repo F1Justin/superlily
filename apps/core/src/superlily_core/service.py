@@ -565,6 +565,24 @@ async def recompute_event_decision(
     source: SourceEvent,
     settings: Settings,
 ) -> EventDecision | None:
+    """Serialize every recomputation path for one canonical source.
+
+    Event ingestion is already protected by the correlation fingerprint, but
+    response arrival and reference backfill can independently recompute the
+    same decision.  A source-specific lock prevents those paths from losing a
+    revision or overwriting newer aggregate features.
+    """
+
+    lock_fingerprint = hashlib.sha256(f"decision:{source.id}".encode()).hexdigest()
+    async with _correlation_guard(session, lock_fingerprint):
+        return await _recompute_event_decision_unlocked(session, source, settings)
+
+
+async def _recompute_event_decision_unlocked(
+    session: AsyncSession,
+    source: SourceEvent,
+    settings: Settings,
+) -> EventDecision | None:
     observations = (
         await session.scalars(
             select(EventObservation)
@@ -1202,24 +1220,14 @@ async def _ensure_claim_decision(
     if decision is not None:
         return decision
 
-    lock_fingerprint = source.correlation_fingerprint or hashlib.sha256(
-        f"decision:{source.id}".encode()
-    ).hexdigest()
-    async with _correlation_guard(session, lock_fingerprint):
+    decision = await recompute_event_decision(session, source, settings)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
         decision = await session.scalar(
-            select(EventDecision)
-            .where(EventDecision.source_event_id == source.id)
-            .execution_options(populate_existing=True)
+            select(EventDecision).where(EventDecision.source_event_id == source.id)
         )
-        if decision is None:
-            decision = await recompute_event_decision(session, source, settings)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                decision = await session.scalar(
-                    select(EventDecision).where(EventDecision.source_event_id == source.id)
-                )
     return decision
 
 
@@ -1307,6 +1315,10 @@ async def evaluate_event_claim(
     ready = evaluation.ready
     enforced = configured_enforcement and ready and action in {"allow", "deny"}
     lock_fingerprint = hashlib.sha256(f"claim:{source.id}".encode()).hexdigest()
+    coordination: dict[str, Any] = {
+        "observed_peer_instance_ids": [],
+        "enforced_deny_instance_ids": [],
+    }
 
     async with _correlation_guard(session, lock_fingerprint):
         existing = await session.scalar(
@@ -1318,6 +1330,46 @@ async def evaluate_event_claim(
         if existing is not None:
             await session.commit()
             return existing, True
+
+        # An allow is only an exclusive owner after every other instance that
+        # observed this canonical event has already received an enforced deny.
+        # Without this handshake, a late second observation could grant allow
+        # after the first bridge had timed out, failed open, and continued its
+        # legacy matcher path.  Deny may stand alone safely; allow may not.
+        if enforced and action == "allow":
+            observed_peer_instance_ids = set(
+                (
+                    await session.scalars(
+                        select(EventObservation.instance_id)
+                        .where(
+                            EventObservation.source_event_id == source.id,
+                            EventObservation.instance_id != payload.instance.instance_id,
+                        )
+                        .distinct()
+                    )
+                ).all()
+            )
+            enforced_deny_instance_ids = set(
+                (
+                    await session.scalars(
+                        select(EventClaim.instance_id).where(
+                            EventClaim.source_event_id == source.id,
+                            EventClaim.instance_id.in_(observed_peer_instance_ids),
+                            EventClaim.action == "deny",
+                            EventClaim.enforced.is_(True),
+                        )
+                    )
+                ).all()
+            )
+            coordination = {
+                "observed_peer_instance_ids": sorted(observed_peer_instance_ids),
+                "enforced_deny_instance_ids": sorted(enforced_deny_instance_ids),
+            }
+            if not observed_peer_instance_ids or enforced_deny_instance_ids != observed_peer_instance_ids:
+                action = "abstain"
+                reason = "claim_peers_not_denied"
+                ready = False
+                enforced = False
 
         if enforced and action == "allow":
             owner = await session.scalar(
@@ -1348,6 +1400,7 @@ async def evaluate_event_claim(
                 "gates": evaluation.gates,
                 "configured_enforcement": configured_enforcement,
                 "target_status": target_status,
+                "coordination": coordination,
             },
         )
         session.add(record)

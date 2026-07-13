@@ -4,7 +4,14 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from superlily_contracts import EventIn, EventReference, RuntimePlugin, SanitizationPolicy, sanitize_payload
+from superlily_contracts import (
+    EventIn,
+    EventReference,
+    PlatformCapabilities,
+    RuntimePlugin,
+    SanitizationPolicy,
+    sanitize_payload,
+)
 
 
 def test_sanitizer_redacts_secrets_and_url_queries() -> None:
@@ -128,4 +135,24 @@ def test_runtime_plugin_rejects_impossible_classification_counts() -> None:
             module_name="plugins.demo",
             matcher_count=1,
             classified_matcher_count=2,
+        )
+
+
+def test_platform_capabilities_are_canonical_and_conservative() -> None:
+    capabilities = PlatformCapabilities(
+        profile="onebot_v11.qq.v1",
+        supported=["send_text", "mention", "reply"],
+        limits={"text_chars": 4_096},
+    )
+    assert capabilities.supported == ["mention", "reply", "send_text"]
+
+    with pytest.raises(ValidationError, match="unique"):
+        PlatformCapabilities(
+            profile="onebot_v11.qq.v1",
+            supported=["send_text", "send_text"],
+        )
+    with pytest.raises(ValidationError, match="non-negative"):
+        PlatformCapabilities(
+            profile="onebot_v11.qq.v1",
+            limits={"text_chars": -1},
         )

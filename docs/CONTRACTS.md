@@ -17,6 +17,14 @@ The wire schema is version `1.0` and the HTTP surface is under `/v1`.
 Each token is bound to exactly one `instance.instance_id`. A Lily token cannot
 submit a Nekro payload.
 
+Heartbeats may carry a typed `capabilities` snapshot. A snapshot names a
+versioned adapter profile, an explicit list of supported operations, and
+optional numeric limits. Missing capabilities mean unknown, never “supports
+everything”. The initial `onebot_v11.qq.v1` profile conservatively declares
+only `send_text`, `send_image`, `reply`, and `mention`; later Tool/Renderer
+routing must degrade against this snapshot rather than infer platform support
+from the adapter name.
+
 For event ingestion, the request's `source_event_id` is the reporting
 account's event identifier. Core stores it as `reported_source_event_id` and
 returns the canonical `source_event_id` in the response. Different bot
@@ -80,6 +88,12 @@ uncertain reply target, low confidence, or an offline target returns
 `abstain`. Incomplete matcher introspection, sensitive commands, and commands
 whose permission is not `public` also abstain. `shadow` never enforces;
 `canary` enforces only exact configured `platform:type:id` conversations.
+An `allow` is enforced only after all other instances observed on that source
+have committed enforced `deny` claims. Otherwise it becomes
+`abstain / claim_peers_not_denied`; the coordination snapshot is retained in
+claim features. This is a conservative coordination record, not proof that a
+remote process survived after receiving the HTTP response, so actual response
+outcomes remain the final behavioral evidence.
 
 ## Read APIs
 
@@ -109,7 +123,8 @@ payload storage.
 per-field coverage for canonical message events over a bounded one-to-168-hour
 window; notices and other non-message events are excluded.
 
-`/v1/instances` derives `offline` from the earlier of Core receipt time and the
+`/v1/instances` exposes the latest typed capability snapshot and derives
+`offline` from the earlier of Core receipt time and the
 bridge-reported time. A delayed queue or future-skewed bridge clock therefore
 cannot keep an instance online. The reported timestamp remains in instance
 metadata. Only reported status changes append history.

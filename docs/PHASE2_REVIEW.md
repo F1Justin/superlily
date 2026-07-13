@@ -48,9 +48,32 @@ boundaries, and the live canary sequence.
   `observe_only / bot_message_observed`. Bot outputs remain available for reply
   resolution but no longer create false talk/command outcomes from their own
   text.
+- Heartbeats carry a typed, versioned platform-capability snapshot. The first
+  QQ profile is deliberately limited to text, image, reply, and mention, so
+  future tools/renderers can degrade without guessing from adapter names.
+- The production Python base image is pinned by digest and the validated
+  transitive dependency set is constrained. Rebuilding the same revision no
+  longer silently selects newer package releases.
+- Claim ownership now uses a deny-before-allow handshake. A target cannot be
+  recorded as an enforced exclusive owner merely because a late second
+  observation made the decision ready after the peer had already failed open.
+- Canonical decision recomputation has its own per-source transaction lock, so
+  observation, response, reference-backfill, and claim paths cannot overwrite
+  one another's revision/features.
+- The PostgreSQL 17.10 image is digest-pinned and Core exposes a Compose
+  readiness healthcheck rather than treating a live process as ready.
 
 ## Deliberate residual boundaries
 
+- The manifesto's early `health_checks`, `conversation_configs`, and
+  `identity_mappings` sketches were not materialized as empty speculative
+  tables. Readiness plus instance/status transitions provide the health
+  equivalent. Formal conversation/principal mappings are required before any
+  administrator write tool or second platform, but public read/compute Phase
+  3 slices do not depend on invented identity authority.
+- Redis is intentionally absent. PostgreSQL transaction/uniqueness locks and
+  bounded bridge queues have explicit current responsibilities; Phase 3 may
+  add Redis only when distributed leases/rates/queues need it.
 - The old Lily and Nekro databases are not bulk-copied. Their schemas do not
   contain a verified cross-account key, and overlap would duplicate live Core
   records. See `HISTORY_DRY_RUN.md`.
@@ -79,3 +102,6 @@ Phase 3 may start only after all of the following are recorded in
    behavior;
 7. a stable 24-hour post-deployment evidence window and a final secret/URL
    storage audit.
+
+The exact close-out procedure and zero-violation sets are defined in
+`PHASE2_FINAL_AUDIT.md`.

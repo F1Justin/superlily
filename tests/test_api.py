@@ -1163,7 +1163,7 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
     assert body["responses"]["unlinked"] == 0
 
 
-async def test_claim_canary_coalesces_two_observers_and_enforces_one_target(client, app) -> None:
+async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, app) -> None:
     app.state.settings = replace(
         app.state.settings,
         claim_mode="canary",
@@ -1243,23 +1243,40 @@ async def test_claim_canary_coalesces_two_observers_and_enforces_one_target(clie
         real_seq="991122",
         occurred_at=observed_at,
     )
-    lily_request = client.post(
-        "/v1/claims/evaluate",
+    lily_event = await client.post(
+        "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-command-lily"},
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-event-lily"},
     )
-    nekro_request = client.post(
+    nekro_event = await client.post(
+        "/v1/events",
+        json=nekro_payload,
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "claim-event-nekro"},
+    )
+    assert lily_event.status_code == nekro_event.status_code == 201
+
+    # The non-target must receive deny before Core may call the target an
+    # exclusive owner.  This ordering models the safe coordination handshake.
+    nekro = await client.post(
         "/v1/claims/evaluate",
         json=nekro_payload,
         headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "claim-command-nekro"},
     )
-    lily, nekro = await asyncio.gather(lily_request, nekro_request)
+    lily = await client.post(
+        "/v1/claims/evaluate",
+        json=lily_payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-command-lily"},
+    )
 
     assert lily.status_code == nekro.status_code == 200
     assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
     assert (lily.json()["action"], lily.json()["enforced"]) == ("allow", True)
     assert (nekro.json()["action"], nekro.json()["enforced"]) == ("deny", True)
     assert lily.json()["decision_revision"] == nekro.json()["decision_revision"] == 2
+    assert lily.json()["features"]["coordination"] == {
+        "observed_peer_instance_ids": ["nekro-agent"],
+        "enforced_deny_instance_ids": ["nekro-agent"],
+    }
 
     async with app.state.database.sessions() as session:
         claims = (await session.scalars(select(EventClaim))).all()
@@ -1280,6 +1297,152 @@ async def test_claim_canary_coalesces_two_observers_and_enforces_one_target(clie
     )
     assert context.status_code == 200
     assert len(context.json()["claims"]) == 2
+
+    concurrent_lily_payload = event_payload(
+        "lily-command",
+        source_event_id="qq:group:123:message:claim-concurrent-lily",
+        message_id="claim-concurrent-lily",
+        text="wf 2+2",
+        real_seq="991123",
+        occurred_at=observed_at,
+    )
+    concurrent_nekro_payload = event_payload(
+        "nekro-agent",
+        source_event_id="qq:group:123:message:claim-concurrent-nekro",
+        message_id="claim-concurrent-nekro",
+        text="wf 2+2",
+        real_seq="991123",
+        occurred_at=observed_at,
+    )
+    for payload, token, key in (
+        (concurrent_lily_payload, "lily-secret", "concurrent-event-lily"),
+        (concurrent_nekro_payload, "nekro-secret", "concurrent-event-nekro"),
+    ):
+        response = await client.post(
+            "/v1/events",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
+        )
+        assert response.status_code == 201
+
+    concurrent_lily, concurrent_nekro = await asyncio.gather(
+        client.post(
+            "/v1/claims/evaluate",
+            json=concurrent_lily_payload,
+            headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "concurrent-claim-lily"},
+        ),
+        client.post(
+            "/v1/claims/evaluate",
+            json=concurrent_nekro_payload,
+            headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "concurrent-claim-nekro"},
+        ),
+    )
+    assert (concurrent_nekro.json()["action"], concurrent_nekro.json()["enforced"]) == ("deny", True)
+    assert (
+        concurrent_lily.json()["action"],
+        concurrent_lily.json()["reason"],
+        concurrent_lily.json()["enforced"],
+    ) in {
+        ("allow", "decision_target:lily-command", True),
+        ("abstain", "claim_peers_not_denied", False),
+    }
+
+    concurrent_source = concurrent_lily.json()["source_event_id"]
+    async with app.state.database.sessions() as session:
+        concurrent_claims = (
+            await session.scalars(select(EventClaim).where(EventClaim.source_event_id == concurrent_source))
+        ).all()
+        enforced_allow = [item for item in concurrent_claims if item.action == "allow" and item.enforced]
+        enforced_deny = [item for item in concurrent_claims if item.action == "deny" and item.enforced]
+        assert len(enforced_deny) == 1
+        assert not enforced_allow or enforced_deny[0].created_at <= enforced_allow[0].created_at
+
+
+async def test_late_target_cannot_claim_allow_after_peer_already_failed_open(client, app) -> None:
+    app.state.settings = replace(
+        app.state.settings,
+        claim_mode="canary",
+        claim_canary_conversations=frozenset({"qq:group:123"}),
+        claim_coalesce_milliseconds=0,
+    )
+    observed_at = datetime.now(timezone.utc)
+
+    snapshot = {
+        "schema_version": "1.0",
+        "instance": event_payload("lily-command")["instance"],
+        "snapshot_hash": runtime_registry_snapshot_hash([], []),
+        "observed_at": observed_at.isoformat(),
+        "plugins": [],
+        "candidates": [],
+    }
+    snapshot_response = await client.post(
+        "/v1/command-registry/snapshots",
+        json=snapshot,
+        headers={"Authorization": "Bearer lily-secret"},
+    )
+    assert snapshot_response.status_code == 201
+
+    for instance_id, token in (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret")):
+        heartbeat = await client.post(
+            "/v1/heartbeats",
+            json={
+                "schema_version": "1.0",
+                "instance": event_payload(instance_id)["instance"],
+                "process_status": "running",
+                "connection_status": "connected",
+                "occurred_at": observed_at.isoformat(),
+                "metadata": {},
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert heartbeat.status_code == 200
+
+    nekro_payload = event_payload(
+        "nekro-agent",
+        source_event_id="qq:group:123:message:late-nekro",
+        message_id="late-nekro",
+        text="莉莉，延迟协调测试",
+        real_seq="late-coordination",
+        occurred_at=observed_at,
+    )
+    lily_payload = event_payload(
+        "lily-command",
+        source_event_id="qq:group:123:message:late-lily",
+        message_id="late-lily",
+        text="莉莉，延迟协调测试",
+        real_seq="late-coordination",
+        occurred_at=observed_at,
+    )
+
+    # The non-target times out with only one observation and therefore has
+    # already continued its legacy path.
+    early_peer = await client.post(
+        "/v1/claims/evaluate",
+        json=lily_payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "late-peer-first"},
+    )
+    assert (early_peer.json()["action"], early_peer.json()["reason"], early_peer.json()["enforced"]) == (
+        "abstain",
+        "insufficient_observations",
+        False,
+    )
+
+    # A later target sees both observations, but cannot turn the earlier
+    # fail-open into a fictitious exclusive claim owner.
+    late_target = await client.post(
+        "/v1/claims/evaluate",
+        json=nekro_payload,
+        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "late-target-second"},
+    )
+    assert (late_target.json()["action"], late_target.json()["reason"], late_target.json()["enforced"]) == (
+        "abstain",
+        "claim_peers_not_denied",
+        False,
+    )
+    assert late_target.json()["features"]["coordination"] == {
+        "observed_peer_instance_ids": ["lily-command"],
+        "enforced_deny_instance_ids": [],
+    }
 
 
 async def test_claim_backfills_a_missing_legacy_decision_before_abstaining(client, app) -> None:
@@ -1411,6 +1574,11 @@ async def test_heartbeat_and_admin_views(client) -> None:
         "process_status": "running",
         "connection_status": "connected",
         "occurred_at": now,
+        "capabilities": {
+            "profile": "onebot_v11.qq.v1",
+            "supported": ["send_text", "mention", "reply", "send_image"],
+            "limits": {},
+        },
         "metadata": {"queue_depth": 0},
     }
     sent = await client.post(
@@ -1437,3 +1605,8 @@ async def test_heartbeat_and_admin_views(client) -> None:
     assert denied.status_code == 401
     assert allowed.status_code == 200
     assert allowed.json()[0]["status"] == "online"
+    assert allowed.json()[0]["capabilities"] == {
+        "profile": "onebot_v11.qq.v1",
+        "supported": ["mention", "reply", "send_image", "send_text"],
+        "limits": {},
+    }

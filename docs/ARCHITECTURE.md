@@ -18,6 +18,12 @@ suppresses only outgoing send APIs for an enforced deny, leaving recorders and
 observer matchers running. Nekro uses `BLOCK_TRIGGER`, which preserves its
 message history while skipping agent execution.
 
+Both bridges publish a conservative typed platform-capability snapshot in
+their heartbeat. The initial QQ profile claims only text, image, reply, and
+mention. Missing or unlisted capabilities remain unsupported/unknown. Phase 3
+tool results and Phase 4 renderers can therefore negotiate outputs without
+embedding QQ assumptions in the tool itself.
+
 ## Event identity
 
 - A bridge-reported `source_event_id` identifies one account's platform event.
@@ -75,6 +81,16 @@ message history while skipping agent execution.
   target. Command enforcement additionally requires a fully introspected,
   public, non-sensitive matcher. `observe_only` never becomes a destructive
   deny in this canary.
+- An enforced `allow` additionally requires every other instance that observed
+  the canonical source to have an already committed enforced `deny`. This
+  deny-before-allow coordination prevents a late second observation from
+  manufacturing an exclusive owner after the first bridge has timed out and
+  failed open. A deny may stand alone safely; a missing peer deny turns allow
+  into `abstain / claim_peers_not_denied`.
+- Every recomputation of one canonical decision uses the same source-specific
+  transaction lock, whether it was triggered by an observation, a late
+  response, reference resolution, or claim backfill. Correlation locks alone
+  are insufficient because response ingestion follows a separate path.
 - `Idempotency-Key` is scoped to the authenticated instance. Replaying a
   delivery returns the existing observation or response.
 - Responses may have no trigger. Scheduled sends, random replies, and proactive

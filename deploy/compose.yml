@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     environment:
       POSTGRES_DB: superlily
       POSTGRES_USER: superlily
@@ -42,6 +42,18 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${SUPERLILY_PORT:-8765}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     restart: unless-stopped
     networks:
       core: {}

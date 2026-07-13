@@ -12,6 +12,20 @@ curl http://127.0.0.1:8765/health/live
 curl http://127.0.0.1:8765/health/ready
 ```
 
+The production Python base is pinned by image digest and runtime/build
+dependencies are constrained by `deploy/constraints.txt`. Update that file
+only together with the complete SQLite/PostgreSQL suite and a rebuilt-image
+`pip check`; broad ranges in `pyproject.toml` remain the library compatibility
+contract, not the production resolver input.
+Test-only packages are independently pinned in
+`deploy/test-constraints.txt`.
+
+The PostgreSQL 17 image is also digest-pinned (currently PostgreSQL 17.10).
+Update that digest deliberately, verify the release/migration notes and backup,
+then re-run the PostgreSQL suite and restore check. Core has a Compose health
+check backed by `/health/ready`; `running` without `healthy` is not deployment
+success.
+
 The Compose project creates `superlily_bus` and publishes Core only on host
 loopback.
 

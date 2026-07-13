@@ -19,3 +19,8 @@ bot, and claim failures preserve their existing behavior.
 - `docs`: operations, security, and acceptance criteria.
 
 See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for local setup.
+The implementation sequence and cross-phase gates are in
+[`docs/ROADMAP.md`](docs/ROADMAP.md); the next-phase protocol is specified in
+[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md).
+The final Phase 2 production gate is reproducible from
+[`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md).

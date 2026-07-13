@@ -1,9 +1,14 @@
 # Security and data minimization
 
-## Before first deployment
+## Secret provisioning and maintenance
 
-1. Rotate the OneBot access token currently written in
-   `/home/justin/lily/API_DOC.md`; remove the literal value from documentation.
+Secret rotation is a separate operator-authorized maintenance action. A Core,
+bridge, schema, or documentation deployment must not silently replace working
+OneBot/database/admin/ingest credentials.
+
+1. At an approved maintenance window, rotate any OneBot access token still
+   written in `/home/justin/lily/API_DOC.md` and remove the literal value from
+   documentation. This repository does not read or print that value.
 2. Generate three unrelated random values: admin, Lily ingest, and Nekro
    ingest. Never reuse an existing OneBot, model-provider, or database secret.
 3. Keep `.env` outside version control and verify it with `git status` before
