@@ -334,9 +334,11 @@ Renderer 必须以版本化 RenderDocument 中间表示和内容寻址 artifact 
 
 第六阶段目标是实现 Command、Talk、Watchdog 三账号分工。Command 号负责命令和确定性工具，Talk 号负责自然语言和解释，Watchdog 号负责健康检查、告警和灾备降级。Watchdog 平时不参与普通聊天，只在实例离线、NapCat 断连、工具异常、风控下线或管理员查询时响应。
 
-灾备策略应当支持降级矩阵。Command 号下线时，Talk 号可以接管部分低风险命令。Talk 号下线时，Command 号保留命令功能但关闭自然语言。两者均异常时，Watchdog 只进行管理员告警和基础状态查询，避免灾备号也被风控。
+灾备策略应当支持降级矩阵。Command 号下线时，由 Reserve 在有界 role lease 下接管经过审阅的低风险命令；Talk 号下线时，由 Reserve 接管经过审阅的自然语言路径。第一版 Reserve 同时最多持有一个响应角色；两者均异常时默认进入缩减状态，由管理员选择单一接管角色，而不是让一个账号静默承担两套人格和全部权限。
 
-降级矩阵必须按工具声明主 provider、允许的 fallback、降级限额和禁止接管项，并使用 lease/fencing 防止故障恢复时双执行。Watchdog 只消费健康和 incident 事件，默认不观察普通聊天；恢复需要 cooldown、hysteresis 和管理员可见的事件时间线。
+降级矩阵必须按工具声明主 provider、允许的 fallback、降级限额和禁止接管项，并使用 lease/fencing 防止故障恢复时双执行。Reserve 的 adapter 为保证采集连续性会接收并上报受保护群消息，但 Watchdog/incident 逻辑只消费健康、coverage 和 incident 事件，不把普通聊天内容送入第三套对话大脑；恢复需要 cooldown、hysteresis 和管理员可见的事件时间线。
+
+三账号的具体形态采用“采集全活、发言主备”：Command、Talk 和第三个 Reserve 账号平时都保持在线并持续采集受保护群消息，但 Reserve 默认严格静默，只在某个主账号确认不可用且取得有界 role lease 后替代该逻辑角色发言。采集侧必须增加持久 ingress spool、幂等重放和 coverage/gap 诊断；单纯再加一个内存队列无法保证消息不遗漏。启用自动接管后，采集仍然 durable fail-open，发言则必须 lease-required 并带 fencing，避免网络分区时主号与备号同时说话。详细方案见 `docs/PHASE6_THREE_ACCOUNT_HA.md`。
 
 12. 第七阶段：多平台入口
 

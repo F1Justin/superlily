@@ -354,6 +354,12 @@ health, and no unconfirmed write is reachable.
 
 ## Phase 6: Watchdog, incidents, and role failover
 
+Detailed three-account design: `docs/PHASE6_THREE_ACCOUNT_HA.md`. The selected
+topology is active/active/active durable collection with Command and Talk as
+normal speakers and one continuously connected but silent Reserve account.
+Automatic egress failover uses role leases/fencing; passive observations alone
+never grant response authority.
+
 ### Phase objective
 
 Phase 6 turns existing heartbeats into explicit incident handling and bounded
@@ -389,9 +395,10 @@ Each role/tool row declares:
 - user-visible degradation and administrator notification.
 
 Talk may not inherit administrator commands merely because Command is down.
-Watchdog may not inherit ordinary chat or memory access merely because both
-are down. Platform account risk may require shutting down sends rather than
-failing over and risking another account.
+Watchdog logic may not inherit ordinary conversation context or memory access
+merely because both are down, even though the Reserve adapter records protected
+messages for coverage. Platform account risk may require shutting down sends
+rather than failing over and risking another account.
 
 ### Failover protocol
 
@@ -402,17 +409,21 @@ new fallback leases, waits for in-flight ownership to settle, observes a
 cooldown, and only then restores primary authority.
 
 If Core or PostgreSQL is unavailable, no new failover authority can be issued.
-Existing bots follow their documented local fail-open behavior; Watchdog uses
-an isolated administrator alert path with bounded local facts, not a shadow
-copy of Core authority.
+Collectors continue durable local ingress and replay later. Existing managed
+egress may use only its still-valid role lease and stops after expiry; it does
+not revert to indefinite Phase 2 fail-open once automatic failover is enabled.
+Reserve may use an isolated, separately reviewed administrator alert path with
+bounded local health facts, not a shadow copy of Core authority.
 
-### Watchdog account isolation
+### Reserve/Watchdog account isolation
 
-The Watchdog account has separate credentials, NapCat/runtime, rate limits,
-and administrator allowlist. It does not subscribe to ordinary chat by
-default. Its ingress is restricted to health/incident events and explicit
-administrator requests. Its output is limited to incident summaries and
-read-only status until separately reviewed.
+The Reserve account has separate credentials, NapCat/runtime, rate limits, and
+administrator allowlist. Its thin adapter receives protected ordinary chat to
+provide collection redundancy, but the Watchdog/incident runtime receives
+only health, coverage, status, incident, and explicit administrator events.
+Ordinary chat content is not fed into a third conversation agent. Its output
+is disabled in standby and limited by an active failover role lease or a
+separately reviewed private administrator notification path.
 
 ### Phase 6 work packets and exit gate
 
@@ -424,8 +435,9 @@ read-only status until separately reviewed.
 
 Exit requires tested loss and recovery of each bot, NapCat, provider, Core,
 PostgreSQL, network path, and notification channel. No failback duplicates a
-reply/invocation, maintenance does not page, and Watchdog never observes normal
-conversation traffic.
+reply/invocation, maintenance does not page, and Watchdog logic never consumes
+normal conversation content even though the Reserve adapter records it for
+coverage.
 
 ## Phase 7: Additional platforms and Web Admin
 
@@ -723,6 +735,7 @@ with new acceptance and rollback reasoning.
 
 | Work | Hard prerequisites | Design may start | Production authority waits for |
 |---|---|---|---|
+| HA-0 durable ingress foundation | Phase 2 idempotent event contract and correlation | Now as design | Explicit availability-priority decision after Phase 2; no response authority |
 | Phase 4 RenderDocument/artifacts | Phase 3 descriptor/result/artifact contract | During late Phase 3 | Phase 3 exit for provider migration |
 | Phase 5 planner shadow | Phase 3 eligible tool summaries; Phase 2 event/reply model | During Phase 3 canaries | Phase 4 result/render boundary for user delivery |
 | Phase 6 incident shadow | Phase 2 heartbeats/status transitions | Now as design | Phase 5 exit plus Phase 3 leases for real failover |

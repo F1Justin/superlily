@@ -25,5 +25,7 @@ The implementation sequence and cross-phase gates are in
 Renderer, agent, Watchdog, platform, memory, event, avatar, and optional
 runtime-replacement plans are decomposed in
 [`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md).
+The selected three-account high-availability topology is detailed in
+[`docs/PHASE6_THREE_ACCOUNT_HA.md`](docs/PHASE6_THREE_ACCOUNT_HA.md).
 The final Phase 2 production gate is reproducible from
 [`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md).

@@ -180,15 +180,31 @@ covered; command behavior remains independent of model availability.
 ## Phase 6: Three-account coordination and Watchdog
 
 Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-6-watchdog-incidents-and-role-failover`.
+Three-account collection/failover design:
+`docs/PHASE6_THREE_ACCOUNT_HA.md`.
+
+Availability-priority option: the authority-neutral `HA-0` durable ingress
+spool and coverage packet may be pulled forward after Phase 2 by an explicit
+roadmap decision. Doing so does not deploy Reserve or enable failover egress;
+the remaining Phase 6 release gates stay in numbered order.
 
 - Model Command, Talk, and Watchdog as explicit roles with capability and
   health snapshots, not hard-coded account IDs.
+- Run collection active/active/active across Command, Talk, and a continuously
+  connected silent Reserve account. Response remains active/passive: Reserve
+  speaks only while holding a bounded logical-role lease.
+- Add durable per-adapter ingress spools and coverage/watermark diagnostics;
+  another in-memory observer does not by itself guarantee no message loss.
 - Define a degradation matrix per tool: primary provider, permitted fallback,
   required health, reduced limits, and forbidden failover.
-- Watchdog consumes health/status transitions and alerts; it does not observe
-  ordinary chat by default and cannot silently acquire tool authority.
+- Reserve's adapter collects protected ordinary chat for ingestion coverage,
+  but Watchdog/incident logic consumes only health, coverage, status, and
+  incident events. It cannot silently acquire chat context or tool authority.
 - Use leases/fencing for failover, cooldown and hysteresis for recovery, and
   an administrator-visible incident timeline.
+- When automatic failover is active, managed egress becomes lease-required;
+  ingress remains durable and fail-open. This prevents a partitioned primary
+  and Reserve from speaking simultaneously.
 
 Exit gate: loss of each bot, NapCat, provider, Core, PostgreSQL, and network
 path has a tested outcome; failback does not duplicate a reply or invocation.
