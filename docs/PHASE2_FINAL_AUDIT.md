@@ -4,7 +4,10 @@ This is the repeatable close-out procedure for the final Phase 2 canary. The
 authoritative window is `2026-07-13 10:24:05 CST` through
 `2026-07-14 10:24:05 CST` (UTC `2026-07-13T02:24:05Z` through
 `2026-07-14T02:24:05Z`). Results are copied into `ACCEPTANCE.md`; this file is
-the procedure, not evidence by itself.
+the procedure, not evidence by itself. `phase2_final_audit.sql` is the
+read-only executable form of the count, invariant, outcome, structured-data,
+instance, and registry checks below. Its psql variables pin the same bounded
+window and can be overridden explicitly for a later rerun.
 
 The corrected post-deployment counter baseline at 2026-07-13 10:25 CST was:
 Lily `queue_depth=0, dropped=4, claim_failures=3`; Nekro

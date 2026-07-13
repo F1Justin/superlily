@@ -40,10 +40,12 @@ boundaries, and the live canary sequence.
   observation before applying the strong-correlation abstention gate.
 - Authentication configuration rejects reused ingest tokens and admin/ingest
   token overlap before the service starts.
-- Nekro response attribution now remembers a ready Core selection of the
-  Nekro instance as well as Nekro's local ToMe flag. This covers preset-name
-  triggers that Nekro recognizes only after the plugin callback; the
-  conversation-local association remains one-shot and explicitly inferred.
+- Nekro response attribution remembers a canonical Core selection of the
+  Nekro instance, including fail-open abstention, as well as Nekro's local ToMe
+  flag. This covers preset-name triggers that Nekro recognizes only after the
+  plugin callback; canonical target metadata is correlation-only and does not
+  grant authority. The conversation-local association remains one-shot and
+  explicitly inferred.
 - Policy v2 treats messages authored by a known Lily/Nekro bot identity as
   `observe_only / bot_message_observed`. Bot outputs remain available for reply
   resolution but no longer create false talk/command outcomes from their own
