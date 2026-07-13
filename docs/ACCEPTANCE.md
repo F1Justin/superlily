@@ -198,7 +198,7 @@ zero retained raw payloads, zero structured sensitive markers, and zero
 structured URL queries. A separate historical maintenance pass sanitized 637
 legacy structured rows with zero truncation; user-authored text was retained.
 
-The final reviewed build passed 90 tests independently on SQLite and
+The final reviewed build passed 91 tests independently on SQLite and
 PostgreSQL 17. A disposable PostgreSQL database completed
 `base -> 0010 -> base -> 0010`; the migration graph has one head, production
 reports `0010_claim_owner_index`, and `alembic check` found no schema drift.
@@ -216,13 +216,36 @@ Review then found that bot-authored replies containing “莉莉” polluted out
 audits even though the two-observation gate safely abstained. Policy v2 now
 classifies known bot senders as `observe_only / bot_message_observed`; a live
 v2 canary proved both the intended user-message routing and the corrected bot
-output decision. The final dependency-constrained, capability-enabled Core
-deployment began at 2026-07-13 09:46:43 CST with image
-`sha256:79ee2aaca9b23fe3863e3c09acda67ba3d94bdcc0de587df7afd18ed5a651e3c`.
-It runs as UID/GID 65532, reports Compose `healthy`, and passed `pip check`.
-Its 24-hour acceptance window ends at
-2026-07-14 09:46:43 CST. Neither bridge nor PostgreSQL was restarted for this
-final Core-only deployment.
+output decision.
+
+The first deny-before-allow production sample exposed a telemetry-only edge:
+when Nekro was the canonical target but safely received
+`abstain / claim_peers_not_denied`, its local normalized message still had
+`is_tome=false`. Nekro replied through its legacy matcher as intended, but its
+response was stored without a trigger. Claim gates now expose the canonical
+decision type and target as correlation metadata, and the Nekro bridge retains
+that target on abstention without treating it as authorization.
+
+The corrected controlled sample at 2026-07-13 10:26 CST used
+`莉莉，superlily-response-link-1025` in the exact canary group. The two bot
+views had different account-local message IDs and the same native
+`real_seq=11101`, producing one v3 source, two observations, and one revision-2
+`talk -> nekro-agent` decision. Nekro again received
+`abstain / claim_peers_not_denied` before Lily's enforced deny, then produced
+exactly one successful response linked to the canonical trigger. There was no
+non-target response, and Lily classified the outgoing Nekro message as
+`observe_only / bot_message_observed`.
+
+The corrected Core image is
+`sha256:7f0f4091eb811e55d13b50eb67d74c0e1013f8c82acd58f66e2023d689111968`.
+Core and PostgreSQL were recreated by Compose at 2026-07-13 10:23 CST; the
+existing database volume retained 298,620 source events, 317,848 observations,
+180,886 decisions, 9,680 claims, and 12,691 responses immediately after the
+restart, and production remained at Alembic head `0010_claim_owner_index`.
+Nekro restarted once to load the bridge fix and reconnected at 10:24:05 CST.
+Lily remained live in its existing `nb` tmux process and resumed fresh Core
+heartbeats after the brief Core outage. The authoritative corrected 24-hour
+window is 2026-07-13 10:24:05 CST through 2026-07-14 10:24:05 CST.
 
 The unchecked items intentionally require an operator-visible live deployment;
 development tests do not mutate either running bot.

@@ -29,3 +29,8 @@ is easier to audit.
 With `CLAIM_ENABLED=true`, only an enforced deny returns Nekro's
 `BLOCK_TRIGGER`: the incoming message remains in Nekro history but does not
 start the agent. Failure to reach Core returns `CONTINUE`.
+
+When the canonical decision targets Nekro but deny-before-allow coordination
+safely returns `abstain`, the bridge retains that decision only as a pending
+response-correlation hint. It does not convert the abstain into authorization;
+Nekro's existing matcher still decides whether a response is produced.

@@ -59,6 +59,8 @@ def test_claim_routes_only_actionable_deterministic_decisions() -> None:
 
     assert (allowed.action, allowed.ready) == ("allow", True)
     assert (denied.action, denied.ready) == ("deny", True)
+    assert allowed.gates["decision_type"] == "command"
+    assert allowed.gates["target_instance_id"] == "lily-command"
     assert (observed.action, observed.reason, observed.ready) == (
         "abstain",
         "non_actionable_decision",

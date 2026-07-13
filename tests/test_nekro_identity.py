@@ -79,3 +79,25 @@ def test_claim_target_rejects_non_allowing_or_malformed_results() -> None:
     )
     assert not identity.claim_targets_instance(None, "nekro-agent")
     assert not identity.claim_targets_instance("allow", "nekro-agent")
+
+
+def test_claim_decision_target_survives_safe_coordination_abstain() -> None:
+    identity = load_identity_module()
+    claim = {
+        "ready": False,
+        "action": "abstain",
+        "reason": "claim_peers_not_denied",
+        "features": {
+            "gates": {
+                "decision_type": "talk",
+                "target_instance_id": "nekro-agent",
+            }
+        },
+    }
+
+    assert identity.claim_decision_targets_instance(claim, "nekro-agent")
+    assert not identity.claim_decision_targets_instance(claim, "lily-command")
+    assert not identity.claim_decision_targets_instance(
+        {**claim, "action": "deny"},
+        "nekro-agent",
+    )

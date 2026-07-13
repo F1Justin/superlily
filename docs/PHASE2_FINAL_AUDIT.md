@@ -1,25 +1,26 @@
 # Phase 2 final production audit
 
 This is the repeatable close-out procedure for the final Phase 2 canary. The
-authoritative window is `2026-07-13 09:46:43 CST` through
-`2026-07-14 09:46:43 CST` (UTC `2026-07-13T01:46:43Z` through
-`2026-07-14T01:46:43Z`). Results are copied into `ACCEPTANCE.md`; this file is
+authoritative window is `2026-07-13 10:24:05 CST` through
+`2026-07-14 10:24:05 CST` (UTC `2026-07-13T02:24:05Z` through
+`2026-07-14T02:24:05Z`). Results are copied into `ACCEPTANCE.md`; this file is
 the procedure, not evidence by itself.
 
-The first post-deployment counter baseline at 2026-07-13 09:56 CST was:
-Lily `queue_depth=0, dropped=2, claim_failures=3`; Nekro
-`queue_depth=0, dropped=1, claim_failures=1`. These counters are process-lifetime
-totals that include earlier outage/deployment drills. Final acceptance checks
-that they do not increase from this baseline and correlates any increase with
-timestamped bridge/Core logs.
+The corrected post-deployment counter baseline at 2026-07-13 10:25 CST was:
+Lily `queue_depth=0, dropped=4, claim_failures=3`; Nekro
+`queue_depth=0, dropped=0, claim_failures=0`. Lily's two additional drops
+coincide with the intentional Core/PostgreSQL recreation. Nekro's counters
+reset when it restarted to load the bridge fix. Final acceptance checks that
+these baselines do not increase and correlates any increase with timestamped
+bridge/Core logs.
 
 ## Runtime and deployment
 
 - Core container is `healthy`, uses the reviewed image digest, and runs as
   UID/GID 65532.
 - `/health/ready` returns database `ok`.
-- Lily and Nekro retain their pre-Core-deployment process/container start
-  times; both `/v1/instances` rows are online with fresh, identical
+- Lily retains its pre-deployment tmux process. Nekro's one reviewed restart is
+  recorded; both `/v1/instances` rows are online with fresh, identical
   `onebot_v11.qq.v1` capability snapshots.
 - `pip check`, dependency comparison with `deploy/constraints.txt`,
   `alembic current`, and `alembic check` pass.

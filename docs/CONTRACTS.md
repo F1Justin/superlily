@@ -93,7 +93,11 @@ have committed enforced `deny` claims. Otherwise it becomes
 `abstain / claim_peers_not_denied`; the coordination snapshot is retained in
 claim features. This is a conservative coordination record, not proof that a
 remote process survived after receiving the HTTP response, so actual response
-outcomes remain the final behavioral evidence.
+outcomes remain the final behavioral evidence. Claim gates always include the
+canonical `decision_type` and `target_instance_id`. A bridge may use those two
+fields to correlate a legacy response after fail-open abstention, but they do
+not grant execution authority; only `ready`, `action`, and `enforced` control
+suppression or ownership.
 
 ## Read APIs
 

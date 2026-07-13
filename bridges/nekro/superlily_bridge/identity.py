@@ -50,6 +50,27 @@ def claim_targets_instance(claim: Any, instance_id: str) -> bool:
     )
 
 
+def claim_decision_targets_instance(claim: Any, instance_id: str) -> bool:
+    """Return whether the canonical decision selected this bridge instance.
+
+    This remains true when an otherwise actionable target claim safely
+    degrades to ``abstain`` while waiting for peer-deny coordination.  The
+    bridge uses it only to associate a later legacy response with its trigger;
+    it does not treat the claim as authorization.
+    """
+
+    if not isinstance(claim, dict):
+        return False
+    features = claim.get("features")
+    gates = features.get("gates") if isinstance(features, dict) else None
+    return bool(
+        isinstance(gates, dict)
+        and gates.get("decision_type") in {"command", "talk"}
+        and gates.get("target_instance_id") == instance_id
+        and claim.get("action") != "deny"
+    )
+
+
 def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
     """Parse Nekro chat keys without leaking the type prefix into the ID."""
 
@@ -76,6 +97,7 @@ def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
 
 __all__ = [
     "NativeIdentityCache",
+    "claim_decision_targets_instance",
     "claim_targets_instance",
     "conversation",
     "native_identity_cache_key",

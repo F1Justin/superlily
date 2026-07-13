@@ -23,7 +23,7 @@ from nekro_agent.schemas.signal import MsgSignal
 
 from .identity import (
     NativeIdentityCache,
-    claim_targets_instance,
+    claim_decision_targets_instance,
     conversation,
     native_identity_cache_key,
 )
@@ -178,7 +178,7 @@ async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
         payload, idempotency_key = await _observe_user_message(message)
         if config.CLAIM_ENABLED:
             claim = await reporter.request_claim(payload, idempotency_key)
-            if claim_targets_instance(claim, config.INSTANCE_ID):
+            if claim_decision_targets_instance(claim, config.INSTANCE_ID):
                 _remember_trigger(payload["conversation"], payload["source_event_id"], True)
             if claim and claim.get("enforced") is True and claim.get("action") == "deny":
                 _forget_trigger(payload["conversation"])

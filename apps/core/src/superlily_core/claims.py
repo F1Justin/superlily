@@ -37,6 +37,8 @@ def evaluate_claim(
     reply_status = str(decision_features.get("reply_target_status") or "none")
     gates = {
         "mode": mode,
+        "decision_type": decision_type,
+        "target_instance_id": target_instance_id,
         "correlation_version": correlation_version,
         "observation_count": observation_count,
         "required_observations": required_observations,
