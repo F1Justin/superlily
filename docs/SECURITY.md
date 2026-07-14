@@ -19,9 +19,10 @@ OneBot/database/admin/ingest credentials.
 ## Stored data
 
 - Raw protocol payloads are disabled by default.
-- If temporarily enabled, sensitive keys are recursively redacted, URL query
-  strings are removed, strings/collections are bounded, and oversize objects
-  are discarded without a preview.
+- If temporarily enabled, sensitive keys are recursively redacted, URL/URI
+  userinfo, queries, and fragments are removed for every scheme,
+  strings/collections are bounded, and oversize objects are discarded without
+  a preview.
 - Attachment bytes and remote URLs are never copied in phase one; only metadata
   summaries are accepted.
 - Phase 2a.1 native identity capture is an explicit scalar allowlist. It never

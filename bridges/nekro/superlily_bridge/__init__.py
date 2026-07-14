@@ -49,12 +49,20 @@ class BridgeConfig(ConfigBase):
     BOT_ID: str = Field(default="", title="QQ bot ID")
     HEARTBEAT_SECONDS: int = Field(default=30, ge=5, le=300, title="Heartbeat interval")
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
-    TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="HTTP timeout")
+    TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="Legacy HTTP timeout")
+    CLAIM_TIMEOUT_SECONDS: float = Field(default=1.0, ge=0.05, le=5, title="Claim HTTP timeout")
+    REPORT_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.05, le=10, title="Report HTTP timeout")
     CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
 
 
 config: BridgeConfig = plugin.get_config(BridgeConfig)
-reporter = BackgroundReporter(config.CORE_URL, config.CORE_TOKEN, config.QUEUE_SIZE, config.TIMEOUT_SECONDS)
+reporter = BackgroundReporter(
+    config.CORE_URL,
+    config.CORE_TOKEN,
+    config.QUEUE_SIZE,
+    config.CLAIM_TIMEOUT_SECONDS,
+    config.REPORT_TIMEOUT_SECONDS,
+)
 heartbeat_task: asyncio.Task | None = None
 _TRIGGER_CACHE_ATTR = "_superlily_recent_tome_triggers_v1"
 _TRIGGER_TTL_SECONDS = 180.0

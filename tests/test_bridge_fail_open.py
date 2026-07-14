@@ -37,3 +37,17 @@ def test_bridge_with_empty_token_is_silent_noop() -> None:
     assert reporter.enqueue(module.ReportItem("/v1/events", {"example": True})) is False
     assert reporter.queue.empty()
     assert reporter.dropped == 0
+
+
+def test_claim_and_background_report_timeouts_are_independent() -> None:
+    module = load_reporter_module()
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "token",
+        1,
+        claim_timeout_seconds=1.0,
+        report_timeout_seconds=2.0,
+    )
+
+    assert reporter.claim_timeout_seconds == 1.0
+    assert reporter.report_timeout_seconds == 2.0

@@ -28,7 +28,11 @@ def _strip_url_query(value: str) -> str:
         parsed = urlsplit(value)
     except ValueError:
         return value
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    # OneBot URL fields also carry platform URI schemes such as ``mqqapi``
+    # and ``mqzone``.  Their query strings can contain the same session-like
+    # routing data as HTTP URLs, so scheme allowlisting would leave a gap.
+    # Plain display strings without a scheme remain untouched.
+    if not parsed.scheme:
         return value
     netloc = parsed.netloc.rsplit("@", 1)[-1]
     return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))

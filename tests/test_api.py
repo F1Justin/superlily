@@ -60,8 +60,15 @@ def event_payload(
 
 async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
     headers = {"Authorization": "Bearer lily-secret", "Idempotency-Key": "stable-event-key"}
-    first = await client.post("/v1/events", json=event_payload(), headers=headers)
-    second = await client.post("/v1/events", json=event_payload(), headers=headers)
+    payload = event_payload()
+    payload["message"]["segments"].append(
+        {
+            "type": "json",
+            "data": {"jumpUrl": "mqqapi://user:password@qzoneschema/feed?token=secret#fragment"},
+        }
+    )
+    first = await client.post("/v1/events", json=payload, headers=headers)
+    second = await client.post("/v1/events", json=payload, headers=headers)
 
     assert first.status_code == 201, first.text
     assert second.status_code == 200, second.text
@@ -75,6 +82,7 @@ async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
             "access_token": "[REDACTED]",
             "url": "https://example.test/a",
         }
+        assert records[0].segments_json[1]["data"]["jumpUrl"] == "mqqapi://qzoneschema/feed"
 
 
 async def test_native_identity_is_visible_in_admin_debug_views(client) -> None:

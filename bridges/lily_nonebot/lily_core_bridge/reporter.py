@@ -23,11 +23,19 @@ class BackgroundReporter:
     applying backpressure to the bot.
     """
 
-    def __init__(self, base_url: str, token: str, queue_size: int, timeout_seconds: float):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        queue_size: int,
+        claim_timeout_seconds: float,
+        report_timeout_seconds: float | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.queue: asyncio.Queue[ReportItem] = asyncio.Queue(maxsize=queue_size)
-        self.timeout_seconds = timeout_seconds
+        self.claim_timeout_seconds = claim_timeout_seconds
+        self.report_timeout_seconds = report_timeout_seconds or claim_timeout_seconds
         self.dropped = 0
         self.claim_failures = 0
         self._client: httpx.AsyncClient | None = None
@@ -41,7 +49,7 @@ class BackgroundReporter:
     async def start(self) -> None:
         if not self.enabled or self._worker:
             return
-        self._client = httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False)
+        self._client = httpx.AsyncClient(timeout=self.report_timeout_seconds, trust_env=False)
         self._worker = asyncio.create_task(self._run(), name="lily-core-reporter")
 
     async def stop(self) -> None:
@@ -80,6 +88,7 @@ class BackgroundReporter:
             response = await self._client.post(
                 f"{self.base_url}/v1/claims/evaluate",
                 json=payload,
+                timeout=self.claim_timeout_seconds,
                 headers={
                     "Authorization": f"Bearer {self.token}",
                     "Idempotency-Key": idempotency_key,

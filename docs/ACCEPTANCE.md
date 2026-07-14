@@ -236,7 +236,7 @@ exactly one successful response linked to the canonical trigger. There was no
 non-target response, and Lily classified the outgoing Nekro message as
 `observe_only / bot_message_observed`.
 
-The corrected Core image is
+The response-attribution candidate image was
 `sha256:7f0f4091eb811e55d13b50eb67d74c0e1013f8c82acd58f66e2023d689111968`.
 Core and PostgreSQL were recreated by Compose at 2026-07-13 10:23 CST; the
 existing database volume retained 298,620 source events, 317,848 observations,
@@ -244,8 +244,60 @@ existing database volume retained 298,620 source events, 317,848 observations,
 restart, and production remained at Alembic head `0010_claim_owner_index`.
 Nekro restarted once to load the bridge fix and reconnected at 10:24:05 CST.
 Lily remained live in its existing `nb` tmux process and resumed fresh Core
-heartbeats after the brief Core outage. The authoritative corrected 24-hour
-window is 2026-07-13 10:24:05 CST through 2026-07-14 10:24:05 CST.
+heartbeats after the brief Core outage.
+
+That candidate window was not accepted. At 2026-07-14 10:06 CST, before its
+scheduled 10:24:05 endpoint, a pre-close audit of 14,626 sources, 17,467
+observations, 14,626 decisions, 14,163 claims, and 949 responses found:
+
+- zero canonical-event violations and zero claim-coordination violations;
+- zero enforced claims outside `qq:group:708309706` and exactly one enforced
+  deny in the canary;
+- 45 missed talk outcomes, of which 32 had an unlinked successful Nekro
+  response in the same conversation within five minutes and 23 within 30
+  seconds. That timing is compatible with the known correlation hint being
+  lost when a claim request timed out, but does not by itself prove one-to-one
+  attribution;
+- three explicit platform send failures and four unexpected Lily responses for
+  manual comparison in the replacement window;
+- six retained QQ `mqqapi://`/`mqzone://` query strings in URL-typed segment
+  fields; and
+- Lily counters `dropped=21, claim_failures=156`, up 17 and 153 from baseline.
+  Nekro's counters after an operator-issued 2026-07-13 21:40:27 restart were
+  `dropped=4, claim_failures=4`. The Core remained healthy; bridge logs identify
+  the failures as 0.5-second `ReadTimeout` fail-open events.
+
+The Nekro restart degraded its Core status at 21:40:44 and returned online at
+21:41:14. Lily continued recording events during the gap, and no single-observer
+event obtained an enforced allow. This is useful fail-open evidence, but a
+manual restart does not excuse the transport or sanitizer findings above.
+
+The remediation separates the one-second claim deadline from the two-second
+background-ingestion deadline and sanitizes URL/URI userinfo, query, and
+fragment data for every scheme. Twelve affected observation rows were updated
+in one transaction; an immediate idempotency pass found zero remaining changes,
+and the structured URL violation query returned zero. The post-fix build passes
+92 tests on both SQLite and PostgreSQL 17.10, `compileall`, `pip check`, and the
+fresh `base -> 0010 -> base -> 0010` PostgreSQL chain.
+
+The replacement Core image is
+`sha256:8dbd276b3def03241a51c36986f5274b1f8bea5a12debe2163a766a7cb20dc7a`.
+Core started at 2026-07-14 10:14:11 CST. Lily was restarted through its existing
+tmux/systemd supervisor and reconnected at 10:16:34; only after Lily returned
+online was Nekro restarted, reconnecting at 10:17:25. Both bridges reported
+online with `queue_depth=0, dropped=0, claim_failures=0`, identical
+`onebot_v11.qq.v1` capabilities, and the fresh 28-plugin/194-candidate runtime
+registry before the replacement window began.
+
+The authoritative replacement window is 2026-07-14 10:19:02 CST through
+2026-07-15 10:19:02 CST. A pre-Phase-3 production dump was created at
+`/home/justin/backups/superlily/superlily-phase2-final-20260714.dump` before
+the corrective deployment: 105,934,432 bytes, PostgreSQL 17.10 custom format,
+78 TOC entries, SHA-256
+`85acab932dd32944349e3a9622e4cc70cbc39a6a485cdaf96917784c0f628d02`.
+`pg_restore --list` succeeded. No retained pre-Phase-2-migration dump was found,
+so this is explicitly a current rollback baseline rather than retroactive
+evidence.
 
 The unchecked items intentionally require an operator-visible live deployment;
 development tests do not mutate either running bot.

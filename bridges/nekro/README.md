@@ -18,6 +18,8 @@ panel:
 - `INSTANCE_ID=nekro-agent`
 - `BOT_ID=2022692714`
 - `CLAIM_ENABLED=false`
+- `CLAIM_TIMEOUT_SECONDS=1.0`
+- `REPORT_TIMEOUT_SECONDS=2.0`
 
 The container must join the `superlily_bus` network; see
 `deploy/nekro-compose.override.yml`.

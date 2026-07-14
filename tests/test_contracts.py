@@ -22,6 +22,7 @@ def test_sanitizer_redacts_secrets_and_url_queries() -> None:
             "database_url": "postgresql://user:password@database/core",
             "nested": {"password": "also-secret"},
             "image_url": "https://user:password@example.test/image?a=credential&b=2",
+            "jumpUrl": "mqqapi://user:password@qzoneschema/feed?token=secret#fragment",
             "file": "base64://very-long-secret-binary",
         },
         SanitizationPolicy(enabled=True),
@@ -32,6 +33,7 @@ def test_sanitizer_redacts_secrets_and_url_queries() -> None:
         "database_url": "[REDACTED]",
         "nested": {"password": "[REDACTED]"},
         "image_url": "https://example.test/image",
+        "jumpUrl": "mqqapi://qzoneschema/feed",
         "file": "[BINARY_DATA]",
     }
 

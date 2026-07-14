@@ -26,11 +26,18 @@ boundaries, and the live canary sequence.
   online.
 - A response that arrives before its event is linked when the event later
   appears, preserving outcome auditability.
-- Generic token/database credential keys are redacted, HTTP URL userinfo and
-  queries are removed, and bridge HTTP clients ignore ambient proxy settings.
+- Generic token/database credential keys are redacted, URL/URI userinfo and
+  queries are removed for every scheme, and bridge HTTP clients ignore ambient
+  proxy settings.
 - JSON-encoded OneBot segment payloads are parsed only in JSON container
   fields and recursively sanitized; ordinary user text is not reinterpreted.
+- URL-typed fields remove userinfo, query, and fragment data for every scheme,
+  including QQ `mqqapi`/`mqzone` deep links rather than only HTTP(S).
 - Reporter queues remain bounded and all reporting/claim failures are fail-open.
+- Claim and background-ingestion deadlines are independent. Claims retain a
+  one-second bounded fail-open path, while the background reporter gets two
+  seconds so a committed request is not routinely counted as dropped under
+  normal PostgreSQL latency.
 - Lily runtime snapshot hashing uses the same canonical row ordering as Core;
   the 28-plugin production snapshot is contract- and hash-verified.
 - Alembic 0001-to-0010 upgrade and downgrade paths are verified on SQLite,

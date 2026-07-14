@@ -1,30 +1,35 @@
 # Phase 2 final production audit
 
 This is the repeatable close-out procedure for the final Phase 2 canary. The
-authoritative window is `2026-07-13 10:24:05 CST` through
-`2026-07-14 10:24:05 CST` (UTC `2026-07-13T02:24:05Z` through
-`2026-07-14T02:24:05Z`). Results are copied into `ACCEPTANCE.md`; this file is
+authoritative replacement window is `2026-07-14 10:19:02 CST` through
+`2026-07-15 10:19:02 CST` (UTC `2026-07-14T02:19:02Z` through
+`2026-07-15T02:19:02Z`). Results are copied into `ACCEPTANCE.md`; this file is
 the procedure, not evidence by itself. `phase2_final_audit.sql` is the
 read-only executable form of the count, invariant, outcome, structured-data,
 instance, and registry checks below. Its psql variables pin the same bounded
 window and can be overridden explicitly for a later rerun.
 
-The corrected post-deployment counter baseline at 2026-07-13 10:25 CST was:
-Lily `queue_depth=0, dropped=4, claim_failures=3`; Nekro
-`queue_depth=0, dropped=0, claim_failures=0`. Lily's two additional drops
-coincide with the intentional Core/PostgreSQL recreation. Nekro's counters
-reset when it restarted to load the bridge fix. Final acceptance checks that
-these baselines do not increase and correlates any increase with timestamped
-bridge/Core logs.
+The replacement post-deployment counter baseline is zero for both bridges at
+2026-07-14 10:19:02 CST: `queue_depth=0, dropped=0, claim_failures=0`. Claim
+requests use a one-second fail-open deadline while background ingestion uses a
+separate two-second deadline. Final acceptance checks that these baselines do
+not increase and correlates any increase with timestamped bridge/Core logs.
+
+The earlier candidate window was deliberately not signed off. A pre-close
+audit found six QQ custom-scheme URI query strings and materially increasing
+0.5-second transport timeout counters. The sanitizer, stored rows, and bridge
+timeouts were corrected before this replacement window began; the detailed
+evidence remains in `ACCEPTANCE.md`.
 
 ## Runtime and deployment
 
 - Core container is `healthy`, uses the reviewed image digest, and runs as
   UID/GID 65532.
 - `/health/ready` returns database `ok`.
-- Lily retains its pre-deployment tmux process. Nekro's one reviewed restart is
-  recorded; both `/v1/instances` rows are online with fresh, identical
-  `onebot_v11.qq.v1` capability snapshots.
+- Lily's supervisor restart and Nekro's sequential restart are recorded; both
+  `/v1/instances` rows are online with fresh, identical `onebot_v11.qq.v1`
+  capability snapshots. The two observers were never intentionally stopped at
+  the same time.
 - `pip check`, dependency comparison with `deploy/constraints.txt`,
   `alembic current`, and `alembic check` pass.
 
@@ -78,10 +83,11 @@ authority.
   JSON columns may encode Python `None` as JSON `null`, so `IS NOT NULL` alone
   is not a valid leakage query.
 - Structured metadata/segments/attachments/reference raw contain no sensitive
-  key whose value is not `[REDACTED]`, URL userinfo, or query strings in
-  URL-typed fields. A redacted sensitive key name is evidence that the
-  sanitizer ran, not a leak. User-authored/display text is not searched as if
-  it were structured configuration and is not silently altered.
+  key whose value is not `[REDACTED]`, URL/URI userinfo, or query/fragment
+  suffixes in URL-typed fields regardless of scheme. A redacted sensitive key
+  name is evidence that the sanitizer ran, not a leak. User-authored/display
+  text is not searched as if it were structured configuration and is not
+  silently altered.
 - Reporter drop/claim-failure counters, Core 4xx/5xx, bridge warnings, failed
   responses, and instance status transitions are enumerated for the window.
 - The existing retention boundary remains explicit: the audit does not delete

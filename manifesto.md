@@ -384,7 +384,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 当前近期优先级已经从第一阶段推进到第二阶段最终验收：
 
-1. 完成 2026-07-13 最终部署后的 24 小时 canary、安全和稳定性审计。
+1. 完成 2026-07-14 修复部署后的 24 小时 canary、安全和稳定性审计；前一候选窗口发现自定义 URI 清理缺口和 bridge 超时计数增长，未予签字通过。
 2. 固化 Phase 2 acceptance、项目 review、迁移/回滚证据并提交。
 3. 按 `docs/PHASE3_TOOL_REGISTRY.md` 先实现 3a descriptor/registry，保持执行关闭。
 4. 再实现 3b invocation ledger 与 provider lease/fencing，不接自然语言模型。

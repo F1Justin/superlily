@@ -14,7 +14,9 @@ for Phases 4–11 without authorizing those phases to start early.
 Phase 2 is in its final production gate. Policy v2, correlation v3, runtime
 command inventory, response attribution, exact-conversation claim canary, and
 typed platform capabilities are deployed. The final evidence window runs from
-2026-07-13 10:24:05 CST through 2026-07-14 10:24:05 CST. Phase 3 code must not
+2026-07-14 10:19:02 CST through 2026-07-15 10:19:02 CST after correcting a
+custom-URI sanitizer gap and overly short bridge transport timeouts found by
+the first pre-close audit. Phase 3 code must not
 be enabled before `docs/ACCEPTANCE.md` records a clean final audit.
 
 ## Sequencing rules

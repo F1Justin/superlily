@@ -59,6 +59,12 @@ causes the session to exit and the systemd unit automatically creates a new
 existing supervisor, and watch both the unit and the new tmux pane until Lily
 is healthy again. Core failure must not change command behavior.
 
+Keep the default timeout split unless a measured deployment justifies a
+change: claim calls are bounded at one second and fail open, while background
+event/response ingestion uses two seconds. They must not be collapsed back to
+one sub-second deadline; a request may already be durably committed when the
+bridge stops waiting.
+
 ## 3. Nekro bridge
 
 Pin `kromiose/nekro-agent` to the currently validated digest before adding the

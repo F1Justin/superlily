@@ -1,11 +1,11 @@
 \set ON_ERROR_STOP on
 \if :{?window_start}
 \else
-\set window_start '2026-07-13 02:24:05+00'
+\set window_start '2026-07-14 02:19:02+00'
 \endif
 \if :{?window_end}
 \else
-\set window_end '2026-07-14 02:24:05+00'
+\set window_end '2026-07-15 02:19:02+00'
 \endif
 \if :{?grace_seconds}
 \else
@@ -347,10 +347,11 @@ SELECT 'unredacted_sensitive_values' AS violation, count(*)
 FROM sensitive
 WHERE item->>'value' <> '[REDACTED]'
 UNION ALL
-SELECT 'url_queries_or_userinfo', count(*)
+SELECT 'url_queries_fragments_or_userinfo', count(*)
 FROM urls
 WHERE item->>'value' LIKE '%?%'
-   OR item->>'value' ~ 'https?://[^/[:space:]]+@'
+   OR item->>'value' LIKE '%#%'
+   OR item->>'value' ~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+@'
 UNION ALL
 SELECT 'observation_raw_non_null', count(*)
 FROM event_observations eo
