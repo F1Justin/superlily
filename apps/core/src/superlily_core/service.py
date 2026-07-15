@@ -659,6 +659,11 @@ async def _recompute_event_decision_unlocked(
             if preferred.sender_id is not None
             else None
         ),
+        conversation_mode=settings.conversation_mode(
+            source.platform,
+            source.conversation_type,
+            source.conversation_id,
+        ),
     )
     features = {
         **decision.features,

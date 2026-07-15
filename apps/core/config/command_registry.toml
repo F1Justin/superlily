@@ -1,4 +1,4 @@
-version = "2026-07-12-phase2-runtime-review"
+version = "2026-07-15-phase2-policy-v4"
 default_target_instance_id = "lily-command"
 
 [[rules]]
@@ -86,6 +86,59 @@ triggers = ["^(刷新|重置)(今日老婆|每日老婆)$", "^设置换老婆次
 source_plugin = "nonebot_plugin_today_waifu"
 permission = "group_admin"
 description = "Today waifu group administration commands."
+
+[[rules]]
+id = "external.random.draw"
+kind = "command"
+triggers = [
+  "随机成步堂寿沙都语录", "随机南开小烧鸡语录", "随机36姐贵语录",
+  "随机张winwin语录", "随机莉莉x飞舞", "随机学养旧版", "随机莉莉白语录",
+  "随机企鹅语录", "随机renko语录", "随机tuyu语录", "随机啵酱语录",
+  "随机四季语录", "随机学养语录", "随机幽幻语录", "随机tsa语录",
+  "随机戴酱语录", "随机栞栞语录", "随机水夏语录", "随机猿鸟语录",
+  "随机雪音语录", "随机飞舞语录", "随机骨头语录", "随机f1语录",
+  "随机美9语录", "随机蒜子语录", "随机语录大全", "随机彩飞舞",
+  "随机名字语录", "随机劣学", "随机劣食", "随机公式", "随机高教社",
+  "随机魔女群友", "随机梅莉猫", "随机莲子猫", "随机学养", "随机优学",
+  "随机优食", "随机啵酱", "随机歌曲", "随机视频", "随机车万校徽",
+  "随机雪音", "随机飞舞", "随机莉莉", "随机GTM", "随机ccb", "随机CW"
+]
+source_plugin = "nonebot-plugin-random"
+description = "Runtime-reviewed random media directories; NoneBot command matching uses the longest directory-derived prefix and accepts trailing selector text."
+
+[[rules]]
+id = "external.random.modify"
+kind = "command"
+triggers = [
+  "添加随机成步堂寿沙都语录", "删除随机成步堂寿沙都语录",
+  "添加随机南开小烧鸡语录", "删除随机南开小烧鸡语录",
+  "添加随机36姐贵语录", "删除随机36姐贵语录", "添加随机张winwin语录", "删除随机张winwin语录",
+  "添加随机学养旧版", "删除随机学养旧版", "添加随机莉莉白语录", "删除随机莉莉白语录",
+  "添加随机企鹅语录", "删除随机企鹅语录", "添加随机renko语录", "删除随机renko语录",
+  "添加随机tuyu语录", "删除随机tuyu语录", "添加随机啵酱语录", "删除随机啵酱语录",
+  "添加随机四季语录", "删除随机四季语录", "添加随机学养语录", "删除随机学养语录",
+  "添加随机幽幻语录", "删除随机幽幻语录", "添加随机tsa语录", "删除随机tsa语录",
+  "添加随机戴酱语录", "删除随机戴酱语录", "添加随机栞栞语录", "删除随机栞栞语录",
+  "添加随机水夏语录", "删除随机水夏语录", "添加随机猿鸟语录", "删除随机猿鸟语录",
+  "添加随机雪音语录", "删除随机雪音语录", "添加随机飞舞语录", "删除随机飞舞语录",
+  "添加随机骨头语录", "删除随机骨头语录", "添加随机f1语录", "删除随机f1语录",
+  "添加随机美9语录", "删除随机美9语录", "添加随机蒜子语录", "删除随机蒜子语录",
+  "添加随机语录大全", "删除随机语录大全", "添加随机彩飞舞", "删除随机彩飞舞",
+  "添加随机名字语录", "删除随机名字语录", "添加随机劣学", "删除随机劣学",
+  "添加随机劣食", "删除随机劣食", "添加随机公式", "删除随机公式",
+  "添加随机高教社", "删除随机高教社", "添加随机魔女群友", "删除随机魔女群友",
+  "添加随机梅莉猫", "删除随机梅莉猫", "添加随机莲子猫", "删除随机莲子猫",
+  "添加随机学养", "删除随机学养", "添加随机优学", "删除随机优学",
+  "添加随机优食", "删除随机优食", "添加随机啵酱", "删除随机啵酱",
+  "添加随机车万校徽", "删除随机车万校徽", "添加随机雪音", "删除随机雪音",
+  "添加随机飞舞", "删除随机飞舞", "添加随机莉莉", "删除随机莉莉",
+  "添加随机GTM", "删除随机GTM", "添加随机ccb", "删除随机ccb",
+  "添加随机CW", "删除随机CW"
+]
+source_plugin = "nonebot-plugin-random"
+permission = "group_admin"
+sensitive = true
+description = "Random media mutation commands. Core treats them as sensitive even where the plugin's local configuration is permissive."
 
 [[rules]]
 id = "external.ottohzys"

@@ -85,6 +85,61 @@ async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
         assert records[0].segments_json[1]["data"]["jumpUrl"] == "mqqapi://qzoneschema/feed"
 
 
+async def test_nul_in_event_and_response_is_stored_safely(client, app) -> None:
+    event = event_payload(
+        text="前\x00后",
+        message_id="nul-event",
+        source_event_id="qq:group:123:message:nul-event",
+    )
+    event["conversation"]["name"] = "群\x00名"
+    event["sender"]["name"] = "发\x00送者"
+    event["metadata"]["nested"] = {"key": "值\x00尾"}
+    created = await client.post(
+        "/v1/events",
+        json=event,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "nul-event"},
+    )
+    assert created.status_code == 201, created.text
+
+    response_payload = {
+        "schema_version": "1.0",
+        "source_response_id": "qq:985393579:message:nul-response",
+        "instance": event["instance"],
+        "trigger_source_event_id": event["source_event_id"],
+        "response_type": "message",
+        "conversation": {"id": "123", "type": "group"},
+        "platform_message_id": "nul-response",
+        "text": "答\x00案",
+        "segments": [{"type": "text", "data": {"text": "答\x00案"}}],
+        "attachments": [],
+        "success": False,
+        "error": "错\x00误",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {"nested": {"key": "值\x00尾"}},
+    }
+    response = await client.post(
+        "/v1/responses",
+        json=response_payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "nul-response"},
+    )
+    assert response.status_code == 201, response.text
+
+    async with app.state.database.sessions() as session:
+        observation = await session.scalar(select(EventObservation))
+        stored_response = await session.scalar(select(ResponseRecord))
+        assert observation is not None
+        assert stored_response is not None
+        assert observation.text == "前\ufffd后"
+        assert observation.conversation_name == "群\ufffd名"
+        assert observation.sender_name == "发\ufffd送者"
+        assert observation.segments_json[0]["data"]["text"] == "前\ufffd后"
+        assert observation.metadata_json["nested"]["key"] == "值\ufffd尾"
+        assert stored_response.text == "答\ufffd案"
+        assert stored_response.error == "错\ufffd误"
+        assert stored_response.segments_json[0]["data"]["text"] == "答\ufffd案"
+        assert stored_response.metadata_json["nested"]["key"] == "值\ufffd尾"
+
+
 async def test_native_identity_is_visible_in_admin_debug_views(client) -> None:
     payload = event_payload()
     payload["metadata"] = {
@@ -201,7 +256,7 @@ async def test_command_event_records_shadow_decision_for_lily(client, app) -> No
         decision = await session.scalar(select(EventDecision))
         assert decision is not None
         assert decision.source_event_id == response.json()["source_event_id"]
-        assert decision.policy_version == "qq-v3-policy-v2"
+        assert decision.policy_version == "qq-v3-policy-v4"
         assert decision.decision_type == "command"
         assert decision.target_instance_id == "lily-command"
         assert decision.confidence == 95
@@ -251,6 +306,99 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
     assert context.json()["observations"][0]["observation_id"] == response.json()["observation_id"]
 
 
+async def test_canonical_group_mode_key_controls_conversation_routing(client, app) -> None:
+    app.state.settings = replace(
+        app.state.settings,
+        group_default_mode="command_only",
+        group_modes={"qq:group:123": "full"},
+    )
+    full = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:mode-full",
+            message_id="mode-full",
+            text="莉莉，full",
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "mode-full"},
+    )
+    restricted = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:456:message:mode-command-only",
+            conversation_id="456",
+            message_id="mode-command-only",
+            text="莉莉，command-only",
+        ),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "mode-command-only"},
+    )
+    assert full.status_code == restricted.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        full_decision = await session.scalar(
+            select(EventDecision).where(EventDecision.source_event_id == full.json()["source_event_id"])
+        )
+        restricted_decision = await session.scalar(
+            select(EventDecision).where(EventDecision.source_event_id == restricted.json()["source_event_id"])
+        )
+        assert full_decision is not None
+        assert restricted_decision is not None
+        assert full_decision.decision_type == "talk"
+        assert full_decision.features_json["conversation_mode"] == "full"
+        assert restricted_decision.decision_type == "observe_only"
+        assert restricted_decision.reason == "conversation_mode_command_only"
+        assert restricted_decision.features_json["conversation_mode"] == "command_only"
+
+
+async def test_conversation_only_group_suppresses_lily_commands_but_routes_nekro(client, app) -> None:
+    app.state.settings = replace(
+        app.state.settings,
+        group_modes={"qq:group:123": "conversation_only"},
+    )
+    command = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:conversation-only-command",
+            message_id="conversation-only-command",
+            text="换老婆",
+        ),
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "conversation-only-command",
+        },
+    )
+    summon = await client.post(
+        "/v1/events",
+        json=event_payload(
+            source_event_id="qq:group:123:message:conversation-only-summon",
+            message_id="conversation-only-summon",
+            text="莉莉在吗",
+        ),
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "conversation-only-summon",
+        },
+    )
+    assert command.status_code == summon.status_code == 201
+
+    async with app.state.database.sessions() as session:
+        command_decision = await session.scalar(
+            select(EventDecision).where(
+                EventDecision.source_event_id == command.json()["source_event_id"]
+            )
+        )
+        summon_decision = await session.scalar(
+            select(EventDecision).where(
+                EventDecision.source_event_id == summon.json()["source_event_id"]
+            )
+        )
+        assert command_decision is not None
+        assert summon_decision is not None
+        assert command_decision.decision_type == "observe_only"
+        assert command_decision.reason == "command_target_unavailable"
+        assert summon_decision.decision_type == "talk"
+        assert summon_decision.target_instance_id == "nekro-agent"
+
+
 async def test_command_registry_debug_endpoint_is_admin_only(client) -> None:
     denied = await client.get("/v1/command-registry")
     allowed = await client.get("/v1/command-registry", headers={"Authorization": "Bearer admin-secret"})
@@ -258,7 +406,7 @@ async def test_command_registry_debug_endpoint_is_admin_only(client) -> None:
     assert denied.status_code == 401
     assert allowed.status_code == 200
     payload = allowed.json()
-    assert payload["version"] == "2026-07-12-phase2-runtime-review"
+    assert payload["version"] == "2026-07-15-phase2-policy-v4"
     assert any(rule["id"] == "lily.wolfram" for rule in payload["rules"])
     assert any(rule["id"] == "external.updater.control" and rule["sensitive"] for rule in payload["rules"])
 
@@ -394,7 +542,7 @@ async def test_reply_to_lily_response_records_observe_only_decision(client, app)
         json=event_payload(
             source_event_id="qq:group:123:message:reply-to-bot",
             message_id="reply-to-bot",
-            text="继续",
+            text="莉莉换老婆",
             references=[
                 {
                     "type": "reply_to",
@@ -445,7 +593,7 @@ async def test_reply_to_nekro_response_records_talk_decision(client, app) -> Non
             "nekro-agent",
             source_event_id="qq:group:123:message:reply-to-nekro",
             message_id="reply-to-nekro",
-            text="继续",
+            text="换老婆",
             references=[
                 {
                     "type": "reply_to",
@@ -1531,7 +1679,7 @@ async def test_known_bot_sender_is_observed_without_retriggering(client, app) ->
             )
         )
         assert decision is not None
-        assert decision.policy_version == "qq-v3-policy-v2"
+        assert decision.policy_version == "qq-v3-policy-v4"
         assert decision.decision_type == "observe_only"
         assert decision.reason == "bot_message_observed"
         assert decision.features_json["sender_bot_instance_id"] == "nekro-agent"

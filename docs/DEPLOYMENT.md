@@ -36,7 +36,27 @@ message handling; Core degrades decision metadata instead of becoming a control
 plane in Phase 2b.
 
 Runtime registry snapshots use the existing Lily ingest token; no additional
-secret is required. Claim settings default to a fully disabled state:
+secret is required. Group policy is explicit and models target availability:
+
+- `command_only`: Lily commands are available; Nekro conversation is disabled;
+- `conversation_only`: Nekro conversation is enabled; Lily is not in the group;
+- `full`: both Lily commands and Nekro conversation are enabled; and
+- `observe_only`: neither target is enabled, though collection may continue.
+
+Groups default to `command_only`. Private conversations remain `full` because
+this switch is group-scoped.
+
+```dotenv
+SUPERLILY_GROUP_DEFAULT_MODE=command_only
+SUPERLILY_GROUP_MODES_JSON={"qq:group:708309706":"full","qq:group:1085969238":"conversation_only"}
+```
+
+Changing Lily membership, Nekro channel `is_active`, and this map are one
+operational change. Determine the mode from the intersection of Lily's live
+`get_group_list` and Nekro's channel activation state, not from recent message
+traffic: observation proves collection, not permission to converse. Decision
+features record the effective mode for audit. Claim settings default to a
+fully disabled state:
 
 ```dotenv
 SUPERLILY_CLAIM_MODE=off

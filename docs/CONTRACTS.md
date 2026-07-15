@@ -60,6 +60,24 @@ version and the matched command rule, when any. If the registry cannot be read,
 event ingestion stays fail-open and records the registry error in the decision
 features.
 
+Resolved reply ownership takes precedence over command and summon text. A
+reply to a Nekro response routes to Nekro in a `full` or `conversation_only`
+group even when its body is also a Lily command; a reply to a Lily response or
+another user remains observation-only even when QQ retained or removed its
+automatic `at` segment. Unresolved or conflicting reply targets never gain
+authority from command text. The effective per-group mode is stored in
+decision features.
+
+`command_only` groups recognize the same reviewed Lily command registry as
+`full` groups, including the directory-derived `nonebot-plugin-random`
+commands. Those random matchers use NoneBot's longest command prefix: for
+example, `随机学养评价` selects the `随机学养` command and trailing text is the
+plugin argument. Conversational summons, bot mentions, and replies to Nekro
+are observation-only in this mode. `conversation_only` groups do the inverse:
+commands remain observation-only because Lily is unavailable, while summons,
+mentions, and replies to Nekro route to Nekro. `observe_only` groups never
+produce an actionable decision.
+
 Cross-account correlation v3 is conservative and applies only to QQ group
 message events with a sender and native `real_seq`. Private chats remain
 uncorrelated until separately validated. The key uses normalized conversation,

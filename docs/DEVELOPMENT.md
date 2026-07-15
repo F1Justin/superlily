@@ -22,6 +22,13 @@ SUPERLILY_TEST_DATABASE_URL=postgresql+asyncpg://superlily:test-only-password@12
   .venv/bin/pytest -q
 ```
 
+The PostgreSQL fixture creates and drops ORM tables but deliberately does not
+own Alembic's `alembic_version` table. Do not run a downgrade test against the
+same database after pytest has torn its tables down: it may still report
+`head` while the application tables are absent. Recreate the disposable
+`public` schema (or use a fresh test container) before a migration round trip,
+then run `upgrade head -> downgrade base -> upgrade head -> alembic check`.
+
 Production schema changes use Alembic; `create_schema` and `drop_schema` exist
 only for disposable tests. The constraints files are the verified resolver
 input; `pyproject.toml` ranges remain the package compatibility declaration.

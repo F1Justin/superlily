@@ -95,7 +95,7 @@ class CommandRegistry:
                 if rule.kind == "prefix" and normalized.startswith(trigger.strip().casefold()):
                     return _match_from_rule(rule, trigger)
                 if rule.kind == "command" and normalized.startswith(trigger.strip().casefold()):
-                    return _match_from_rule(rule, trigger)
+                    return self._longest_command_match(normalized)
                 if rule.kind == "token" and _matches_token(normalized, trigger):
                     return _match_from_rule(rule, trigger)
                 if rule.kind == "exact" and normalized == trigger.strip().casefold():
@@ -107,6 +107,24 @@ class CommandRegistry:
                 if rule.kind == "regex" and re.match(trigger, raw, flags=re.IGNORECASE | re.DOTALL):
                     return _match_from_rule(rule, trigger)
         return None
+
+    def _longest_command_match(self, normalized: str) -> CommandMatch:
+        """Mirror NoneBot's global command trie without changing rule priority.
+
+        Once registry order reaches the first matching command rule, command
+        matchers take the longest matching command prefix across the registry.
+        Equal-length ties retain registry/trigger order.
+        """
+
+        matches = [
+            (rule, trigger)
+            for rule in self.rules
+            if rule.kind == "command"
+            for trigger in rule.triggers
+            if normalized.startswith(trigger.strip().casefold())
+        ]
+        rule, trigger = max(matches, key=lambda item: len(item[1].strip()))
+        return _match_from_rule(rule, trigger)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -231,6 +249,17 @@ def match_runtime_candidates(candidates: Iterable[dict[str, Any]], text: str | N
                     }
                 )
                 break
+    # NoneBot stores on_command prefixes in a trie and exposes only the
+    # longest matching command to CommandRule.  Do not report every shorter
+    # directory-derived command as another simultaneous runtime match.
+    command_lengths = [len(item["trigger"]) for item in matches if item.get("kind") == "command"]
+    if command_lengths:
+        longest = max(command_lengths)
+        matches = [
+            item
+            for item in matches
+            if item.get("kind") != "command" or len(item["trigger"]) == longest
+        ]
     return matches
 
 

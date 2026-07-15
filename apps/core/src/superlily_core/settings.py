@@ -25,6 +25,32 @@ def _string_set(value: str | None, *, variable: str) -> frozenset[str]:
     return frozenset(item.strip() for item in parsed)
 
 
+def _group_modes(value: str | None, *, variable: str) -> dict[str, str]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{variable} must be a JSON object of group keys to modes") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{variable} must be a JSON object of group keys to modes")
+    modes: dict[str, str] = {}
+    for raw_key, raw_mode in parsed.items():
+        if not isinstance(raw_key, str) or not raw_key.strip() or not isinstance(raw_mode, str):
+            raise ValueError(f"{variable} must map non-empty string keys to string modes")
+        key = raw_key.strip()
+        key_parts = key.split(":", 2)
+        if len(key_parts) != 3 or not key_parts[0] or key_parts[1] != "group" or not key_parts[2]:
+            raise ValueError(f"{variable} keys must use platform:group:id format")
+        mode = raw_mode.strip().lower()
+        if mode not in {"command_only", "conversation_only", "full", "observe_only"}:
+            raise ValueError(
+                f"{variable} modes must be command_only, conversation_only, full, or observe_only"
+            )
+        modes[key] = mode
+    return modes
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_url: str = DEFAULT_DATABASE_URL
@@ -36,6 +62,8 @@ class Settings:
     raw_max_bytes: int = 32_768
     command_registry_path: str = DEFAULT_COMMAND_REGISTRY_PATH
     command_registry_snapshot_stale_seconds: int = 600
+    group_default_mode: str = "command_only"
+    group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
     claim_canary_conversations: frozenset[str] = field(default_factory=frozenset)
     claim_minimum_confidence: int = 85
@@ -64,6 +92,26 @@ class Settings:
             raise ValueError("claim_coalesce_milliseconds must be between 0 and 5000")
         if self.command_registry_snapshot_stale_seconds < 1:
             raise ValueError("command_registry_snapshot_stale_seconds must be positive")
+        valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
+        if self.group_default_mode not in valid_group_modes:
+            raise ValueError(
+                "group_default_mode must be command_only, conversation_only, full, or observe_only"
+            )
+        if any(mode not in valid_group_modes for mode in self.group_modes.values()):
+            raise ValueError(
+                "group_modes values must be command_only, conversation_only, full, or observe_only"
+            )
+
+    def conversation_mode(
+        self,
+        platform: str,
+        conversation_type: str,
+        canonical_conversation_id: str,
+    ) -> str:
+        if conversation_type != "group":
+            return "full"
+        key = f"{platform}:{conversation_type}:{canonical_conversation_id}"
+        return self.group_modes.get(key, self.group_default_mode)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -88,6 +136,11 @@ class Settings:
             command_registry_path=os.getenv("SUPERLILY_COMMAND_REGISTRY_PATH", DEFAULT_COMMAND_REGISTRY_PATH),
             command_registry_snapshot_stale_seconds=int(
                 os.getenv("SUPERLILY_COMMAND_REGISTRY_SNAPSHOT_STALE_SECONDS", "600")
+            ),
+            group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
+            group_modes=_group_modes(
+                os.getenv("SUPERLILY_GROUP_MODES_JSON"),
+                variable="SUPERLILY_GROUP_MODES_JSON",
             ),
             claim_mode=claim_mode,
             claim_canary_conversations=_string_set(

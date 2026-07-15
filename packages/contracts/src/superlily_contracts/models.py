@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .sanitization import replace_nul
+
 API_SCHEMA_VERSION = "1.0"
 
 PlatformCapabilityName = Literal[
@@ -32,6 +34,11 @@ PlatformCapabilityName = Literal[
 
 class WireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_postgres_incompatible_nul(cls, value: Any) -> Any:
+        return replace_nul(value)
 
 
 class BotInstanceRef(WireModel):

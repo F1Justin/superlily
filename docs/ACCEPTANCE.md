@@ -299,5 +299,104 @@ the corrective deployment: 105,934,432 bytes, PostgreSQL 17.10 custom format,
 so this is explicitly a current rollback baseline rather than retroactive
 evidence.
 
+That 24-hour window was not accepted. Its structural invariants remained
+clean, but the close-out review found three release blockers:
+
+- one QQ message containing U+0000 produced four Core 500 responses across
+  Lily/Nekro event and claim reporting because PostgreSQL rejects NUL in text
+  and JSON values;
+- a resolved reply to a Nekro response whose body was `换老婆` was classified as
+  a Lily command before reply ownership, producing one `matched_with_extra`
+  outcome; and
+- six random-plugin outcomes were classified as wrong-instance and most
+  unexpected Lily responses were directory-derived random commands absent
+  from the static registry.
+
+The bounded outcome review contained 13,459 sources, 16,135 observations,
+13,459 decisions, 13,155 claims, and 729 responses. Canonical and claim
+invariant violation queries returned zero. The classified outcomes were 617
+matched, one matched-with-extra, 28 missed, seven unexpected responses, six
+wrong-instance, two failed, and approximately 12,798 matched-no-response.
+Most missed rows had timing-compatible but unlinked Nekro responses; two were
+separately explained by sibling-prompt attribution and the observed NapCat
+send outage. Those explanations do not waive the three blockers above.
+
+Policy v3 was deployed in Core image
+`sha256:268e0e02a2e5fa958963fa3764ee05644675131ba6fe53352ba118bdbdbe40b8`,
+started at 2026-07-15 09:05:24 CST. It:
+
+- replaces U+0000 recursively with U+FFFD at the versioned wire-model boundary
+  before correlation and persistence;
+- gives resolved reply ownership precedence over command/summon text, with
+  replies to Nekro routing to Nekro and replies to Lily/other users remaining
+  observation-only;
+- reviews all 48 live random draw prefixes and 90 random add/delete prefixes,
+  using NoneBot's longest-command-prefix semantics and treating mutation as
+  sensitive group-administrator authority; and
+- adds an initial audited per-group `command_only`/`full` policy.
+
+The deployed runtime inventory remained fresh at 28 plugins and 194 candidate
+rows. Random-plugin uncovered triggers fell from 138 to zero; total uncovered
+triggers fell from 193 to 55, all still subject to the existing incomplete or
+unreviewed abstention boundary. A production PostgreSQL smoke sent U+0000
+through both account claim paths and a response path. Both observations
+correlated to one source, every request succeeded, and text, segment, error,
+and metadata values stored U+FFFD with policy
+`qq-v3-policy-v3 / conversation_mode_command_only`.
+
+The 55-trigger non-random baseline was reviewed item by item before policy v4:
+38 are blacklist SUPERUSER controls, five are event-monitor admin/SUPERUSER
+controls, five are matcher-block admin/SUPERUSER controls, five are
+today-waifu runtime regex spellings already covered semantically by the static
+public/admin rules, and two are word-cloud admin regex spellings already
+covered semantically. Every row is runtime-incomplete and therefore claim
+authority abstains. There is no remaining uncovered public random/high-traffic
+command; an unchanged 55-row baseline is a known permission/introspection
+boundary rather than a later release blocker.
+
+The policy-v3 replacement window was stopped early by an immediate preflight
+review rather than waiting 24 hours. The binary map had treated recent Nekro
+observation traffic as conversation availability: group `949959173` was
+marked `full` even though Nekro's authoritative channel row was
+`is_active=false`, while four active Nekro-only groups could not express that
+Lily commands were unavailable. Observation proves collection, not response
+permission. Static command matching also depended on manually ordering
+overlapping command prefixes even though runtime matching already followed
+NoneBot's longest-prefix trie.
+
+Policy v4 was deployed in Core image
+`sha256:ea07129a1b28fd81ca3bc6b65f9e77029fb01d475ea22c314744ac3980d49f9d`,
+started at 2026-07-15 10:13:35 CST. It retains the NUL/reply/random fixes and:
+
+- models `command_only`, `conversation_only`, `full`, and `observe_only`;
+- derives the reviewed production map from Lily's live `get_group_list` and
+  Nekro's channel `is_active` state: six full, four conversation-only, and ten
+  explicit observe-only groups, with unlisted groups defaulting to
+  command-only; and
+- applies longest-command-prefix matching in both the static registry and the
+  runtime inventory path.
+
+The final reviewed build passed 107 tests independently on SQLite and
+PostgreSQL 17.10. A freshly recreated disposable test schema completed
+`base -> 0010 -> base -> 0010`; both test and production `alembic check`,
+`compileall`, `pip check`, Compose validation, and `git diff --check` passed.
+Policy-v4 deployment replaced only Core; Lily, Nekro Agent, and both NapCat
+processes stayed running.
+
+Production smoke covered all four modes plus both resolved reply owners. In a
+full group, body `换老婆` replying to Nekro routed `talk -> nekro-agent`; body
+`莉莉继续` replying to Lily stayed observation-only. Command-only routed
+`换老婆` to Lily but suppressed a summon; conversation-only suppressed that
+command but routed the summon to Nekro; observe-only routed neither. The live
+runtime snapshot was fresh at 28 plugins/194 candidates with zero uncovered
+random triggers.
+
+The authoritative policy-v4 window is 2026-07-15 10:15:49 CST through
+2026-07-16 10:15:49 CST (UTC 2026-07-15T02:15:49Z through
+2026-07-16T02:15:49Z). Both instances were online at the boundary with
+`queue_depth=0, dropped=0, claim_failures=0`; Core readiness was database `ok`
+and its new-container logs contained no 4xx, 5xx, traceback, warning, or error
+before the boundary. Phase 3 remains gated on this replacement window.
+
 The unchecked items intentionally require an operator-visible live deployment;
 development tests do not mutate either running bot.

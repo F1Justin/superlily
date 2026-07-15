@@ -1,16 +1,22 @@
 # Phase 2 final production audit
 
 This is the repeatable close-out procedure for the final Phase 2 canary. The
-authoritative replacement window is `2026-07-14 10:19:02 CST` through
-`2026-07-15 10:19:02 CST` (UTC `2026-07-14T02:19:02Z` through
-`2026-07-15T02:19:02Z`). Results are copied into `ACCEPTANCE.md`; this file is
-the procedure, not evidence by itself. `phase2_final_audit.sql` is the
-read-only executable form of the count, invariant, outcome, structured-data,
-instance, and registry checks below. Its psql variables pin the same bounded
-window and can be overridden explicitly for a later rerun.
+current authoritative replacement window is `2026-07-15 10:15:49 CST`
+through `2026-07-16 10:15:49 CST` (UTC `2026-07-15T02:15:49Z` through
+`2026-07-16T02:15:49Z`). The prior 2026-07-14 window was completed but rejected
+after its close-out review found a PostgreSQL U+0000 failure and policy/registry
+gaps. A policy-v3 replacement window was deliberately stopped early when an
+immediate topology review found that recent observation traffic had been
+mistaken for per-group response availability. Its evidence remains in
+`ACCEPTANCE.md`. Results are copied into
+`ACCEPTANCE.md`; this file is the procedure, not evidence by itself.
+`phase2_final_audit.sql` is the read-only executable form of the count,
+invariant, outcome, structured-data, instance, and registry checks below. Its
+psql variable defaults pin this bounded window and may be overridden
+explicitly for a later rerun.
 
 The replacement post-deployment counter baseline is zero for both bridges at
-2026-07-14 10:19:02 CST: `queue_depth=0, dropped=0, claim_failures=0`. Claim
+2026-07-15 10:15:49 CST: `queue_depth=0, dropped=0, claim_failures=0`. Claim
 requests use a one-second fail-open deadline while background ingestion uses a
 separate two-second deadline. Final acceptance checks that these baselines do
 not increase and correlates any increase with timestamped bridge/Core logs.
@@ -26,10 +32,10 @@ evidence remains in `ACCEPTANCE.md`.
 - Core container is `healthy`, uses the reviewed image digest, and runs as
   UID/GID 65532.
 - `/health/ready` returns database `ok`.
-- Lily's supervisor restart and Nekro's sequential restart are recorded; both
-  `/v1/instances` rows are online with fresh, identical `onebot_v11.qq.v1`
-  capability snapshots. The two observers were never intentionally stopped at
-  the same time.
+- The earlier Lily supervisor and Nekro sequential restarts are recorded. The
+  policy-v4 deployment replaced only Core; both `/v1/instances` rows remained
+  online with fresh, identical `onebot_v11.qq.v1` capability snapshots. The
+  observers and NapCat processes were not restarted for policy v4.
 - `pip check`, dependency comparison with `deploy/constraints.txt`,
   `alembic current`, and `alembic check` pass.
 
@@ -45,6 +51,13 @@ For source events first received in the window:
 - no native-time conflict is hidden inside a merged source;
 - bot-authored events use `observe_only / bot_message_observed` and never
   produce an actionable claim.
+- every decision uses `qq-v3-policy-v4`; every group decision records exactly
+  `command_only`, `conversation_only`, `full`, or `observe_only`. Commands are
+  actionable only in command/full modes and target Lily; conversation is
+  actionable only in conversation/full modes and targets Nekro.
+- resolved reply ownership is invariant: a reply to Nekro routes to Nekro in
+  a talk-enabled mode regardless of its text, while replies to Lily, another
+  user, or an ambiguous/conflicting target remain observation-only.
 
 The audit records total sources, observations, v3 two-observer sources,
 single-observer sources, correlation diagnostics, decision types/reasons, and
@@ -78,6 +91,21 @@ authority.
 - The runtime command snapshot is fresh and hash-valid. Fully introspected
   public triggers are covered; incomplete/unreviewed matches remain unable to
   authorize enforcement.
+- All 48 random draw triggers and 90 random mutation triggers remain covered
+  by the reviewed registry; the runtime audit contains no uncovered
+  `nonebot-plugin-random` trigger. Mutation remains sensitive/non-public Core
+  authority even if local plugin configuration is more permissive.
+- `/v1/command-registry/runtime` must report a fresh Lily snapshot and an empty
+  random-plugin subset of `uncovered_candidates`; the SQL snapshot count alone
+  is not a coverage proof because the reviewed registry is file-backed.
+- The reviewed non-random uncovered baseline is 55 triggers: 38 blacklist
+  SUPERUSER controls, five event-monitor administrator/SUPERUSER controls,
+  five matcher-block administrator/SUPERUSER controls, five today-waifu
+  regex forms already covered semantically by the static public/admin rules,
+  and two word-cloud admin regex forms already covered semantically. All are
+  incomplete runtime candidates and therefore force claim abstention. A
+  changed count/plugin distribution is new evidence to investigate; the
+  unchanged reviewed baseline is not a newly discovered public-command gap.
 - `raw_json` is SQL `NULL` or JSON literal `null` for window events/responses;
   no object, array, string, number, or boolean payload is retained. PostgreSQL
   JSON columns may encode Python `None` as JSON `null`, so `IS NOT NULL` alone
@@ -87,7 +115,9 @@ authority.
   suffixes in URL-typed fields regardless of scheme. A redacted sensitive key
   name is evidence that the sanitizer ran, not a leak. User-authored/display
   text is not searched as if it were structured configuration and is not
-  silently altered.
+  silently altered. U+0000 is the sole transport-safety exception and is
+  replaced recursively with U+FFFD because PostgreSQL rejects NUL in text and
+  JSON values.
 - Reporter drop/claim-failure counters, Core 4xx/5xx, bridge warnings, failed
   responses, and instance status transitions are enumerated for the window.
 - The existing retention boundary remains explicit: the audit does not delete

@@ -17,7 +17,7 @@ from .models import (
     RuntimePlugin,
     SenderRef,
 )
-from .sanitization import SanitizationPolicy, sanitize_payload
+from .sanitization import SanitizationPolicy, replace_nul, sanitize_payload
 
 __all__ = [
     "API_SCHEMA_VERSION",
@@ -36,5 +36,6 @@ __all__ = [
     "RuntimePlugin",
     "SanitizationPolicy",
     "SenderRef",
+    "replace_nul",
     "sanitize_payload",
 ]

@@ -20,6 +20,7 @@ async def app(tmp_path):
         stale_after_seconds=90,
         raw_enabled=True,
         raw_max_bytes=8_192,
+        group_default_mode="full",
     )
     instance = create_app(settings)
     await instance.state.database.create_schema()

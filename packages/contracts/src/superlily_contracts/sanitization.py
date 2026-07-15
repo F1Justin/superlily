@@ -14,6 +14,29 @@ _URL_KEY = re.compile(r"(?:url|uri|link)$", re.IGNORECASE)
 _JSON_STRING_KEY = re.compile(r"(?:^|_)(?:data|content|json|payload)(?:$|_)", re.IGNORECASE)
 
 
+def replace_nul(value: Any) -> Any:
+    """Replace PostgreSQL-incompatible NUL characters recursively.
+
+    PostgreSQL rejects U+0000 in both text and JSON values.  One malformed
+    platform message must not turn observation reporting into a Core 500, so
+    preserve the position with the Unicode replacement character before the
+    value reaches correlation or persistence.
+    """
+
+    if isinstance(value, dict):
+        return {
+            str(replace_nul(key)): replace_nul(child_value)
+            for key, child_value in value.items()
+        }
+    if isinstance(value, list):
+        return [replace_nul(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(replace_nul(item) for item in value)
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class SanitizationPolicy:
     enabled: bool = False
@@ -49,7 +72,7 @@ def _sanitize(value: Any, policy: SanitizationPolicy, depth: int, key: str = "")
             if index >= policy.max_items:
                 result["_truncated_items"] = len(value) - policy.max_items
                 break
-            child_key = str(child_key)[:256]
+            child_key = str(replace_nul(child_key))[:256]
             result[child_key] = _sanitize(child_value, policy, depth + 1, child_key)
         return result
     if isinstance(value, (list, tuple)):
@@ -58,6 +81,7 @@ def _sanitize(value: Any, policy: SanitizationPolicy, depth: int, key: str = "")
             result.append({"_truncated_items": len(value) - policy.max_items})
         return result
     if isinstance(value, str):
+        value = replace_nul(value)
         lowered = value.lower()
         if lowered.startswith(("base64://", "data:")):
             return "[BINARY_DATA]"

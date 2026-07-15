@@ -11,13 +11,23 @@ for Phases 4–11 without authorizing those phases to start early.
 
 ## Current position
 
-Phase 2 is in its final production gate. Policy v2, correlation v3, runtime
-command inventory, response attribution, exact-conversation claim canary, and
-typed platform capabilities are deployed. The final evidence window runs from
-2026-07-14 10:19:02 CST through 2026-07-15 10:19:02 CST after correcting a
-custom-URI sanitizer gap and overly short bridge transport timeouts found by
-the first pre-close audit. Phase 3 code must not
-be enabled before `docs/ACCEPTANCE.md` records a clean final audit.
+Phase 2 is in its final production gate. Correlation v3, runtime command
+inventory, response attribution, exact-conversation claim canary, typed
+platform capabilities, and policy v4 are deployed. The 2026-07-14 10:19:02
+CST through 2026-07-15 10:19:02 CST window was rejected: a platform message
+containing U+0000 caused four PostgreSQL-backed Core 500 responses; resolved
+reply ownership did not precede command text; and all 138 directory-derived
+random draw/mutation triggers were absent from the reviewed registry.
+
+Policy v4 recursively normalizes U+0000 before correlation/persistence,
+routes resolved replies before commands and summons, covers the complete live
+random directory inventory, and records an explicit per-group
+`command_only`/`conversation_only`/`full`/`observe_only` mode derived from
+actual target availability rather than observation traffic. The replacement
+evidence window runs from 2026-07-15 10:15:49 CST through
+2026-07-16 10:15:49 CST. Phase 3 code must not
+be enabled before `docs/ACCEPTANCE.md` records a clean final audit for that
+window.
 
 ## Sequencing rules
 

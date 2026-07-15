@@ -114,6 +114,8 @@ def test_default_registry_covers_known_external_commands() -> None:
     false_train_prefix = registry.match("trainwreck")
     period_wordcloud = registry.match("我的本周词云")
     event_help = registry.match("eventhelp")
+    random_selector = registry.match("随机莉莉白语录 任意后缀")
+    random_mutation = registry.match("添加随机学养 新图片")
 
     assert train is not None
     assert train.source_plugin == "nonebot_plugin_cnrail"
@@ -129,6 +131,13 @@ def test_default_registry_covers_known_external_commands() -> None:
     assert period_wordcloud.rule_id == "external.wordcloud.period"
     assert event_help is not None
     assert event_help.rule_id == "external.eventmonitor.help"
+    assert random_selector is not None
+    assert random_selector.rule_id == "external.random.draw"
+    assert random_selector.trigger == "随机莉莉白语录"
+    assert random_mutation is not None
+    assert random_mutation.rule_id == "external.random.modify"
+    assert random_mutation.permission == "group_admin"
+    assert random_mutation.sensitive is True
 
 
 def test_command_registry_rejects_unknown_permission(tmp_path) -> None:
@@ -158,6 +167,59 @@ def test_runtime_candidates_follow_reported_matcher_semantics() -> None:
     assert match_runtime_candidate(candidates, "train G1")["trigger"] == "train"
     assert match_runtime_candidate(candidates, "trainwreck") is None
     assert match_runtime_candidate(candidates, "prefix demo42 suffix")["kind"] == "regex"
+
+
+def test_runtime_command_candidates_use_nonebot_longest_prefix() -> None:
+    candidates = [
+        {"plugin_id": "random", "module_name": "random", "kind": "command", "triggers": ["随机莉莉"]},
+        {
+            "plugin_id": "random",
+            "module_name": "random",
+            "kind": "command",
+            "triggers": ["随机莉莉白语录"],
+        },
+    ]
+
+    assert match_runtime_candidates(candidates, "随机莉莉白语录 任意后缀") == [
+        {
+            "plugin_id": "random",
+            "module_name": "random",
+            "kind": "command",
+            "trigger": "随机莉莉白语录",
+            "complete": False,
+            "rule_checker_count": None,
+            "unknown_rule_checkers": [],
+            "permission_checker_count": None,
+        }
+    ]
+
+
+def test_static_command_registry_uses_nonebot_longest_prefix_across_rules() -> None:
+    registry = CommandRegistry(
+        version="test",
+        rules=(
+            CommandRule(
+                id="short",
+                kind="command",
+                triggers=("随机莉莉",),
+                target_instance_id="lily-command",
+                source_plugin="nonebot-plugin-random",
+            ),
+            CommandRule(
+                id="long",
+                kind="command",
+                triggers=("随机莉莉白语录",),
+                target_instance_id="lily-command",
+                source_plugin="nonebot-plugin-random",
+            ),
+        ),
+    )
+
+    match = registry.match("随机莉莉白语录 任意后缀")
+
+    assert match is not None
+    assert match.rule_id == "long"
+    assert match.trigger == "随机莉莉白语录"
 
 
 def test_runtime_command_coverage_is_bound_to_the_reviewed_plugin() -> None:
@@ -288,6 +350,26 @@ def test_decision_routes_reply_to_nekro_response_to_talk() -> None:
     assert decision.reason == "reply_to_talk_response"
 
 
+def test_reply_to_nekro_takes_precedence_over_lily_command() -> None:
+    registry = load_command_registry()
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="换老婆",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_instance_id="nekro-agent",
+        reply_target_status="resolved_bot",
+        command_registry=registry,
+    )
+
+    assert decision.decision_type == "talk"
+    assert decision.target_instance_id == "nekro-agent"
+    assert decision.reason == "reply_to_talk_response"
+    assert decision.features["matched_command"]["rule_id"] == "external.today_waifu.public"
+
+
 def test_decision_observes_reply_to_lily_response() -> None:
     decision = decide_event(
         source_event_type="message",
@@ -303,6 +385,133 @@ def test_decision_observes_reply_to_lily_response() -> None:
     assert decision.decision_type == "observe_only"
     assert decision.target_instance_id is None
     assert decision.reason == "reply_to_command_response_observed"
+
+
+@pytest.mark.parametrize("text", ["换老婆", "莉莉继续"])
+def test_reply_to_lily_takes_precedence_over_command_or_summon(text: str) -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text=text,
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_instance_id="lily-command",
+        reply_target_status="resolved_bot",
+        mentioned_bot_instance_ids=["nekro-agent"],
+        command_registry=load_command_registry(),
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "reply_to_command_response_observed"
+
+
+def test_command_only_group_allows_commands_but_not_conversation() -> None:
+    registry = load_command_registry()
+    command = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="随机学养评价什么都可以",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        command_registry=registry,
+        conversation_mode="command_only",
+    )
+    summon = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="莉莉在吗",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        conversation_mode="command_only",
+    )
+    reply = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="继续",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_instance_id="nekro-agent",
+        reply_target_status="resolved_bot",
+        conversation_mode="command_only",
+    )
+
+    assert command.decision_type == "command"
+    assert command.target_instance_id == "lily-command"
+    assert command.features["matched_command"]["trigger"] == "随机学养"
+    assert summon.reason == "conversation_mode_command_only"
+    assert reply.reason == "conversation_mode_command_only"
+    assert summon.decision_type == reply.decision_type == "observe_only"
+
+
+def test_conversation_only_group_routes_talk_but_not_commands() -> None:
+    command = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="换老婆",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        command_registry=load_command_registry(),
+        conversation_mode="conversation_only",
+    )
+    summon = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="莉莉在吗",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        conversation_mode="conversation_only",
+    )
+    reply = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="换老婆",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_instance_id="nekro-agent",
+        reply_target_status="resolved_bot",
+        command_registry=load_command_registry(),
+        conversation_mode="conversation_only",
+    )
+
+    assert command.decision_type == "observe_only"
+    assert command.reason == "command_target_unavailable"
+    assert summon.decision_type == reply.decision_type == "talk"
+    assert summon.target_instance_id == reply.target_instance_id == "nekro-agent"
+    assert reply.reason == "reply_to_talk_response"
+
+
+def test_observe_only_group_never_routes_commands_or_conversation() -> None:
+    decisions = [
+        decide_event(
+            source_event_type="message",
+            conversation_type="group",
+            text=text,
+            attachments=[],
+            metadata={},
+            has_reply_link=reply,
+            reply_target_instance_id="nekro-agent" if reply else None,
+            reply_target_status="resolved_bot" if reply else "none",
+            command_registry=load_command_registry(),
+            conversation_mode="observe_only",
+        )
+        for text, reply in (("换老婆", False), ("莉莉在吗", False), ("换老婆", True))
+    ]
+
+    assert all(item.decision_type == "observe_only" for item in decisions)
+    assert all(item.target_instance_id is None for item in decisions)
+    assert [item.reason for item in decisions] == [
+        "command_target_unavailable",
+        "conversation_mode_observe_only",
+        "conversation_mode_observe_only",
+    ]
 
 
 def test_decision_routes_private_message_to_talk() -> None:

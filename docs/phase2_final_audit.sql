@@ -1,11 +1,11 @@
 \set ON_ERROR_STOP on
 \if :{?window_start}
 \else
-\set window_start '2026-07-14 02:19:02+00'
+\set window_start '2026-07-15 02:15:49+00'
 \endif
 \if :{?window_end}
 \else
-\set window_end '2026-07-15 02:19:02+00'
+\set window_end '2026-07-16 02:15:49+00'
 \endif
 \if :{?grace_seconds}
 \else
@@ -95,6 +95,102 @@ FROM event_decisions ed
 JOIN window_sources w ON w.id = ed.source_event_id
 JOIN event_observations eo ON eo.source_event_id = w.id
 WHERE eo.sender_id IN ('3643287298', '2022692714')
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'non_v3_policy', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.policy_version <> 'qq-v3-policy-v4'
+UNION ALL
+SELECT 'group_mode_missing_or_invalid', count(*)
+FROM event_decisions ed
+JOIN source_events se ON se.id = ed.source_event_id
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE se.conversation_type = 'group'
+  AND coalesce(ed.features_json->>'conversation_mode', '') NOT IN (
+      'command_only', 'conversation_only', 'full', 'observe_only'
+  )
+UNION ALL
+SELECT 'command_only_talk', count(*)
+FROM event_decisions ed
+JOIN source_events se ON se.id = ed.source_event_id
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE se.conversation_type = 'group'
+  AND ed.features_json->>'conversation_mode' = 'command_only'
+  AND ed.decision_type = 'talk'
+UNION ALL
+SELECT 'command_only_command_wrong_target', count(*)
+FROM event_decisions ed
+JOIN source_events se ON se.id = ed.source_event_id
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE se.conversation_type = 'group'
+  AND ed.features_json->>'conversation_mode' = 'command_only'
+  AND ed.decision_type = 'command'
+  AND ed.target_instance_id IS DISTINCT FROM 'lily-command'
+UNION ALL
+SELECT 'conversation_only_command', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' = 'conversation_only'
+  AND ed.decision_type = 'command'
+UNION ALL
+SELECT 'conversation_only_talk_wrong_target', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' = 'conversation_only'
+  AND ed.decision_type = 'talk'
+  AND ed.target_instance_id IS DISTINCT FROM 'nekro-agent'
+UNION ALL
+SELECT 'observe_only_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' = 'observe_only'
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'full_action_wrong_target', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' = 'full'
+  AND (
+      (ed.decision_type = 'command' AND ed.target_instance_id IS DISTINCT FROM 'lily-command')
+      OR (ed.decision_type = 'talk' AND ed.target_instance_id IS DISTINCT FROM 'nekro-agent')
+  )
+UNION ALL
+SELECT 'talk_enabled_reply_to_nekro_wrong_route', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' IN ('conversation_only', 'full')
+  AND ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' = 'resolved_bot'
+  AND ed.features_json->>'reply_target_instance_id' = 'nekro-agent'
+  AND (
+      ed.decision_type IS DISTINCT FROM 'talk'
+      OR ed.target_instance_id IS DISTINCT FROM 'nekro-agent'
+      OR ed.reason IS DISTINCT FROM 'reply_to_talk_response'
+  )
+UNION ALL
+SELECT 'talk_disabled_reply_to_nekro_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'conversation_mode' IN ('command_only', 'observe_only')
+  AND ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' = 'resolved_bot'
+  AND ed.features_json->>'reply_target_instance_id' = 'nekro-agent'
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'reply_to_lily_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' = 'resolved_bot'
+  AND ed.features_json->>'reply_target_instance_id' = 'lily-command'
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'unsafe_reply_target_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' IN ('resolved_other', 'ambiguous', 'conflict')
   AND ed.decision_type IN ('command', 'talk');
 
 \echo 'Claim invariant violations: every count must be zero'
@@ -158,6 +254,18 @@ FROM event_decisions ed
 JOIN window_sources w ON w.id = ed.source_event_id
 GROUP BY ed.policy_version, ed.decision_type, ed.reason
 ORDER BY count(*) DESC, ed.policy_version, ed.decision_type, ed.reason;
+
+WITH window_sources AS (
+    SELECT id
+    FROM source_events
+    WHERE first_received_at >= :'window_start'::timestamptz
+      AND first_received_at < :'window_end'::timestamptz
+)
+SELECT ed.features_json->>'conversation_mode' AS conversation_mode, count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+GROUP BY ed.features_json->>'conversation_mode'
+ORDER BY count(*) DESC, conversation_mode;
 
 WITH window_sources AS (
     SELECT id

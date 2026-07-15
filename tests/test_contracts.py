@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from superlily_contracts import (
     EventIn,
     EventReference,
+    ResponseIn,
     PlatformCapabilities,
     RuntimePlugin,
     SanitizationPolicy,
@@ -40,6 +41,53 @@ def test_sanitizer_redacts_secrets_and_url_queries() -> None:
 
 def test_raw_payload_is_disabled_by_default() -> None:
     assert sanitize_payload({"anything": "value"}, SanitizationPolicy()) is None
+
+
+def test_wire_models_replace_postgres_incompatible_nul_recursively() -> None:
+    event = EventIn.model_validate(
+        {
+            "source_event_id": "qq:group:1:message:2",
+            "instance": {
+                "instance_id": "lily-command",
+                "platform": "qq",
+                "adapter": "onebot_v11",
+                "bot_id": "1",
+                "role": "command",
+            },
+            "event_type": "message",
+            "conversation": {"id": "1", "type": "group", "name": "a\x00b"},
+            "message": {
+                "id": "2",
+                "text": "前\x00后",
+                "segments": [{"type": "text", "data": {"text": "前\x00后"}}],
+            },
+            "metadata": {"nul\x00key": "nul\x00value"},
+            "occurred_at": "2026-06-19T12:00:00+00:00",
+        }
+    )
+
+    assert event.conversation.name == "a\ufffdb"
+    assert event.message is not None
+    assert event.message.text == "前\ufffd后"
+    assert event.message.segments[0]["data"]["text"] == "前\ufffd后"
+    assert event.metadata == {"nul\ufffdkey": "nul\ufffdvalue"}
+
+    response = ResponseIn.model_validate(
+        {
+            "source_response_id": "response-1",
+            "instance": event.instance.model_dump(),
+            "response_type": "message",
+            "conversation": {"id": "1", "type": "group"},
+            "text": "答\x00案",
+            "segments": [],
+            "attachments": [],
+            "success": False,
+            "error": "错\x00误",
+            "occurred_at": "2026-06-19T12:00:00+00:00",
+        }
+    )
+    assert response.text == "答\ufffd案"
+    assert response.error == "错\ufffd误"
 
 
 def test_sanitizer_recurses_into_json_encoded_segment_data() -> None:
