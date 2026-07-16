@@ -10,7 +10,9 @@ _SENSITIVE_KEY = re.compile(
     r"(?:^|_)(?:access_?token|api_?key|authorization|cookie|credential|database_?(?:dsn|url)|dsn|password|private_?key|secret|session|ticket|token)(?:$|_)",
     re.IGNORECASE,
 )
-_URL_KEY = re.compile(r"(?:url|uri|link)$", re.IGNORECASE)
+_URL_KEY = re.compile(r"(?:url|uri|link|href|src|file|platform_id)$", re.IGNORECASE)
+_URI_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+_DISPLAY_TEXT_KEYS = {"text", "content", "message", "raw_message"}
 _JSON_STRING_KEY = re.compile(r"(?:^|_)(?:data|content|json|payload)(?:$|_)", re.IGNORECASE)
 
 
@@ -110,7 +112,9 @@ def _sanitize(value: Any, policy: SanitizationPolicy, depth: int, key: str = "")
                         )
                     value = encoded_nested
                     lowered = value.lower()
-        if _URL_KEY.search(key) or lowered.startswith(("http://", "https://")):
+        if _URL_KEY.search(key) or (
+            _URI_SCHEME.match(value) and key.lower() not in _DISPLAY_TEXT_KEYS
+        ):
             value = _strip_url_query(value)
         if len(value) > policy.max_string:
             return value[: policy.max_string] + "...[TRUNCATED]"

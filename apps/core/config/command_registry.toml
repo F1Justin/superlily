@@ -1,4 +1,4 @@
-version = "2026-07-15-phase2-policy-v4"
+version = "2026-07-15-phase2-policy-v5"
 default_target_instance_id = "lily-command"
 
 [[rules]]

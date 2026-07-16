@@ -252,6 +252,7 @@ class EventClaim(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     ready: Mapped[bool] = mapped_column(Boolean, nullable=False)
     enforced: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     features_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 

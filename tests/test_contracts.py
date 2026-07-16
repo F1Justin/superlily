@@ -39,6 +39,23 @@ def test_sanitizer_redacts_secrets_and_url_queries() -> None:
     }
 
 
+def test_sanitizer_strips_userinfo_query_and_fragment_from_custom_uri_fields() -> None:
+    result = sanitize_payload(
+        {
+            "file": "mqqapi://user:password@qzoneschema/feed?token=secret#fragment",
+            "platform_id": "napcat-resource://user:password@resource/opaque?id=secret#fragment",
+            "callback_uri": "custom-scheme:/callback/path?ticket=secret#fragment",
+        },
+        SanitizationPolicy(enabled=True),
+    )
+
+    assert result == {
+        "file": "mqqapi://qzoneschema/feed",
+        "platform_id": "napcat-resource://resource/opaque",
+        "callback_uri": "custom-scheme:/callback/path",
+    }
+
+
 def test_raw_payload_is_disabled_by_default() -> None:
     assert sanitize_payload({"anything": "value"}, SanitizationPolicy()) is None
 

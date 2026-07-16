@@ -2,7 +2,11 @@
 
 This review is the gate before Phase 3 Tool Registry work. It covers Core,
 contracts, migrations, both bridges, deployment defaults, production data
-boundaries, and the live canary sequence.
+boundaries, and the live canary sequence. The policy-v4 24-hour run is not a
+sign-off: the final row-level/code review exposed additional identity,
+attribution, command-structure, private-recipient, and claim-handshake defects.
+Those findings define policy v5 and require a fresh deployment, controlled
+samples, and a new 24-hour window before this review can be signed.
 
 ## Review fixes
 
@@ -10,6 +14,15 @@ boundaries, and the live canary sequence.
   in production. Private messages remain separate.
 - Native `real_seq` is the content-free key; account-local IDs and text cannot
   become fallback identity. Native time is a conflict guard.
+- Each bridge uses the same versioned `qq:source:v2:<sha256>` local message
+  identity over canonical conversation and allowlisted native identity. Reused
+  short NapCat `message_id` values do not reuse a source/idempotency key. Core
+  rejects source/idempotency reuse with conflicting native identity instead of
+  returning another event's decision.
+- A matching native time permits identical strong fingerprints to merge even
+  when the two adapters' normalized `occurred_at` values differ by more than
+  the former correlation window. A database audit detects any remaining split
+  fingerprint.
 - Canonical decisions are recomputed from all observations and one row is
   revised rather than duplicated per account.
 - Direct and reported reply references must match platform, canonical
@@ -31,8 +44,9 @@ boundaries, and the live canary sequence.
   proxy settings.
 - JSON-encoded OneBot segment payloads are parsed only in JSON container
   fields and recursively sanitized; ordinary user text is not reinterpreted.
-- URL-typed fields remove userinfo, query, and fragment data for every scheme,
-  including QQ `mqqapi`/`mqzone` deep links rather than only HTTP(S).
+- URL-typed fields, `file`, and `platform_id` remove userinfo, query, and
+  fragment data for every scheme, including QQ `mqqapi`/`mqzone` deep links
+  rather than only HTTP(S). Custom `scheme://` scalars are covered as well.
 - Reporter queues remain bounded and all reporting/claim failures are fail-open.
 - Claim and background-ingestion deadlines are independent. Claims retain a
   one-second bounded fail-open path, while the background reporter gets two
@@ -40,32 +54,50 @@ boundaries, and the live canary sequence.
   normal PostgreSQL latency.
 - Lily runtime snapshot hashing uses the same canonical row ordering as Core;
   the 28-plugin production snapshot is contract- and hash-verified.
-- Alembic 0001-to-0010 upgrade and downgrade paths are verified on SQLite,
-  including batch column changes and the partial claim-owner index; a fresh
-  PostgreSQL 17 database also reaches the single 0010 head.
+- Alembic 0001-to-0010 upgrade and downgrade paths were previously verified on
+  SQLite/PostgreSQL. The new `0011_claim_ack` migration and the complete
+  `base -> head -> base -> head` chain remain required evidence after the
+  policy-v5 implementation is final; this document does not pre-claim them.
 - Claim evaluation backfills a missing decision for a replayed legacy
   observation before applying the strong-correlation abstention gate.
 - Authentication configuration rejects reused ingest tokens and admin/ingest
   token overlap before the service starts.
-- Nekro response attribution remembers a canonical Core selection of the
-  Nekro instance, including fail-open abstention, as well as Nekro's local ToMe
-  flag. This covers preset-name triggers that Nekro recognizes only after the
-  plugin callback; canonical target metadata is correlation-only and does not
-  grant authority. The conversation-local association remains one-shot and
-  explicitly inferred.
-- Policy v2 treats messages authored by a known Lily/Nekro bot identity as
+- Nekro response attribution mirrors its per-chat scheduler: an idle/debounced
+  source, the current task source, and a pending next-task source remain
+  distinct. All outputs from the same task retain `task_context`; a second
+  message cannot overwrite the first task's attribution. Lily retains its
+  native `event_context`. Canonical target metadata is correlation-only and
+  does not grant authority.
+- Policy v5 treats messages authored by a known Lily/Nekro bot identity as
   `observe_only / bot_message_observed`. Bot outputs remain available for reply
   resolution but no longer create false talk/command outcomes from their own
   text.
+- Policy v5 records `command_eligible` separately from concatenated display
+  text. NoneBot-compatible leading-segment structure prevents an `at` to
+  another user, image, or other non-text prefix from becoming a Lily command.
+- Resolved replies to Nekro route to Nekro whenever talk is enabled; replies to
+  Lily remain observed. Ambiguous/conflicting replies remain observed, while
+  an unresolved/reply-to-other item needs an explicit Lily summon/known-bot
+  mention before it may route to Nekro.
+- Private routing is recipient-bound. Lily-private traffic cannot hand an
+  ordinary conversation to Nekro, and Nekro-private traffic cannot invoke a
+  Lily command that Lily never received.
 - Heartbeats carry a typed, versioned platform-capability snapshot. The first
   QQ profile is deliberately limited to text, image, reply, and mention, so
   future tools/renderers can degrade without guessing from adapter names.
 - The production Python base image is pinned by digest and the validated
   transitive dependency set is constrained. Rebuilding the same revision no
   longer silently selects newer package releases.
-- Claim ownership now uses a deny-before-allow handshake. A target cannot be
-  recorded as an enforced exclusive owner merely because a late second
-  observation made the decision ready after the peer had already failed open.
+- Claim ownership uses deny-installation acknowledgement, not merely
+  deny-before-allow database order. A target allow requires all prior observed
+  peers to have acknowledged enforced denies; a committed deny whose HTTP
+  response was lost cannot manufacture a fictitious exclusive owner. Lily can
+  acknowledge after its event-scoped outbound guard is installed. Nekro's
+  public plugin hook has no post-aggregation callback and another plugin's
+  `FORCE_TRIGGER` can override its returned `BLOCK_TRIGGER`, so the reviewed
+  bridge deliberately withholds Nekro acknowledgements. Lily-target claims
+  consequently remain safe `abstain` and use Lily's legacy command path until
+  an authoritative Nekro outbound guard or upstream callback is implemented.
 - Canonical decision recomputation has its own per-source transaction lock, so
   observation, response, reference-backfill, and claim paths cannot overwrite
   one another's revision/features.
@@ -91,9 +123,14 @@ boundaries, and the live canary sequence.
   prioritizes availability over exactly-once response ownership.
 - Runtime triggers that are absent from the reviewed static registry remain
   visible but cannot authorize enforcement.
-- Nekro's public response hook exposes no native trigger ID. Its one-shot
-  conversation-local Core-target-or-ToMe association is explicitly labeled as
-  inference.
+- Nekro's public response hook still exposes no native trigger ID. The
+  task-bound scheduler association is explicitly labeled attribution rather
+  than a platform-native receipt, and remains subject to response/source
+  consistency audits.
+- OneBot send timeouts have ambiguous completion: the platform may have sent
+  before the local API timed out. They remain `success=false` with
+  `completion_status=ambiguous`, are reviewed separately, and are never blindly
+  retried or reported as a confirmed failure.
 - The current phase routes existing bots; it does not execute tools, evaluate
   command arguments, or replace the plugins' own permission checks.
 
@@ -102,15 +139,18 @@ boundaries, and the live canary sequence.
 Phase 3 may start only after all of the following are recorded in
 `ACCEPTANCE.md`:
 
-1. fresh PostgreSQL and SQLite suites, plus a fresh 0001-to-head migration;
+1. fresh PostgreSQL and SQLite suites, plus a fresh 0001-to-0011 migration and
+   upgrade/downgrade chain;
 2. deployed runtime inventory with uncovered/incomplete matchers reviewed;
 3. deterministic resolution of only uniquely supported pending links;
 4. a controlled decision/actual-response sample;
 5. shadow claims from both bridges with zero enforcement;
-6. one exact QQ canary covering command, talk, reply, ordinary, and outage
-   behavior;
-7. a stable 24-hour post-deployment evidence window and a final secret/URL
-   storage audit.
+6. one exact QQ canary covering command eligibility, private recipient policy,
+   resolved/unresolved/ambiguous reply cases, task-bound response attribution,
+   deny acknowledgement/lost-response behavior, ordinary traffic, ambiguous
+   send completion, and Core outage;
+7. a stable new 24-hour post-policy-v5 deployment evidence window and a final
+   secret/custom-URI/raw storage audit.
 
 The exact close-out procedure and zero-violation sets are defined in
 `PHASE2_FINAL_AUDIT.md`.

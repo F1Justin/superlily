@@ -85,6 +85,19 @@ event/response ingestion uses two seconds. They must not be collapsed back to
 one sub-second deadline; a request may already be durably committed when the
 bridge stops waiting.
 
+When bridge claims are enabled, one incoming message first uses
+`POST /v1/claims/evaluate`, which also ingests the event. It does not enqueue a
+second normal event request after a successful claim response. If claim
+evaluation fails or times out, the bridge enqueues the normal event report and
+continues the legacy path. An enforced Lily deny is installed in its
+event-scoped outbound guard and then acknowledged through
+`POST /v1/claims/{claim_id}/ack`; acknowledgement failure does not undo local
+suppression, but it prevents Core from granting a peer an exclusive allow.
+Nekro returns `BLOCK_TRIGGER` but must not acknowledge it: the public Nekro
+hook is aggregated with later plugin signals and exposes no post-aggregation
+confirmation point. Consequently Lily-target claims remain `abstain` until an
+authoritative Nekro outbound guard or upstream callback is available.
+
 ## 3. Nekro bridge
 
 Pin `kromiose/nekro-agent` to the currently validated digest before adding the
@@ -102,6 +115,8 @@ Copy the plugin as described in `bridges/nekro/README.md`, join
 Do not jump directly from shadow to enforcement.
 
 1. Deploy Core and both bridge versions with bridge claims disabled.
+   Back up PostgreSQL, apply `0011_claim_ack`, and verify `alembic current` and
+   `alembic check` before enabling claims.
 2. Confirm a fresh `/v1/command-registry/runtime` snapshot and review every
    uncovered trigger. Uncovered triggers may remain, but they must force
    abstention rather than enforcement.
@@ -110,10 +125,23 @@ Do not jump directly from shadow to enforcement.
    `/v1/claims/summary` records decisions with zero enforced rows.
 5. Set one exact `qq:group:<id>` key in the canary JSON and switch Core to
    `canary`; every other conversation remains fail-open.
-6. Verify a Lily command, explicit Nekro summon, reply to each bot, ordinary
-   message, and simulated Core outage. Only the non-target response path may be
-   suppressed; ordinary messages and outages retain existing behavior.
-7. Roll back by setting both bridge claim flags false or Core mode `off`. No
+6. In test group `708309706`, verify a Lily command, explicit Nekro summon,
+   reply to each bot with and without QQ's decorative `at`, reply to another
+   user with/without a summon, leading other-user `at`, leading image/non-text,
+   two close Nekro triggers across scheduler tasks, and ordinary messages.
+   Separately verify private Lily/Nekro recipient routing.
+7. Fault-inject a lost/late deny response, claim-ack failure, Core outage, and
+   send timeout. A target cannot gain an exclusive allow without the peer's
+   persisted acknowledgement. A send timeout is recorded as
+   `completion_status=ambiguous` and is not retried blindly.
+8. Record code/image hashes, process starts, instance state, registry hash, and
+   reporter counters only after these tests pass. That timestamp starts a new
+   uninterrupted 24-hour policy-v5 acceptance window; no pre-deployment hour
+   counts.
+9. Run `docs/phase2_final_audit.sql` with explicit `window_start` and
+   `window_end`, review every exception, and sign `docs/ACCEPTANCE.md` before
+   beginning Phase 3.
+10. Roll back by setting both bridge claim flags false or Core mode `off`. No
    token or database rollback is required.
 
 ## 5. Rollback
@@ -123,3 +151,11 @@ Do not jump directly from shadow to enforcement.
 - Nekro: disable/remove `Superlily.core_bridge`, remove the bus override, and
   restart Nekro.
 - Core: stop its Compose project. Neither bot depends on it for responses.
+
+## 6. Phase 3 deployment boundary
+
+Phase 3 has not started. After the Phase 2 signature, follow
+`PHASE3_ACCEPTANCE.md` and `PHASE3_TOOL_REGISTRY.md`. Deploy descriptor/runtime
+registry work with zero active descriptors and execution `off`; the future
+control panel described in `CONTROL_PLANE.md` is read-only until its own
+authentication, authorization, preview, audit, and mutation gates pass.

@@ -49,6 +49,105 @@ def test_native_identity_cache_key_includes_conversation() -> None:
     assert identity.native_identity_cache_key({"type": "group", "id": "123"}, "456") == "group:123:456"
 
 
+def test_response_trigger_tracker_preserves_1207_task_attribution() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker(ttl_seconds=180)
+    conv = {"type": "group", "id": "1080353942"}
+
+    tracker.remember(conv, "event:first", None, now=0)
+    # The second message arrives while task 101 is still running.  It must not
+    # overwrite the source even when task 101 has not emitted anything yet.
+    tracker.remember(conv, "event:second", 101, now=1)
+    assert tracker.source_for_response(conv, 101, now=2) == "event:first"
+    assert tracker.source_for_response(conv, 101, now=3) == "event:first"
+    assert tracker.source_for_response(conv, 202, now=4) == "event:second"
+
+
+def test_response_trigger_tracker_reuses_source_for_multiple_task_outputs() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker()
+    conv = {"type": "private", "id": "42"}
+
+    tracker.remember(conv, "event:one", None, now=0)
+
+    assert tracker.source_for_response(conv, "task-one", now=1) == "event:one"
+    assert tracker.source_for_response(conv, "task-one", now=2) == "event:one"
+    assert tracker.source_for_response(conv, "task-one", now=3) == "event:one"
+
+
+def test_repeated_source_binds_when_task_appears_without_creating_pending() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker()
+    conv = {"type": "group", "id": "43"}
+
+    tracker.remember(conv, "event:one", None, now=0)
+    tracker.remember(conv, "event:one", "task-one", now=1)
+
+    assert tracker.source_for_response(conv, "task-one", now=2) == "event:one"
+    assert tracker.source_for_response(conv, "task-two", now=3) is None
+
+
+def test_response_trigger_tracker_mirrors_debounce_and_pending_replacement() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker()
+    conv = {"type": "group", "id": "7"}
+
+    tracker.remember(conv, "event:debounced-old", None, now=0)
+    tracker.remember(conv, "event:debounced-new", None, now=1)
+    assert tracker.source_for_response(conv, "active", now=2) == "event:debounced-new"
+
+    tracker.remember(conv, "event:pending-old", "active", now=3)
+    tracker.remember(conv, "event:pending-new", "active", now=4)
+    tracker.remember(conv, "event:pending-new", "active", now=5)
+    assert tracker.source_for_response(conv, "active", now=6) == "event:debounced-new"
+    assert tracker.source_for_response(conv, "next", now=7) == "event:pending-new"
+
+
+def test_source_less_system_task_does_not_steal_pending_trigger() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker()
+    conv = {"type": "group", "id": "8"}
+
+    assert tracker.source_for_response(conv, "system-task", now=0) is None
+    tracker.remember(conv, "event:user", "system-task", now=1)
+
+    # Further output from the system task remains unlinked.  Its token must
+    # change before the queued user trigger becomes current.
+    assert tracker.source_for_response(conv, "system-task", now=2) is None
+    assert tracker.source_for_response(conv, "user-task", now=3) == "event:user"
+
+
+def test_response_trigger_tracker_forget_removes_only_requested_source() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker()
+    conv = {"type": "group", "id": "9"}
+
+    tracker.remember(conv, "event:current", None, now=0)
+    assert tracker.source_for_response(conv, "task-current", now=1) == "event:current"
+    tracker.remember(conv, "event:denied", "task-current", now=2)
+    tracker.forget(conv, "event:denied", now=3)
+
+    assert tracker.source_for_response(conv, "task-current", now=4) == "event:current"
+    assert tracker.source_for_response(conv, "task-next", now=5) is None
+
+
+def test_response_trigger_tracker_is_bounded_and_expires() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker(max_entries=2, ttl_seconds=10)
+    first = {"type": "group", "id": "1"}
+    second = {"type": "group", "id": "2"}
+    third = {"type": "group", "id": "3"}
+
+    tracker.remember(first, "event:first", None, now=0)
+    tracker.remember(second, "event:second", None, now=1)
+    tracker.remember(third, "event:third", None, now=2)
+
+    assert len(tracker) == 2
+    assert tracker.source_for_response(first, "task", now=2) is None
+    assert tracker.source_for_response(second, "task", now=12) is None
+    assert tracker.source_for_response(third, "task", now=13) is None
+
+
 def test_claim_targets_requested_instance() -> None:
     identity = load_identity_module()
 

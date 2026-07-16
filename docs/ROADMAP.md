@@ -13,21 +13,30 @@ for Phases 4–11 without authorizing those phases to start early.
 
 Phase 2 is in its final production gate. Correlation v3, runtime command
 inventory, response attribution, exact-conversation claim canary, typed
-platform capabilities, and policy v4 are deployed. The 2026-07-14 10:19:02
+platform capabilities, and policy v4 were deployed. The 2026-07-14 10:19:02
 CST through 2026-07-15 10:19:02 CST window was rejected: a platform message
 containing U+0000 caused four PostgreSQL-backed Core 500 responses; resolved
 reply ownership did not precede command text; and all 138 directory-derived
 random draw/mutation triggers were absent from the reviewed registry.
 
-Policy v4 recursively normalizes U+0000 before correlation/persistence,
-routes resolved replies before commands and summons, covers the complete live
-random directory inventory, and records an explicit per-group
-`command_only`/`conversation_only`/`full`/`observe_only` mode derived from
-actual target availability rather than observation traffic. The replacement
-evidence window runs from 2026-07-15 10:15:49 CST through
-2026-07-16 10:15:49 CST. Phase 3 code must not
-be enabled before `docs/ACCEPTANCE.md` records a clean final audit for that
-window.
+The policy-v4 replacement window reached 24 hours, but the complete row-level
+and code review rejected it as final evidence. It exposed short-message-ID
+collision risk, split strong fingerprints under adapter timestamp skew,
+leading-segment command false positives, private/reply policy gaps, Nekro
+task-attribution races, a committed-deny/response-loss claim hole, and
+ambiguous send timeouts counted as confirmed failures.
+
+Policy v5 plus migration `0011_claim_ack` is the Phase 2 remediation target.
+After it and both bridge revisions are reviewed, tested, and deployed, the
+controlled matrix in `PHASE2_FINAL_AUDIT.md` must pass in test group
+`708309706`; only then does a new, explicitly timestamped 24-hour window start.
+There is currently no authoritative replacement window and Phase 3 has not
+started. `ACCEPTANCE.md` must contain the signed clean audit before any Phase 3
+code or production authority begins. The current Nekro public hook cannot
+prove that its `BLOCK_TRIGGER` survived aggregate plugin signal handling, so it
+withholds claim ACK and Lily-target claims safely abstain. Closing that gap
+with an authoritative outbound guard or upstream post-aggregation callback is
+a Phase 2 exit condition, not Phase 3 work.
 
 ## Sequencing rules
 
@@ -66,7 +75,9 @@ All stable boundaries -> Phase 11 optional legacy runtime replacement
 
 ## Phase 3: Tool Registry and controlled execution
 
-Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`.
+Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`. Phase acceptance is in
+`docs/PHASE3_ACCEPTANCE.md`; the future operator UI and mutation boundary are in
+`docs/CONTROL_PLANE.md`.
 
 ### 3a. Authoritative tool descriptors
 
@@ -78,6 +89,12 @@ Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`.
   review from matcher inventory.
 - Expose admin audit views for loaded, stale, missing, incompatible, and
   unreviewed tools.
+- Use a Git-tracked reviewed descriptor bundle as the authority source. Store
+  immutable canonical descriptor copies/hashes and lifecycle records in the
+  database; neither provider inventory nor the control panel edits descriptor
+  authority in 3a.
+- Separate stable provider registration/authentication from dynamic inventory
+  and heartbeat health. Provider credentials are not bot-ingest/admin tokens.
 - Do not execute tools in 3a.
 
 Exit gate: descriptor canonicalization and hashes are deterministic; unknown or
@@ -95,6 +112,14 @@ covered on SQLite and PostgreSQL.
   descriptor, principal, policy, capability, and budget snapshots used.
 - Apply idempotency per source event/tool/request and never retry an ambiguous
   state-changing completion automatically.
+- Ship `off`, `ledger_only`, exact canary, and enforced modes plus independent
+  global stop, tool suspension, and provider quarantine before a real lease.
+  Canary scope binds exact tool/version, conversation, caller, and provider.
+- Use database time for leases/deadlines. Specify cancellation, reaping, late
+  completion, invalid output, clock skew, unknown completion, and starvation
+  transitions before implementation.
+- Implement reserve/upload/finalize content-addressed artifacts before
+  `latex.render` or image-producing Wolfram output can succeed.
 
 Exit gate: crash/restart, duplicate delivery, expired lease, timeout,
 cancellation, malformed result, provider outage, and Core outage all have
@@ -132,6 +157,9 @@ must become separately observable steps.
 Phase 3 exit gate: at least `status.inspect`, `wolfram.run`, and
 `latex.render` use the common descriptor and invocation protocol; command
 compatibility remains; no natural-language model has execution authority yet.
+The control panel may expose read-only effective state during Phase 3, but
+mutating operator controls remain gated by the roles/session/audit requirements
+in `CONTROL_PLANE.md`.
 
 ## Phase 4: Unified Renderer
 

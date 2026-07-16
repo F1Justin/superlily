@@ -3,6 +3,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 def load_reporter_module():
     path = Path("bridges/lily_nonebot/lily_core_bridge/reporter.py")
@@ -51,3 +53,50 @@ def test_claim_and_background_report_timeouts_are_independent() -> None:
 
     assert reporter.claim_timeout_seconds == 1.0
     assert reporter.report_timeout_seconds == 2.0
+
+
+@pytest.mark.asyncio
+async def test_claim_and_suppression_ack_use_synchronous_control_plane_requests() -> None:
+    module = load_reporter_module()
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "instance-token",
+        1,
+        claim_timeout_seconds=1.0,
+        report_timeout_seconds=2.0,
+    )
+
+    class Response:
+        def __init__(self, body):
+            self.body = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.body
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("/evaluate"):
+                return Response({"claim_id": "claim-123", "action": "deny"})
+            return Response({"claim_id": "claim-123", "acknowledged_at": "now"})
+
+    client = Client()
+    reporter._client = client
+
+    claim = await reporter.request_claim({"event": True}, "event-key-123")
+    acknowledged = await reporter.acknowledge_claim("claim-123")
+
+    assert claim == {"claim_id": "claim-123", "action": "deny"}
+    assert acknowledged is True
+    assert [call[0] for call in client.calls] == [
+        "http://127.0.0.1:8765/v1/claims/evaluate",
+        "http://127.0.0.1:8765/v1/claims/claim-123/ack",
+    ]
+    assert client.calls[0][1]["headers"]["Idempotency-Key"] == "event-key-123"
+    assert client.calls[1][1]["headers"]["Idempotency-Key"] == "claim-ack-claim-123"

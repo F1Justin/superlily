@@ -42,9 +42,13 @@ def test_sqlite_alembic_upgrade_reaches_head_with_partial_claim_owner_index(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
             ("uq_event_claim_enforced_allow_owner",),
         ).fetchone()
+        claim_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(event_claims)").fetchall()
+        }
 
-    assert version == ("0010_claim_owner_index",)
+    assert version == ("0011_claim_ack",)
     assert index_sql is not None
+    assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
     assert "unique index" in normalized_sql
     assert "where enforced = 1 and action = 'allow'" in normalized_sql

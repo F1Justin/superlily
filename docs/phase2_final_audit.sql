@@ -1,16 +1,25 @@
 \set ON_ERROR_STOP on
 \if :{?window_start}
 \else
-\set window_start '2026-07-15 02:15:49+00'
+\echo 'ERROR: pass window_start explicitly after the policy-v5 deployment baseline is recorded'
+SELECT 1 / 0 AS missing_required_window_start;
 \endif
 \if :{?window_end}
 \else
-\set window_end '2026-07-16 02:15:49+00'
+\echo 'ERROR: pass window_end explicitly; it must be at least 24 hours after window_start'
+SELECT 1 / 0 AS missing_required_window_end;
 \endif
 \if :{?grace_seconds}
 \else
 \set grace_seconds 30
 \endif
+
+\echo 'Window duration check (must return 1)'
+SELECT 1 / CASE
+    WHEN :'window_end'::timestamptz - :'window_start'::timestamptz >= interval '24 hours'
+    THEN 1
+    ELSE 0
+END AS at_least_24_hours;
 
 \echo 'Phase 2 window totals'
 WITH window_sources AS (
@@ -37,6 +46,50 @@ WITH window_sources AS (
     FROM source_events
     WHERE first_received_at >= :'window_start'::timestamptz
       AND first_received_at < :'window_end'::timestamptz
+), deciding_observations AS (
+    SELECT
+        ed.source_event_id,
+        ed.features_json,
+        ed.decision_type,
+        eo.text,
+        eo.segments_json,
+        eo.metadata_json,
+        eo.bot_id,
+        coalesce(
+            (
+                SELECT (segment->>'type') = 'text'
+                FROM jsonb_array_elements(eo.segments_json::jsonb)
+                     WITH ORDINALITY AS parts(segment, position)
+                WHERE NOT (
+                    segment->>'type' = 'reply'
+                    OR (
+                        segment->>'type' = 'text'
+                        AND btrim(coalesce(segment->'data'->>'text', '')) = ''
+                    )
+                    OR (
+                        segment->>'type' = 'at'
+                        AND coalesce(
+                            segment->'data'->>'qq',
+                            segment->'data'->>'target',
+                            segment->'data'->>'target_platform_userid',
+                            segment->>'qq',
+                            segment->>'target',
+                            segment->>'target_platform_userid'
+                        ) = eo.bot_id
+                        AND (
+                            coalesce(eo.metadata_json->>'to_me', 'false') IN ('true', '1')
+                            OR coalesce(eo.metadata_json->>'is_tome', 'false') IN ('true', '1')
+                        )
+                    )
+                )
+                ORDER BY position
+                LIMIT 1
+            ),
+            btrim(coalesce(eo.text, '')) <> ''
+        ) AS derived_command_eligible
+    FROM event_decisions ed
+    JOIN window_sources w ON w.id = ed.source_event_id
+    JOIN event_observations eo ON eo.id = ed.deciding_observation_id
 )
 SELECT 'decision_count' AS violation, count(*)
 FROM (
@@ -90,6 +143,47 @@ FROM (
     HAVING count(DISTINCT eo.metadata_json->'native_identity'->>'time') > 1
 ) q
 UNION ALL
+SELECT 'strong_fingerprint_split', count(*)
+FROM (
+    SELECT se.correlation_fingerprint
+    FROM source_events se
+    WHERE se.correlation_fingerprint IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM source_events window_source
+          JOIN window_sources w ON w.id = window_source.id
+          WHERE window_source.correlation_fingerprint = se.correlation_fingerprint
+      )
+    GROUP BY se.correlation_fingerprint
+    HAVING count(DISTINCT se.id) > 1
+) q
+UNION ALL
+SELECT 'reported_source_identity_conflict', count(*)
+FROM (
+    SELECT eo.instance_id, eo.reported_source_event_id
+    FROM event_observations eo
+    JOIN window_sources w ON w.id = eo.source_event_id
+    GROUP BY eo.instance_id, eo.reported_source_event_id
+    HAVING count(DISTINCT eo.source_event_id) > 1
+) q
+UNION ALL
+SELECT 'idempotency_identity_conflict', count(*)
+FROM (
+    SELECT eo.instance_id, eo.idempotency_key
+    FROM event_observations eo
+    JOIN window_sources w ON w.id = eo.source_event_id
+    GROUP BY eo.instance_id, eo.idempotency_key
+    HAVING count(DISTINCT eo.source_event_id) > 1
+) q
+UNION ALL
+SELECT 'qq_message_reported_source_not_v2', count(*)
+FROM event_observations eo
+JOIN source_events se ON se.id = eo.source_event_id
+JOIN window_sources w ON w.id = eo.source_event_id
+WHERE se.platform = 'qq'
+  AND se.event_type = 'message'
+  AND eo.reported_source_event_id !~ '^qq:source:v2:[0-9a-f]{64}$'
+UNION ALL
 SELECT 'bot_actionable', count(DISTINCT ed.source_event_id)
 FROM event_decisions ed
 JOIN window_sources w ON w.id = ed.source_event_id
@@ -100,7 +194,21 @@ UNION ALL
 SELECT 'non_v3_policy', count(*)
 FROM event_decisions ed
 JOIN window_sources w ON w.id = ed.source_event_id
-WHERE ed.policy_version <> 'qq-v3-policy-v4'
+WHERE ed.policy_version <> 'qq-v3-policy-v5'
+UNION ALL
+SELECT 'command_eligible_missing_or_invalid', count(*)
+FROM deciding_observations decision
+WHERE jsonb_typeof((decision.features_json::jsonb)->'command_eligible') IS DISTINCT FROM 'boolean'
+UNION ALL
+SELECT 'command_eligible_structure_mismatch', count(*)
+FROM deciding_observations decision
+WHERE ((decision.features_json::jsonb)->'command_eligible')
+      IS DISTINCT FROM to_jsonb(decision.derived_command_eligible)
+UNION ALL
+SELECT 'command_ineligible_actionable_command', count(*)
+FROM deciding_observations decision
+WHERE decision.derived_command_eligible IS FALSE
+  AND decision.decision_type = 'command'
 UNION ALL
 SELECT 'group_mode_missing_or_invalid', count(*)
 FROM event_decisions ed
@@ -186,12 +294,64 @@ WHERE ed.features_json->>'has_reply_link' = 'true'
   AND ed.features_json->>'reply_target_instance_id' = 'lily-command'
   AND ed.decision_type IN ('command', 'talk')
 UNION ALL
-SELECT 'unsafe_reply_target_actionable', count(*)
+SELECT 'ambiguous_or_conflicting_reply_actionable', count(*)
 FROM event_decisions ed
 JOIN window_sources w ON w.id = ed.source_event_id
 WHERE ed.features_json->>'has_reply_link' = 'true'
-  AND ed.features_json->>'reply_target_status' IN ('resolved_other', 'ambiguous', 'conflict')
-  AND ed.decision_type IN ('command', 'talk');
+  AND ed.features_json->>'reply_target_status' IN ('ambiguous', 'conflict')
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'other_or_unresolved_reply_without_summon_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' IN ('resolved_other', 'unresolved')
+  AND coalesce((ed.features_json->>'summons_talk_bot')::boolean, false) IS FALSE
+  AND coalesce(jsonb_array_length((ed.features_json::jsonb)->'mentioned_bot_instance_ids'), 0) = 0
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'talk_enabled_summoned_reply_wrong_route', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'reply_target_status' IN ('resolved_other', 'unresolved')
+  AND ed.features_json->>'conversation_mode' IN ('conversation_only', 'full')
+  AND (
+      coalesce((ed.features_json->>'summons_talk_bot')::boolean, false)
+      OR coalesce(jsonb_array_length((ed.features_json::jsonb)->'mentioned_bot_instance_ids'), 0) > 0
+  )
+  AND (
+      ed.decision_type IS DISTINCT FROM 'talk'
+      OR ed.target_instance_id IS DISTINCT FROM 'nekro-agent'
+      OR ed.reason IS DISTINCT FROM 'summons_talk_bot_with_reply'
+  )
+UNION ALL
+SELECT 'talk_disabled_reply_actionable', count(*)
+FROM event_decisions ed
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE ed.features_json->>'has_reply_link' = 'true'
+  AND ed.features_json->>'conversation_mode' IN ('command_only', 'observe_only')
+  AND ed.decision_type IN ('command', 'talk')
+UNION ALL
+SELECT 'private_recipient_wrong_route', count(*)
+FROM event_decisions ed
+JOIN source_events se ON se.id = ed.source_event_id
+JOIN window_sources w ON w.id = ed.source_event_id
+WHERE se.conversation_type = 'private'
+  AND (
+      (ed.decision_type = 'talk' AND (
+          ed.target_instance_id IS DISTINCT FROM 'nekro-agent'
+          OR ed.features_json->>'observing_instance_id' IS DISTINCT FROM 'nekro-agent'
+      ))
+      OR (ed.decision_type = 'command' AND (
+          ed.target_instance_id IS DISTINCT FROM 'lily-command'
+          OR ed.features_json->>'observing_instance_id' IS DISTINCT FROM 'lily-command'
+      ))
+      OR (
+          ed.features_json->>'observing_instance_id' IS DISTINCT FROM 'nekro-agent'
+          AND ed.decision_type = 'talk'
+      )
+  );
 
 \echo 'Claim invariant violations: every count must be zero'
 WITH window_sources AS (
@@ -199,6 +359,35 @@ WITH window_sources AS (
     FROM source_events
     WHERE first_received_at >= :'window_start'::timestamptz
       AND first_received_at < :'window_end'::timestamptz
+), enforced_allow_coordination AS (
+    SELECT
+        allow_claim.id,
+        allow_claim.source_event_id,
+        allow_claim.instance_id,
+        ARRAY(
+            SELECT DISTINCT observation.instance_id
+            FROM event_observations observation
+            WHERE observation.source_event_id = allow_claim.source_event_id
+              AND observation.instance_id IS DISTINCT FROM allow_claim.instance_id
+              AND observation.received_at <= allow_claim.created_at
+            ORDER BY observation.instance_id
+        )::varchar[] AS observed_peer_instance_ids,
+        ARRAY(
+            SELECT DISTINCT deny_claim.instance_id
+            FROM event_claims deny_claim
+            WHERE deny_claim.source_event_id = allow_claim.source_event_id
+              AND deny_claim.instance_id IS DISTINCT FROM allow_claim.instance_id
+              AND deny_claim.enforced
+              AND deny_claim.action = 'deny'
+              AND deny_claim.created_at <= allow_claim.created_at
+              AND deny_claim.acknowledged_at IS NOT NULL
+              AND deny_claim.acknowledged_at <= allow_claim.created_at
+            ORDER BY deny_claim.instance_id
+        )::varchar[] AS acknowledged_deny_instance_ids
+    FROM event_claims allow_claim
+    JOIN window_sources w ON w.id = allow_claim.source_event_id
+    WHERE allow_claim.enforced
+      AND allow_claim.action = 'allow'
 )
 SELECT 'enforced_outside_canary' AS violation, count(*)
 FROM event_claims ec
@@ -220,27 +409,29 @@ FROM (
     HAVING count(*) > 1
 ) q
 UNION ALL
-SELECT 'allow_coordination_mismatch', count(*)
-FROM event_claims ec
-JOIN window_sources w ON w.id = ec.source_event_id
-WHERE ec.enforced
-  AND ec.action = 'allow'
-  AND (ec.features_json->'coordination'->'observed_peer_instance_ids')::jsonb
-      <> (ec.features_json->'coordination'->'enforced_deny_instance_ids')::jsonb
+SELECT 'allow_without_exact_prior_acknowledged_peer_denies', count(*)
+FROM enforced_allow_coordination coordination
+WHERE coordination.observed_peer_instance_ids
+      IS DISTINCT FROM coordination.acknowledged_deny_instance_ids
+   OR cardinality(coordination.observed_peer_instance_ids) = 0
 UNION ALL
-SELECT 'allow_without_prior_peer_deny', count(*)
+SELECT 'invalid_suppression_acknowledgement', count(*)
+FROM event_claims claim
+JOIN window_sources w ON w.id = claim.source_event_id
+WHERE claim.acknowledged_at IS NOT NULL
+  AND (
+      claim.action IS DISTINCT FROM 'deny'
+      OR claim.enforced IS DISTINCT FROM true
+      OR claim.acknowledged_at < claim.created_at
+  )
+UNION ALL
+SELECT 'allow_coordination_feature_drift', count(*)
 FROM event_claims allow_claim
-JOIN window_sources w ON w.id = allow_claim.source_event_id
-WHERE allow_claim.enforced
-  AND allow_claim.action = 'allow'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM event_claims deny_claim
-      WHERE deny_claim.source_event_id = allow_claim.source_event_id
-        AND deny_claim.enforced
-        AND deny_claim.action = 'deny'
-        AND deny_claim.created_at <= allow_claim.created_at
-  );
+JOIN enforced_allow_coordination coordination ON coordination.id = allow_claim.id
+WHERE (((allow_claim.features_json::jsonb)->'coordination')->'observed_peer_instance_ids')
+          IS DISTINCT FROM to_jsonb(coordination.observed_peer_instance_ids)
+   OR (((allow_claim.features_json::jsonb)->'coordination')->'acknowledged_deny_instance_ids')
+          IS DISTINCT FROM to_jsonb(coordination.acknowledged_deny_instance_ids);
 
 \echo 'Decision and claim distributions'
 WITH window_sources AS (
@@ -273,11 +464,107 @@ WITH window_sources AS (
     WHERE first_received_at >= :'window_start'::timestamptz
       AND first_received_at < :'window_end'::timestamptz
 )
-SELECT ec.mode, ec.action, ec.reason, ec.enforced, count(*)
+SELECT ec.mode, ec.action, ec.reason, ec.enforced,
+       ec.acknowledged_at IS NOT NULL AS acknowledged, count(*)
 FROM event_claims ec
 JOIN window_sources w ON w.id = ec.source_event_id
-GROUP BY ec.mode, ec.action, ec.reason, ec.enforced
-ORDER BY count(*) DESC, ec.mode, ec.action, ec.reason, ec.enforced;
+GROUP BY ec.mode, ec.action, ec.reason, ec.enforced, ec.acknowledged_at IS NOT NULL
+ORDER BY count(*) DESC, ec.mode, ec.action, ec.reason, ec.enforced, acknowledged;
+
+\echo 'Response trigger invariant violations: every count must be zero'
+WITH window_responses AS (
+    SELECT r.*
+    FROM responses r
+    WHERE r.received_at >= :'window_start'::timestamptz
+      AND r.received_at < :'window_end'::timestamptz
+), resolved_triggers AS (
+    SELECT r.*, se.id AS resolved_source_id,
+           CASE
+               WHEN r.platform = 'qq' AND r.conversation_type = 'group'
+               THEN regexp_replace(r.conversation_id, '^group_', '')
+               WHEN r.platform = 'qq' AND r.conversation_type = 'private'
+               THEN regexp_replace(r.conversation_id, '^private_', '')
+               ELSE r.conversation_id
+           END AS canonical_response_conversation_id
+    FROM window_responses r
+    LEFT JOIN source_events se ON se.id = r.trigger_source_event_id
+)
+SELECT 'duplicate_same_instance_successful_response' AS violation, count(*)
+FROM (
+    SELECT trigger_source_event_id, instance_id
+    FROM window_responses
+    WHERE success
+      AND trigger_source_event_id IS NOT NULL
+    GROUP BY trigger_source_event_id, instance_id
+    HAVING count(*) > 1
+) duplicates
+UNION ALL
+SELECT 'trigger_observation_mismatch', count(*)
+FROM window_responses r
+JOIN event_observations eo ON eo.id = r.trigger_observation_id
+WHERE eo.instance_id IS DISTINCT FROM r.instance_id
+   OR eo.source_event_id IS DISTINCT FROM r.trigger_source_event_id
+UNION ALL
+SELECT 'resolved_trigger_context_mismatch', count(*)
+FROM resolved_triggers r
+WHERE r.resolved_source_id IS NOT NULL
+  AND (
+      r.platform IS DISTINCT FROM (
+          SELECT se.platform FROM source_events se WHERE se.id = r.resolved_source_id
+      )
+      OR r.conversation_type IS DISTINCT FROM (
+          SELECT se.conversation_type FROM source_events se WHERE se.id = r.resolved_source_id
+      )
+      OR r.canonical_response_conversation_id IS DISTINCT FROM (
+          SELECT se.conversation_id FROM source_events se WHERE se.id = r.resolved_source_id
+      )
+      OR NOT EXISTS (
+          SELECT 1
+          FROM event_observations eo
+          WHERE eo.source_event_id = r.resolved_source_id
+            AND eo.instance_id = r.instance_id
+      )
+  )
+UNION ALL
+SELECT 'trigger_resolution_status_mismatch', count(*)
+FROM resolved_triggers r
+WHERE coalesce(r.metadata_json->>'trigger_resolution_status', '') NOT IN (
+          'none', 'observation', 'reported_source', 'canonical_source', 'unresolved'
+      )
+   OR (
+      r.metadata_json->>'trigger_resolution_status' = 'none'
+      AND (r.trigger_observation_id IS NOT NULL OR r.trigger_source_event_id IS NOT NULL)
+   )
+   OR (
+      r.metadata_json->>'trigger_resolution_status' IN (
+          'observation', 'reported_source', 'canonical_source'
+      )
+      AND r.resolved_source_id IS NULL
+   )
+   OR (
+      r.metadata_json->>'trigger_resolution_status' = 'unresolved'
+      AND (r.trigger_source_event_id IS NULL OR r.resolved_source_id IS NOT NULL)
+   )
+UNION ALL
+SELECT 'trigger_attribution_context_mismatch', count(*)
+FROM resolved_triggers r
+WHERE r.resolved_source_id IS NOT NULL
+  AND (
+      (r.instance_id = 'lily-command'
+       AND r.metadata_json->>'trigger_attribution' IS DISTINCT FROM 'event_context')
+      OR (r.instance_id = 'nekro-agent'
+          AND r.metadata_json->>'trigger_attribution' IS DISTINCT FROM 'task_context')
+  )
+UNION ALL
+SELECT 'completion_status_mismatch', count(*)
+FROM window_responses r
+WHERE (r.success AND r.metadata_json->>'completion_status' IS DISTINCT FROM 'succeeded')
+   OR (
+      NOT r.success
+      AND coalesce(r.metadata_json->>'completion_status', '') NOT IN (
+          'failed', 'ambiguous', 'suppressed'
+      )
+   );
 
 \echo 'Decision outcome distribution and exceptional rows'
 WITH window_decisions AS (
@@ -289,8 +576,15 @@ WITH window_decisions AS (
 ), response_sets AS (
     SELECT
         wd.source_event_id,
-        array_agg(DISTINCT r.instance_id) FILTER (WHERE r.success) AS successful_instances,
-        array_agg(DISTINCT r.instance_id) FILTER (WHERE NOT r.success) AS failed_instances
+        array_agg(r.instance_id) FILTER (WHERE r.success) AS successful_instances,
+        array_agg(r.instance_id) FILTER (
+            WHERE NOT r.success
+              AND r.metadata_json->>'completion_status' = 'ambiguous'
+        ) AS ambiguous_instances,
+        array_agg(r.instance_id) FILTER (
+            WHERE NOT r.success
+              AND r.metadata_json->>'completion_status' IS DISTINCT FROM 'ambiguous'
+        ) AS failed_instances
     FROM window_decisions wd
     LEFT JOIN responses r
       ON r.trigger_source_event_id = wd.source_event_id
@@ -301,21 +595,34 @@ WITH window_decisions AS (
     SELECT
         wd.*,
         coalesce(rs.successful_instances, ARRAY[]::varchar[]) AS successful_instances,
+        coalesce(rs.ambiguous_instances, ARRAY[]::varchar[]) AS ambiguous_instances,
         coalesce(rs.failed_instances, ARRAY[]::varchar[]) AS failed_instances,
         CASE
             WHEN wd.decision_type NOT IN ('command', 'talk') OR wd.target_instance_id IS NULL
                 THEN CASE
                     WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 0
+                      OR cardinality(coalesce(rs.ambiguous_instances, ARRAY[]::varchar[])) > 0
                       OR cardinality(coalesce(rs.failed_instances, ARRAY[]::varchar[])) > 0
                     THEN 'unexpected_response'
                     ELSE 'matched_no_response'
                 END
             WHEN wd.target_instance_id = ANY(coalesce(rs.successful_instances, ARRAY[]::varchar[]))
                 THEN CASE
-                    WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 1
+                    WHEN cardinality(array_positions(
+                        coalesce(rs.successful_instances, ARRAY[]::varchar[]),
+                        wd.target_instance_id
+                    )) > 1
+                    THEN 'duplicate_successful_target_response'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM unnest(coalesce(rs.successful_instances, ARRAY[]::varchar[])) instance_id
+                        WHERE instance_id IS DISTINCT FROM wd.target_instance_id
+                    )
                     THEN 'matched_with_extra'
                     ELSE 'matched'
                 END
+            WHEN wd.target_instance_id = ANY(coalesce(rs.ambiguous_instances, ARRAY[]::varchar[]))
+                THEN 'ambiguous_completion'
             WHEN wd.target_instance_id = ANY(coalesce(rs.failed_instances, ARRAY[]::varchar[]))
                 THEN 'failed'
             WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 0
@@ -342,8 +649,15 @@ WITH window_decisions AS (
 ), response_sets AS (
     SELECT
         wd.source_event_id,
-        array_agg(DISTINCT r.instance_id) FILTER (WHERE r.success) AS successful_instances,
-        array_agg(DISTINCT r.instance_id) FILTER (WHERE NOT r.success) AS failed_instances
+        array_agg(r.instance_id) FILTER (WHERE r.success) AS successful_instances,
+        array_agg(r.instance_id) FILTER (
+            WHERE NOT r.success
+              AND r.metadata_json->>'completion_status' = 'ambiguous'
+        ) AS ambiguous_instances,
+        array_agg(r.instance_id) FILTER (
+            WHERE NOT r.success
+              AND r.metadata_json->>'completion_status' IS DISTINCT FROM 'ambiguous'
+        ) AS failed_instances
     FROM window_decisions wd
     LEFT JOIN responses r
       ON r.trigger_source_event_id = wd.source_event_id
@@ -354,21 +668,34 @@ WITH window_decisions AS (
     SELECT
         wd.*,
         coalesce(rs.successful_instances, ARRAY[]::varchar[]) AS successful_instances,
+        coalesce(rs.ambiguous_instances, ARRAY[]::varchar[]) AS ambiguous_instances,
         coalesce(rs.failed_instances, ARRAY[]::varchar[]) AS failed_instances,
         CASE
             WHEN wd.decision_type NOT IN ('command', 'talk') OR wd.target_instance_id IS NULL
                 THEN CASE
                     WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 0
+                      OR cardinality(coalesce(rs.ambiguous_instances, ARRAY[]::varchar[])) > 0
                       OR cardinality(coalesce(rs.failed_instances, ARRAY[]::varchar[])) > 0
                     THEN 'unexpected_response'
                     ELSE 'matched_no_response'
                 END
             WHEN wd.target_instance_id = ANY(coalesce(rs.successful_instances, ARRAY[]::varchar[]))
                 THEN CASE
-                    WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 1
+                    WHEN cardinality(array_positions(
+                        coalesce(rs.successful_instances, ARRAY[]::varchar[]),
+                        wd.target_instance_id
+                    )) > 1
+                    THEN 'duplicate_successful_target_response'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM unnest(coalesce(rs.successful_instances, ARRAY[]::varchar[])) instance_id
+                        WHERE instance_id IS DISTINCT FROM wd.target_instance_id
+                    )
                     THEN 'matched_with_extra'
                     ELSE 'matched'
                 END
+            WHEN wd.target_instance_id = ANY(coalesce(rs.ambiguous_instances, ARRAY[]::varchar[]))
+                THEN 'ambiguous_completion'
             WHEN wd.target_instance_id = ANY(coalesce(rs.failed_instances, ARRAY[]::varchar[]))
                 THEN 'failed'
             WHEN cardinality(coalesce(rs.successful_instances, ARRAY[]::varchar[])) > 0
@@ -389,6 +716,7 @@ SELECT
     reason,
     outcome,
     successful_instances,
+    ambiguous_instances,
     failed_instances,
     first_received_at
 FROM classified
@@ -396,7 +724,9 @@ WHERE outcome NOT IN ('matched', 'matched_no_response')
 ORDER BY first_received_at;
 
 \echo 'Response exceptions for manual review'
-SELECT id, instance_id, trigger_source_event_id, success, error, received_at
+SELECT id, instance_id, trigger_source_event_id, success,
+       metadata_json->>'completion_status' AS completion_status,
+       error, received_at
 FROM responses
 WHERE received_at >= :'window_start'::timestamptz
   AND received_at < :'window_end'::timestamptz
@@ -448,7 +778,22 @@ WITH window_sources AS (
     FROM documents
     CROSS JOIN LATERAL jsonb_path_query(
         document,
-        '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "(url|uri|link)$" flag "i")'
+        '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "(url|uri|link|href|src|file|platform_id)$" flag "i")'
+    ) item
+), uri_strings AS (
+    SELECT scope, scalar #>> '{}' AS value
+    FROM documents
+    CROSS JOIN LATERAL jsonb_path_query(
+        document,
+        '$.** ? (@.type() == "string")'
+    ) scalar
+    WHERE scalar #>> '{}' ~* '^[a-z][a-z0-9+.-]*://'
+), file_or_platform_ids AS (
+    SELECT scope, item
+    FROM documents
+    CROSS JOIN LATERAL jsonb_path_query(
+        document,
+        '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "(file|platform_id)$" flag "i")'
     ) item
 )
 SELECT 'unredacted_sensitive_values' AS violation, count(*)
@@ -460,6 +805,22 @@ FROM urls
 WHERE item->>'value' LIKE '%?%'
    OR item->>'value' LIKE '%#%'
    OR item->>'value' ~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+@'
+UNION ALL
+SELECT 'custom_uri_queries_fragments_or_userinfo', count(*)
+FROM uri_strings
+WHERE value LIKE '%?%'
+   OR value LIKE '%#%'
+   OR value ~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+@'
+UNION ALL
+SELECT 'file_or_platform_id_uri_residue', count(*)
+FROM file_or_platform_ids
+WHERE item->>'value' LIKE '%?%'
+   OR item->>'value' LIKE '%#%'
+   OR item->>'value' ~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+@'
+UNION ALL
+SELECT 'local_file_uri_retained', count(*)
+FROM file_or_platform_ids
+WHERE item->>'value' ~* '^file://'
 UNION ALL
 SELECT 'observation_raw_non_null', count(*)
 FROM event_observations eo

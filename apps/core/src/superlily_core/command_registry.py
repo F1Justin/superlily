@@ -45,6 +45,8 @@ class CommandRule:
     permission: str = "public"
     sensitive: bool = False
     description: str = ""
+    ignore_case: bool = False
+    regex_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +60,8 @@ class CommandMatch:
     permission: str
     sensitive: bool
     description: str
+    ignore_case: bool = False
+    regex_flags: int = 0
 
     def as_feature(self) -> dict[str, Any]:
         return {
@@ -86,29 +90,34 @@ class CommandRegistry:
         if text is None:
             return None
         raw = text.strip()
-        normalized = raw.casefold()
-        if not normalized:
+        if not raw:
             return None
 
         for rule in self.rules:
+            candidate = raw.casefold() if rule.ignore_case else raw
             for trigger in rule.triggers:
-                if rule.kind == "prefix" and normalized.startswith(trigger.strip().casefold()):
+                normalized_trigger = trigger.strip().casefold() if rule.ignore_case else trigger.strip()
+                if rule.kind == "prefix" and candidate.startswith(normalized_trigger):
                     return _match_from_rule(rule, trigger)
-                if rule.kind == "command" and normalized.startswith(trigger.strip().casefold()):
-                    return self._longest_command_match(normalized)
-                if rule.kind == "token" and _matches_token(normalized, trigger):
+                if rule.kind == "command" and candidate.startswith(normalized_trigger):
+                    return self._longest_command_match(raw)
+                if rule.kind == "token" and _matches_token(raw, trigger, rule.ignore_case):
                     return _match_from_rule(rule, trigger)
-                if rule.kind == "exact" and normalized == trigger.strip().casefold():
+                if rule.kind == "exact" and candidate == normalized_trigger:
                     return _match_from_rule(rule, trigger)
-                if rule.kind == "suffix" and normalized.endswith(trigger.strip().casefold()):
+                if rule.kind == "suffix" and candidate.endswith(normalized_trigger):
                     return _match_from_rule(rule, trigger)
-                if rule.kind == "contains" and trigger.strip().casefold() in normalized:
+                if rule.kind == "contains" and normalized_trigger in candidate:
                     return _match_from_rule(rule, trigger)
-                if rule.kind == "regex" and re.match(trigger, raw, flags=re.IGNORECASE | re.DOTALL):
-                    return _match_from_rule(rule, trigger)
+                if rule.kind == "regex":
+                    try:
+                        if re.search(trigger, raw[:4_096], flags=rule.regex_flags):
+                            return _match_from_rule(rule, trigger)
+                    except re.error:
+                        continue
         return None
 
-    def _longest_command_match(self, normalized: str) -> CommandMatch:
+    def _longest_command_match(self, raw: str) -> CommandMatch:
         """Mirror NoneBot's global command trie without changing rule priority.
 
         Once registry order reaches the first matching command rule, command
@@ -121,7 +130,9 @@ class CommandRegistry:
             for rule in self.rules
             if rule.kind == "command"
             for trigger in rule.triggers
-            if normalized.startswith(trigger.strip().casefold())
+            if (raw.casefold() if rule.ignore_case else raw).startswith(
+                trigger.strip().casefold() if rule.ignore_case else trigger.strip()
+            )
         ]
         rule, trigger = max(matches, key=lambda item: len(item[1].strip()))
         return _match_from_rule(rule, trigger)
@@ -140,6 +151,8 @@ class CommandRegistry:
                     "permission": rule.permission,
                     "sensitive": rule.sensitive,
                     "description": rule.description,
+                    "ignore_case": rule.ignore_case,
+                    "regex_flags": rule.regex_flags,
                 }
                 for rule in self.rules
             ],
@@ -164,11 +177,14 @@ def _match_from_rule(rule: CommandRule, trigger: str) -> CommandMatch:
         permission=rule.permission,
         sensitive=rule.sensitive,
         description=rule.description,
+        ignore_case=rule.ignore_case,
+        regex_flags=rule.regex_flags,
     )
 
 
-def _matches_token(normalized_text: str, trigger: str) -> bool:
-    normalized_trigger = trigger.strip().casefold()
+def _matches_token(text: str, trigger: str, ignore_case: bool = False) -> bool:
+    normalized_text = text.casefold() if ignore_case else text
+    normalized_trigger = trigger.strip().casefold() if ignore_case else trigger.strip()
     if not normalized_trigger:
         return False
     if normalized_text == normalized_trigger:
@@ -246,6 +262,8 @@ def match_runtime_candidates(candidates: Iterable[dict[str, Any]], text: str | N
                         "rule_checker_count": candidate.get("rule_checker_count"),
                         "unknown_rule_checkers": candidate.get("unknown_rule_checkers", []),
                         "permission_checker_count": candidate.get("permission_checker_count"),
+                        "ignore_case": candidate.get("ignore_case"),
+                        "regex_flags": candidate.get("regex_flags"),
                     }
                 )
                 break
@@ -273,11 +291,24 @@ def match_runtime_candidate(
 
 def runtime_match_supports_command(runtime_match: dict[str, Any], command_match: CommandMatch) -> bool:
     aliases = runtime_plugin_aliases([runtime_match])
+    runtime_ignore_case = bool(runtime_match.get("ignore_case"))
+    runtime_trigger = str(runtime_match.get("trigger", "")).strip()
+    reviewed_trigger = command_match.trigger.strip()
+    triggers_equal = (
+        runtime_trigger.casefold() == reviewed_trigger.casefold()
+        if command_match.ignore_case and runtime_ignore_case
+        else runtime_trigger == reviewed_trigger
+    )
+    semantics_equal = (
+        int(runtime_match.get("regex_flags") or 0) == command_match.regex_flags
+        if command_match.kind == "regex"
+        else runtime_ignore_case == command_match.ignore_case
+    )
     return (
         source_plugin_loaded(command_match.source_plugin, aliases)
         and runtime_match.get("kind") == command_match.kind
-        and str(runtime_match.get("trigger", "")).strip().casefold()
-        == command_match.trigger.strip().casefold()
+        and triggers_equal
+        and semantics_equal
     )
 
 
@@ -286,12 +317,21 @@ def runtime_candidate_trigger_reviewed(
     candidate: dict[str, Any],
     trigger: Any,
 ) -> bool:
-    normalized_trigger = str(trigger).strip().casefold()
+    raw_trigger = str(trigger).strip()
     aliases = runtime_plugin_aliases([candidate])
     return any(
         source_plugin_loaded(rule.source_plugin, aliases)
         and candidate.get("kind") == rule.kind
-        and normalized_trigger in {item.strip().casefold() for item in rule.triggers}
+        and (
+            raw_trigger.casefold() in {item.strip().casefold() for item in rule.triggers}
+            if rule.ignore_case and bool(candidate.get("ignore_case"))
+            else raw_trigger in {item.strip() for item in rule.triggers}
+        )
+        and (
+            int(candidate.get("regex_flags") or 0) == rule.regex_flags
+            if rule.kind == "regex"
+            else bool(candidate.get("ignore_case")) == rule.ignore_case
+        )
         for rule in registry.rules
     )
 
@@ -341,6 +381,12 @@ def load_command_registry(path: str | Path = DEFAULT_COMMAND_REGISTRY_PATH) -> C
         permission = str(raw_rule.get("permission", "public"))
         if permission not in COMMAND_PERMISSIONS:
             raise ValueError(f"command registry rule {rule_id!r} has unsupported permission {permission!r}")
+        ignore_case = raw_rule.get("ignore_case", False)
+        if not isinstance(ignore_case, bool):
+            raise ValueError(f"command registry rule {rule_id!r} ignore_case must be boolean")
+        regex_flags = raw_rule.get("regex_flags", 0)
+        if isinstance(regex_flags, bool) or not isinstance(regex_flags, int) or not 0 <= regex_flags <= 2_147_483_647:
+            raise ValueError(f"command registry rule {rule_id!r} regex_flags must be a non-negative integer")
         rules.append(
             CommandRule(
                 id=rule_id,
@@ -352,6 +398,8 @@ def load_command_registry(path: str | Path = DEFAULT_COMMAND_REGISTRY_PATH) -> C
                 permission=permission,
                 sensitive=bool(raw_rule.get("sensitive", False)),
                 description=str(raw_rule.get("description", "")),
+                ignore_case=ignore_case,
+                regex_flags=regex_flags,
             )
         )
     return CommandRegistry(version=version, rules=tuple(rules))

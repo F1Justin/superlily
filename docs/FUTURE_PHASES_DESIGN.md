@@ -62,7 +62,8 @@ and reviewed authority remain separate.
 
 ### Logical migration slices
 
-Only Phase 3 migration numbers `0011`–`0014` are reserved. Later phases keep
+Migration `0011_claim_ack` completes the Phase 2 claim handshake. Only Phase 3
+migration numbers `0012`–`0015` are reserved. Later phases keep
 logical slices until the preceding phase exits, so planning does not force a
 bad physical schema years early:
 
@@ -472,7 +473,9 @@ preserves historical audit identity.
 1. **Telegram administrator private chat:** alerts and read-only status with an
    explicit Telegram principal binding; no group ingestion or writes.
 2. **Web Admin read-only:** health, events, decisions, claims, invocations,
-   render/delivery, incidents, and audit views with pagination/redaction.
+   render/delivery, incidents, and audit views with pagination/redaction. The
+   detailed desired/reported/effective/actual pages, roles and web-security
+   boundary are defined in `CONTROL_PLANE.md`.
 3. **Web confirmation:** strong login, short sessions, CSRF protection,
    re-authentication for high-risk actions, and immutable action audit.
 4. **Second-platform tool/render proof:** a reviewed read-only tool and common

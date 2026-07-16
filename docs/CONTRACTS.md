@@ -12,7 +12,10 @@ The wire schema is version `1.0` and the HTTP surface is under `/v1`.
   or refreshing the snapshot.
 - `POST /v1/claims/evaluate` requires an instance token and
   `Idempotency-Key`. It ingests/reuses the event and returns `allow`, `deny`, or
-  `abstain`, plus `ready` and `enforced`.
+  `abstain`, plus `ready`, `enforced`, `claim_id`, and `acknowledged_at`.
+- `POST /v1/claims/{claim_id}/ack` requires the same instance token and an
+  `Idempotency-Key`. Only the instance that received an enforced deny can
+  acknowledge that suppression has been installed; replay is idempotent.
 
 Each token is bound to exactly one `instance.instance_id`. A Lily token cannot
 submit a Nekro payload.
@@ -31,6 +34,15 @@ returns the canonical `source_event_id` in the response. Different bot
 accounts may therefore submit different request IDs and receive the same
 canonical ID. The account-local message ID is retained separately as
 `platform_message_id`.
+
+For QQ messages, both bridges derive a content-free
+`qq:source:v2:<sha256>` reported ID from canonical conversation, account-local
+message ID, and the allowlisted native identity. When strong native identity is
+missing, sender and occurred time enter the fallback material; message text,
+URLs, attachment data, display names, and secrets never do. Core independently
+computes the correlation fingerprint. Replaying exact identity returns the
+existing observation, while reusing a reported ID or idempotency key with a
+different native identity returns HTTP 409.
 
 Events may include `references`. Phase 2a records these as first-class
 `event_links`. A reference can provide a canonical or reported
@@ -60,13 +72,25 @@ version and the matched command rule, when any. If the registry cannot be read,
 event ingestion stays fail-open and records the registry error in the decision
 features.
 
+Command matching is also gated by `features.command_eligible`. Core preserves
+concatenated text for search but independently inspects the deciding OneBot
+segments: it may skip a leading reply and the observing bot's own ToMe `at`,
+but an `at` to another account, image, attachment, or other non-text leading
+segment makes later text ineligible as a NoneBot command.
+
 Resolved reply ownership takes precedence over command and summon text. A
 reply to a Nekro response routes to Nekro in a `full` or `conversation_only`
-group even when its body is also a Lily command; a reply to a Lily response or
-another user remains observation-only even when QQ retained or removed its
-automatic `at` segment. Unresolved or conflicting reply targets never gain
-authority from command text. The effective per-group mode is stored in
-decision features.
+group even when its body is also a Lily command; a reply to a Lily response is
+observation-only even when QQ retained or removed its automatic `at` segment.
+Ambiguous or conflicting reply targets remain observation-only. An unresolved
+or reply-to-other message can route to Nekro only when it explicitly contains
+the Lily summon or a known-bot mention and talk is enabled; command text alone
+cannot do so. The effective per-group mode is stored in decision features.
+
+Private QQ routing is recipient-bound. A public Lily command received by Lily
+may target Lily. Ordinary Lily-private text remains observation-only; ordinary
+Nekro-private text may target Nekro. A private event is never transferred to an
+account that did not receive it.
 
 `command_only` groups recognize the same reviewed Lily command registry as
 `full` groups, including the directory-derived `nonebot-plugin-random`
@@ -82,8 +106,11 @@ Cross-account correlation v3 is conservative and applies only to QQ group
 message events with a sender and native `real_seq`. Private chats remain
 uncorrelated until separately validated. The key uses normalized conversation,
 sender, and `real_seq`; text and account-local IDs never participate. Native
-time and the configured short window are conflict guards. Ambiguous, missing,
-or conflicting identity stays separate rather than risk a false merge.
+time is a conflict guard. When both observations carry the same native time,
+adapter-normalized `occurred_at` skew does not split the strong fingerprint;
+the configured short window is only a fallback when native time is absent.
+Ambiguous, missing, or conflicting identity stays separate rather than risk a
+false merge.
 
 QQ bridges may include `metadata.native_identity` using schema
 `onebot_v11.qq.native_identity.v1`. This is a strict scalar allowlist for
@@ -107,15 +134,23 @@ uncertain reply target, low confidence, or an offline target returns
 whose permission is not `public` also abstain. `shadow` never enforces;
 `canary` enforces only exact configured `platform:type:id` conversations.
 An `allow` is enforced only after all other instances observed on that source
-have committed enforced `deny` claims. Otherwise it becomes
-`abstain / claim_peers_not_denied`; the coordination snapshot is retained in
-claim features. This is a conservative coordination record, not proof that a
-remote process survived after receiving the HTTP response, so actual response
-outcomes remain the final behavioral evidence. Claim gates always include the
-canonical `decision_type` and `target_instance_id`. A bridge may use those two
-fields to correlate a legacy response after fail-open abstention, but they do
-not grant execution authority; only `ready`, `action`, and `enforced` control
-suppression or ownership.
+have acknowledged their enforced `deny` claims. A committed deny without an
+acknowledgement is insufficient because its HTTP response may have been lost
+while the peer failed open. Otherwise the target becomes
+`abstain / claim_peer_suppressions_not_acknowledged`; the coordination snapshot
+is retained in claim features. Actual response outcomes remain the final
+behavioral evidence. Claim gates always include the canonical `decision_type`
+and `target_instance_id`. A bridge may use those two fields to correlate a
+legacy response after fail-open abstention, but they do not grant execution
+authority; only `ready`, `action`, and `enforced` control suppression or
+ownership.
+
+Linked responses record `metadata.trigger_attribution`: Lily uses its native
+`event_context`; Nekro binds `task_context` to the current per-chat scheduler
+task and keeps a later pending source separate. `completion_status` is
+`succeeded`, `failed`, `suppressed`, or `ambiguous`. A send timeout is
+`success=false / ambiguous`; it is not confirmation that no platform message
+was emitted and must not be retried blindly.
 
 ## Read APIs
 

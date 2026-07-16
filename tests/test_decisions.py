@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from superlily_core.command_registry import (
@@ -6,6 +8,7 @@ from superlily_core.command_registry import (
     load_command_registry,
     match_runtime_candidate,
     match_runtime_candidates,
+    runtime_candidate_trigger_reviewed,
     runtime_match_supports_command,
 )
 from superlily_core.decisions import decide_event
@@ -190,6 +193,8 @@ def test_runtime_command_candidates_use_nonebot_longest_prefix() -> None:
             "rule_checker_count": None,
             "unknown_rule_checkers": [],
             "permission_checker_count": None,
+            "ignore_case": None,
+            "regex_flags": None,
         }
     ]
 
@@ -247,6 +252,105 @@ def test_runtime_command_coverage_is_bound_to_the_reviewed_plugin() -> None:
     assert len(runtime_matches) == 2
     assert runtime_match_supports_command(runtime_matches[0], static_match) is False
     assert runtime_match_supports_command(runtime_matches[1], static_match) is True
+
+
+def test_static_registry_case_and_regex_flags_are_part_of_match_semantics() -> None:
+    registry = CommandRegistry(
+        version="strict-semantics",
+        rules=(
+            CommandRule(
+                id="case-sensitive",
+                kind="exact",
+                triggers=("PING",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.case_sensitive",
+            ),
+            CommandRule(
+                id="case-insensitive",
+                kind="exact",
+                triggers=("HELLO",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.case_insensitive",
+                ignore_case=True,
+            ),
+            CommandRule(
+                id="regex-insensitive",
+                kind="regex",
+                triggers=(r"^abc$",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.regex",
+                regex_flags=re.IGNORECASE,
+            ),
+        ),
+    )
+
+    assert registry.match("PING").rule_id == "case-sensitive"
+    assert registry.match("ping") is None
+    assert registry.match("hello").rule_id == "case-insensitive"
+    assert registry.match("ABC").rule_id == "regex-insensitive"
+
+
+def test_runtime_review_requires_exact_case_and_regex_flag_semantics() -> None:
+    case_registry = CommandRegistry(
+        version="case",
+        rules=(
+            CommandRule(
+                id="case",
+                kind="exact",
+                triggers=("PING",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.demo",
+                ignore_case=False,
+            ),
+        ),
+    )
+    case_match = case_registry.match("PING")
+    assert case_match is not None
+    runtime_case_mismatch = {
+        "plugin_id": "demo",
+        "module_name": "plugins.demo",
+        "kind": "exact",
+        "trigger": "PING",
+        "ignore_case": True,
+        "regex_flags": None,
+    }
+    assert runtime_match_supports_command(runtime_case_mismatch, case_match) is False
+    assert runtime_candidate_trigger_reviewed(
+        case_registry,
+        {**runtime_case_mismatch, "triggers": ["PING"]},
+        "PING",
+    ) is False
+
+    regex_registry = CommandRegistry(
+        version="regex",
+        rules=(
+            CommandRule(
+                id="regex",
+                kind="regex",
+                triggers=(r"^abc$",),
+                target_instance_id="lily-command",
+                source_plugin="plugins.demo",
+                regex_flags=re.IGNORECASE,
+            ),
+        ),
+    )
+    regex_match = regex_registry.match("ABC")
+    assert regex_match is not None
+    runtime_regex = {
+        "plugin_id": "demo",
+        "module_name": "plugins.demo",
+        "kind": "regex",
+        "trigger": r"^abc$",
+        "triggers": [r"^abc$"],
+        "ignore_case": False,
+        "regex_flags": 0,
+    }
+    assert runtime_match_supports_command(runtime_regex, regex_match) is False
+    assert runtime_candidate_trigger_reviewed(regex_registry, runtime_regex, r"^abc$") is False
+
+    runtime_regex["regex_flags"] = int(re.IGNORECASE)
+    assert runtime_match_supports_command(runtime_regex, regex_match) is True
+    assert runtime_candidate_trigger_reviewed(regex_registry, runtime_regex, r"^abc$") is True
 
 
 def test_decision_routes_explicit_bot_mention_to_talk() -> None:
@@ -514,7 +618,7 @@ def test_observe_only_group_never_routes_commands_or_conversation() -> None:
     ]
 
 
-def test_decision_routes_private_message_to_talk() -> None:
+def test_private_lily_ordinary_message_is_observed() -> None:
     decision = decide_event(
         source_event_type="message",
         conversation_type="private",
@@ -522,8 +626,43 @@ def test_decision_routes_private_message_to_talk() -> None:
         attachments=[],
         metadata={},
         has_reply_link=False,
+        observing_instance_id="lily-command",
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "private_recipient_observed"
+
+
+def test_private_lily_command_is_routed_to_lily() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="private",
+        text="wf 1+1",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        command_registry=load_command_registry(),
+        observing_instance_id="lily-command",
+    )
+
+    assert decision.decision_type == "command"
+    assert decision.target_instance_id == "lily-command"
+    assert decision.reason == "command_prefix:wf"
+
+
+def test_private_nekro_message_is_routed_to_nekro_without_summon() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="private",
+        text="任意普通对话",
+        attachments=[],
+        metadata={},
+        has_reply_link=False,
+        command_registry=load_command_registry(),
+        observing_instance_id="nekro-agent",
     )
 
     assert decision.decision_type == "talk"
     assert decision.target_instance_id == "nekro-agent"
-    assert decision.reason == "private_message"
+    assert decision.reason == "private_recipient_talk"

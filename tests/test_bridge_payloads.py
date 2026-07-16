@@ -1,3 +1,4 @@
+import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,144 @@ def load_module(name: str, path: Path):
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_bridge_payloads():
+    return (
+        load_module(
+            "superlily_lily_source_id_payloads",
+            ROOT / "bridges" / "lily_nonebot" / "lily_core_bridge" / "payloads.py",
+        ),
+        load_module(
+            "superlily_nekro_source_id_payloads",
+            ROOT / "bridges" / "nekro" / "superlily_bridge" / "payloads.py",
+        ),
+    )
+
+
+def test_message_source_event_id_v2_is_identical_across_bridges_and_content_free() -> None:
+    lily, nekro = load_bridge_payloads()
+    conversation = {"id": "708309706", "type": "group", "name": "private room name"}
+    native_identity = {
+        "message_id": "short-42",
+        "real_seq": 998877,
+        "time": 1750000000,
+        "raw_message": "must not affect or appear in the id",
+        "remote_url": "https://example.test/private?token=secret",
+        "access_token": "top-secret-token",
+    }
+
+    lily_id = lily.message_source_event_id(
+        conversation,
+        "short-42",
+        native_identity,
+        sender_id="456",
+        occurred_at="2026-07-15T10:00:00+00:00",
+    )
+    nekro_id = nekro.message_source_event_id(
+        conversation,
+        "short-42",
+        native_identity,
+        sender_id="456",
+        occurred_at="2026-07-15T10:00:00+00:00",
+    )
+
+    assert lily_id == nekro_id
+    assert re.fullmatch(r"qq:source:v2:[0-9a-f]{64}", lily_id)
+    assert "private room name" not in lily_id
+    assert "example.test" not in lily_id
+    assert "secret" not in lily_id
+    assert "must not affect" not in lily_id
+
+
+def test_message_source_event_id_v2_distinguishes_reused_short_ids() -> None:
+    for payloads in load_bridge_payloads():
+        conversation = {"id": "708309706", "type": "group"}
+        base = payloads.message_source_event_id(
+            conversation,
+            "short-42",
+            {"message_id": "short-42", "real_seq": 100, "time": 1750000000},
+        )
+        changed_real_seq = payloads.message_source_event_id(
+            conversation,
+            "short-42",
+            {"message_id": "short-42", "real_seq": 101, "time": 1750000000},
+        )
+        changed_native_time = payloads.message_source_event_id(
+            conversation,
+            "short-42",
+            {"message_id": "short-42", "real_seq": 100, "time": 1750000001},
+        )
+
+        assert len({base, changed_real_seq, changed_native_time}) == 3
+        assert base == payloads.message_source_event_id(
+            conversation,
+            "short-42",
+            {"time": 1750000000, "real_seq": 100, "message_id": "short-42"},
+        )
+
+
+def test_message_source_event_id_v2_weak_identity_fallback_is_content_independent() -> None:
+    for payloads in load_bridge_payloads():
+        conversation = {"id": "708309706", "type": "group"}
+
+        def source_id(
+            short_id: str,
+            sender_id: str,
+            occurred_at: str,
+            native_identity=None,
+        ) -> str:
+            return payloads.message_source_event_id(
+                conversation,
+                short_id,
+                native_identity,
+                sender_id=sender_id,
+                occurred_at=occurred_at,
+            )
+
+        baseline = source_id("short-42", "456", "2026-07-15T10:00:00+00:00")
+        replay = source_id(
+            "short-42",
+            "456",
+            "2026-07-15T10:00:00+00:00",
+            {
+                "raw_message": "other text",
+                "url": "https://example.test/should-not-be-identity",
+                "secret": "should-not-be-identity",
+            },
+        )
+
+        assert baseline == replay
+        assert baseline != source_id("short-43", "456", "2026-07-15T10:00:00+00:00")
+        assert baseline != source_id("short-42", "457", "2026-07-15T10:00:00+00:00")
+        assert baseline != source_id("short-42", "456", "2026-07-15T10:00:01+00:00")
+
+
+def test_lily_source_event_id_uses_v2_message_identity() -> None:
+    lily, _ = load_bridge_payloads()
+    conversation = {"id": "708309706", "type": "group"}
+    raw = {
+        "post_type": "message",
+        "message_id": "short-42",
+        "real_seq": 998877,
+        "time": 1750000000,
+        "group_id": 708309706,
+        "user_id": 456,
+    }
+    event = SimpleNamespace(
+        message_id="short-42",
+        real_seq=998877,
+        time=1750000000,
+        user_id=456,
+    )
+
+    assert lily.source_event_id(event, conversation, raw) == lily.message_source_event_id(
+        conversation,
+        "short-42",
+        lily.native_message_identity(raw, event),
+        sender_id=456,
+        occurred_at=1750000000,
+    )
 
 
 def test_lily_payload_uses_original_message_for_reply_segments() -> None:

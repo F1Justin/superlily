@@ -42,3 +42,11 @@ def test_decision_outcome_classifier_covers_expected_and_unexpected_responses() 
         age_seconds=60,
         grace_seconds=30,
     ) == "missed"
+    assert classify_decision_outcome(
+        decision_type="talk",
+        target_instance_id="nekro-agent",
+        successful_instances=["nekro-agent", "nekro-agent"],
+        failed_instances=[],
+        age_seconds=10,
+        grace_seconds=30,
+    ) == "duplicate_successful_target_response"

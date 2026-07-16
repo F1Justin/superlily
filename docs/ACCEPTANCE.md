@@ -41,8 +41,10 @@ fuzzy matching produced 11 false candidate edges in the same snapshot.
   automatic `at` either retained or deleted.
 - [x] Reply to a Lily response remains `observe_only` with the QQ automatic
   `at` either retained or deleted.
-- [x] A reply to another user remains `observe_only`; an automatic reply `at`
-  is not treated as an independent summon.
+- [x] A reply to another user without an independent summon remains
+  `observe_only`; an automatic reply `at` is not treated as an independent
+  summon. Policy v5 separately allows explicit summon text/known-bot mention in
+  talk-enabled groups.
 - [x] Conflicting or missing native identity remains fail-open and visible in
   diagnostics.
 - [x] Production shadow verification shows no duplicate canonical decisions
@@ -92,9 +94,10 @@ than two instances or more than one observation from the same instance. All
   abstain until Core has an authorization model.
 - [x] `/v1/decisions/outcomes` distinguishes matched, missed, wrong-instance,
   failed, pending, and unexpected responses over a bounded window.
-- [x] Nekro's inferred response trigger is consumed once and explicitly
-  labeled; Core target selection supplements Nekro's local ToMe flag, while
-  proactive later sends remain unlinked.
+- [x] The earlier Nekro one-shot inferred response trigger and controlled
+  sample were reviewed. The final review later found this design insufficient
+  under overlapping scheduler tasks; policy v5 replaces it with task-bound
+  attribution and requires new evidence below.
 - [x] Production runtime inventory and a controlled decision/response sample
   have been reviewed.
 
@@ -128,8 +131,15 @@ response gap.
 
 - [x] Claims are idempotent per source event and instance, and an enforced
   allow owner cannot race to a different instance.
-- [x] Enforced allow requires committed deny from every other observed
-  instance; delayed/fail-open peers cannot create a fictitious exclusive owner.
+- [x] The earlier deny-before-allow database ordering was implemented and
+  canaried.
+- [ ] Policy v5 enforced allow requires an acknowledged installed suppression
+  from every other observed instance; a committed deny whose HTTP response was
+  lost cannot create a fictitious exclusive owner. Lily denial can satisfy
+  this gate. Nekro intentionally withholds ACK because its public plugin API
+  has no post-signal-aggregation hook and `FORCE_TRIGGER` can override
+  `BLOCK_TRIGGER`; Lily-target claims therefore conservatively abstain pending
+  an outbound suppression guard/upstream lifecycle hook.
 - [x] Decision recomputation is serialized per canonical source across event,
   response, resolver, and claim paths.
 - [x] Only actionable `command`/`talk` decisions can allow or deny;
@@ -143,8 +153,13 @@ response gap.
 - [x] One exact QQ test conversation runs in canary mode; all other
   conversations remain unchanged.
 - [x] Lily deny suppresses sends without disabling chat recording. Nekro deny
-  preserves history with `BLOCK_TRIGGER`.
+  preserves history with `BLOCK_TRIGGER` but is not yet acknowledged as an
+  authoritative installed suppression.
 - [x] A Core outage/timeout leaves both bots on their existing behavior.
+- [ ] `qq:source:v2` bridge identity, Core conflict rejection, strong
+  fingerprint de-splitting, structural `command_eligible`, private-recipient
+  policy, task-bound response attribution, and ambiguous completion are
+  deployed and covered by controlled samples.
 - [ ] Canary evidence is stable before Phase 3 begins.
 
 ## Phase 1 acceptance
@@ -391,12 +406,33 @@ command but routed the summon to Nekro; observe-only routed neither. The live
 runtime snapshot was fresh at 28 plugins/194 candidates with zero uncovered
 random triggers.
 
-The authoritative policy-v4 window is 2026-07-15 10:15:49 CST through
-2026-07-16 10:15:49 CST (UTC 2026-07-15T02:15:49Z through
-2026-07-16T02:15:49Z). Both instances were online at the boundary with
-`queue_depth=0, dropped=0, claim_failures=0`; Core readiness was database `ok`
-and its new-container logs contained no 4xx, 5xx, traceback, warning, or error
-before the boundary. Phase 3 remains gated on this replacement window.
+The policy-v4 window from 2026-07-15 10:15:49 CST through
+2026-07-16 10:15:49 CST completed, but the final code/row review rejected it as
+authoritative Phase 2 evidence. The previous aggregate audit did not detect:
+
+- collision-prone short NapCat message IDs reused as reported source and
+  idempotency identity;
+- equal strong fingerprints split when Nekro's normalized timestamp lagged
+  Lily beyond the correlation window;
+- concatenated text recognizing a command after an `at` to another account or
+  another leading non-text segment;
+- private-account and unresolved/reply-to-other summon routing gaps;
+- a mutable conversation-local Nekro response trigger overwritten by a later
+  message while the first scheduler task was still running;
+- a Core-committed deny whose HTTP response could be lost before the bridge
+  installed suppression; and
+- a Nekro `BLOCK_TRIGGER` that cannot be acknowledged as authoritative before
+  the SDK completes aggregate plugin signal handling; and
+- OneBot send timeouts recorded as confirmed failures even when peer evidence
+  showed the message may already have been delivered.
+
+Policy v5, bridge source identity v2, task-bound trigger attribution, explicit
+ambiguous completion, and `0011_claim_ack` are the remediation set. They are not
+claimed deployed or accepted in this record. After review/tests/deployment,
+the controlled matrix in `PHASE2_FINAL_AUDIT.md` must pass in test group
+`708309706`. A new baseline then starts a new uninterrupted 24-hour window;
+its exact timestamps, counters, hashes, SQL output, exceptional-row review,
+and operator signature will be appended here. Phase 3 has not started.
 
 The unchecked items intentionally require an operator-visible live deployment;
 development tests do not mutate either running bot.

@@ -1,10 +1,25 @@
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
 
 NATIVE_IDENTITY_SCHEMA = "onebot_v11.qq.native_identity.v1"
+MESSAGE_SOURCE_EVENT_ID_SCHEMA = "qq.source_event.v2"
+_STRONG_NATIVE_IDENTITY_FIELDS = frozenset(
+    {
+        "message_seq",
+        "real_id",
+        "real_seq",
+        "time",
+        "msg_id",
+        "msg_seq",
+        "msg_random",
+        "msg_uid",
+        "peer_uid",
+    }
+)
 _NATIVE_IDENTITY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("message_id", ("message_id",)),
     ("message_seq", ("message_seq",)),
@@ -22,6 +37,7 @@ _NATIVE_IDENTITY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("peer_uid", ("peer_uid", "peerUid")),
     ("chat_type", ("chat_type", "chatType")),
 )
+_URI_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 
 
 def utc_iso(timestamp: int | float | None = None) -> str:
@@ -47,7 +63,7 @@ def _native_scalar(value: Any, *, max_length: int = 512) -> str | None:
     if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
         return None
     text = str(value).strip()
-    if not text or text.lower().startswith(("http://", "https://", "file://", "base64://", "data:")):
+    if not text or _URI_SCHEME.match(text):
         return None
     return text[:max_length]
 
@@ -82,11 +98,51 @@ def native_message_identity(*sources: Any) -> dict[str, str]:
     return {"schema": NATIVE_IDENTITY_SCHEMA, **values}
 
 
+def message_source_event_id(
+    conversation: dict[str, Any],
+    platform_message_id: Any,
+    native_identity: Any,
+    *,
+    sender_id: Any = None,
+    occurred_at: Any = None,
+) -> str:
+    """Build a replay-stable, content-free local ID for a QQ message observation."""
+
+    identity = native_message_identity(native_identity)
+    identity_fields = {
+        key: value
+        for key, value in identity.items()
+        if key != "schema"
+    }
+    material: dict[str, Any] = {
+        "schema": MESSAGE_SOURCE_EVENT_ID_SCHEMA,
+        "conversation": {
+            "type": _native_scalar(conversation.get("type"), max_length=64),
+            "id": _native_scalar(conversation.get("id")),
+        },
+        "platform_message_id": _native_scalar(platform_message_id),
+        "native_identity": identity_fields,
+    }
+    if not _STRONG_NATIVE_IDENTITY_FIELDS.intersection(identity_fields):
+        material["fallback"] = {
+            "sender_id": _native_scalar(sender_id),
+            "occurred_at": _native_scalar(occurred_at),
+        }
+    encoded = json.dumps(
+        material,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f"qq:source:v2:{digest}"
+
+
 def _safe_platform_id(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
-    if text.lower().startswith(("http://", "https://", "file://", "base64://", "data:")):
+    if _URI_SCHEME.match(text):
         return None
     return text[:512]
 
@@ -170,7 +226,13 @@ def message_references(segments: list[dict[str, Any]], conversation: dict[str, A
 def source_event_id(event: Any, conversation: dict[str, Any], raw: dict[str, Any]) -> str:
     message_id = getattr(event, "message_id", None)
     if message_id is not None and str(message_id):
-        return f"qq:{conversation['type']}:{conversation['id']}:message:{message_id}"
+        return message_source_event_id(
+            conversation,
+            message_id,
+            native_message_identity(raw, event),
+            sender_id=getattr(event, "user_id", None) or raw.get("user_id"),
+            occurred_at=getattr(event, "time", None) or raw.get("time"),
+        )
     event_name = event.get_event_name() if hasattr(event, "get_event_name") else raw.get("post_type", "event")
     fingerprint = stable_key(
         event_name,

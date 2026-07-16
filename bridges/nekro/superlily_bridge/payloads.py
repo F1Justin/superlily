@@ -1,8 +1,24 @@
+import hashlib
 import json
+import re
 from typing import Any
 
 
 NATIVE_IDENTITY_SCHEMA = "onebot_v11.qq.native_identity.v1"
+MESSAGE_SOURCE_EVENT_ID_SCHEMA = "qq.source_event.v2"
+_STRONG_NATIVE_IDENTITY_FIELDS = frozenset(
+    {
+        "message_seq",
+        "real_id",
+        "real_seq",
+        "time",
+        "msg_id",
+        "msg_seq",
+        "msg_random",
+        "msg_uid",
+        "peer_uid",
+    }
+)
 _NATIVE_IDENTITY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("message_id", ("message_id",)),
     ("message_seq", ("message_seq",)),
@@ -20,13 +36,14 @@ _NATIVE_IDENTITY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("peer_uid", ("peer_uid", "peerUid")),
     ("chat_type", ("chat_type", "chatType")),
 )
+_URI_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 
 
 def _native_scalar(value: Any, *, max_length: int = 512) -> str | None:
     if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
         return None
     text = str(value).strip()
-    if not text or text.lower().startswith(("http://", "https://", "file://", "base64://", "data:")):
+    if not text or _URI_SCHEME.match(text):
         return None
     return text[:max_length]
 
@@ -59,6 +76,55 @@ def native_message_identity(*sources: Any) -> dict[str, str]:
     if not values:
         return {}
     return {"schema": NATIVE_IDENTITY_SCHEMA, **values}
+
+
+def safe_platform_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or _URI_SCHEME.match(text):
+        return None
+    return text[:512]
+
+
+def message_source_event_id(
+    conversation: dict[str, Any],
+    platform_message_id: Any,
+    native_identity: Any,
+    *,
+    sender_id: Any = None,
+    occurred_at: Any = None,
+) -> str:
+    """Build a replay-stable, content-free local ID for a QQ message observation."""
+
+    identity = native_message_identity(native_identity)
+    identity_fields = {
+        key: value
+        for key, value in identity.items()
+        if key != "schema"
+    }
+    material: dict[str, Any] = {
+        "schema": MESSAGE_SOURCE_EVENT_ID_SCHEMA,
+        "conversation": {
+            "type": _native_scalar(conversation.get("type"), max_length=64),
+            "id": _native_scalar(conversation.get("id")),
+        },
+        "platform_message_id": _native_scalar(platform_message_id),
+        "native_identity": identity_fields,
+    }
+    if not _STRONG_NATIVE_IDENTITY_FIELDS.intersection(identity_fields):
+        material["fallback"] = {
+            "sender_id": _native_scalar(sender_id),
+            "occurred_at": _native_scalar(occurred_at),
+        }
+    encoded = json.dumps(
+        material,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f"qq:source:v2:{digest}"
 
 
 def content_parts(items: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

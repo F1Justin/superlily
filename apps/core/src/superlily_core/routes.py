@@ -28,6 +28,7 @@ from .models import (
     SourceEvent,
 )
 from .service import (
+    acknowledge_event_claim,
     claim_record_payload,
     effective_status,
     evaluate_event_claim,
@@ -94,6 +95,22 @@ async def post_claim(
         payload,
         idempotency_key,
         session.info["settings"],
+    )
+    return {**claim_record_payload(record), "duplicate": duplicate}
+
+
+@router.post("/v1/claims/{claim_id}/ack", status_code=status.HTTP_200_OK)
+async def post_claim_ack(
+    claim_id: str,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    del idempotency_key  # Presence is required to make bridge retries explicit.
+    record, duplicate = await acknowledge_event_claim(
+        session,
+        claim_id,
+        authenticated_instance,
     )
     return {**claim_record_payload(record), "duplicate": duplicate}
 
@@ -205,6 +222,7 @@ async def recent_responses(
             "success": item.success,
             "error": item.error,
             "latency_ms": item.latency_ms,
+            "metadata": item.metadata_json,
             "occurred_at": item.occurred_at,
             "received_at": item.received_at,
         }
@@ -300,6 +318,9 @@ async def claim_summary(
         "claims": len(rows),
         "actions": dict(sorted(Counter(item.action for item in rows).items())),
         "enforced": dict(sorted(Counter(item.action for item in rows if item.enforced).items())),
+        "acknowledged": dict(
+            sorted(Counter(item.action for item in rows if item.acknowledged_at is not None).items())
+        ),
         "reasons": dict(sorted(Counter(item.reason for item in rows).items())),
         "by_instance": dict(sorted(Counter(item.instance_id for item in rows).items())),
     }
@@ -497,8 +518,20 @@ async def decision_outcomes(
     details = []
     for decision, source, observation in decision_rows:
         linked = responses_by_source.get(source.id, [])
-        successful = {item.instance_id for item in linked if item.success}
-        failed = {item.instance_id for item in linked if not item.success}
+        successful = [item.instance_id for item in linked if item.success]
+        ambiguous = [
+            item.instance_id
+            for item in linked
+            if not item.success and item.metadata_json.get("completion_status") == "ambiguous"
+        ]
+        failed = [
+            item.instance_id
+            for item in linked
+            if not item.success and item.metadata_json.get("completion_status") != "ambiguous"
+        ]
+        successful_counts = Counter(successful)
+        failed_counts = Counter(failed)
+        ambiguous_counts = Counter(ambiguous)
         first_received_at = source.first_received_at
         if first_received_at.tzinfo is None:
             first_received_at = first_received_at.replace(tzinfo=timezone.utc)
@@ -508,6 +541,7 @@ async def decision_outcomes(
             target_instance_id=decision.target_instance_id,
             successful_instances=successful,
             failed_instances=failed,
+            ambiguous_instances=ambiguous,
             age_seconds=age_seconds,
             grace_seconds=grace_seconds,
         )
@@ -523,8 +557,15 @@ async def decision_outcomes(
                     "target_instance_id": decision.target_instance_id,
                     "reason": decision.reason,
                     "outcome": outcome,
-                    "successful_instances": sorted(successful),
-                    "failed_instances": sorted(failed),
+                    "successful_instances": sorted(successful_counts),
+                    "failed_instances": sorted(failed_counts),
+                    "successful_response_counts": dict(sorted(successful_counts.items())),
+                    "failed_response_counts": dict(sorted(failed_counts.items())),
+                    "ambiguous_response_counts": dict(sorted(ambiguous_counts.items())),
+                    "response_ids": [item.id for item in linked],
+                    "trigger_attribution": [
+                        item.metadata_json.get("trigger_attribution") for item in linked
+                    ],
                     "age_seconds": age_seconds,
                     "updated_at": decision.updated_at,
                 }
@@ -548,6 +589,14 @@ async def decision_outcomes(
             "linked": len(linked_responses),
             "unlinked": len(unlinked_responses),
             "linked_outside_decision_window": len(outside_window_responses),
+            "trigger_attribution": dict(
+                sorted(
+                    Counter(
+                        str(item.metadata_json.get("trigger_attribution") or "none")
+                        for item in responses
+                    ).items()
+                )
+            ),
             "unlinked_by_instance": dict(
                 sorted(Counter(item.instance_id for item in unlinked_responses).items())
             ),

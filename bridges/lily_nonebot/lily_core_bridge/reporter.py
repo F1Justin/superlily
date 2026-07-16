@@ -38,6 +38,7 @@ class BackgroundReporter:
         self.report_timeout_seconds = report_timeout_seconds or claim_timeout_seconds
         self.dropped = 0
         self.claim_failures = 0
+        self.claim_ack_failures = 0
         self._client: httpx.AsyncClient | None = None
         self._worker: asyncio.Task | None = None
         self._last_warning = 0.0
@@ -104,6 +105,28 @@ class BackgroundReporter:
                 self.claim_failures,
             )
             return None
+
+    async def acknowledge_claim(self, claim_id: str) -> bool:
+        if not self.enabled or self._client is None or not claim_id:
+            return False
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/v1/claims/{claim_id}/ack",
+                timeout=self.claim_timeout_seconds,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Idempotency-Key": f"claim-ack-{claim_id}",
+                },
+            )
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            self.claim_ack_failures += 1
+            self._warn_limited(
+                f"Lily Core claim ack failed safely: {type(exc).__name__}",
+                self.claim_ack_failures,
+            )
+            return False
 
     async def _run(self) -> None:
         assert self._client is not None

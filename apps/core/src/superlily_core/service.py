@@ -108,6 +108,14 @@ def _native_identity_time(metadata: dict[str, Any]) -> str | None:
         return normalized
 
 
+def _native_identity_scalar(native: dict[str, Any], field: str) -> str | None:
+    value = native.get(field)
+    if value is None or isinstance(value, (dict, list, tuple, set, bytes, bytearray, bool)):
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
 async def ensure_instance(
     session: AsyncSession,
     instance: Any,
@@ -194,16 +202,116 @@ async def _existing_observation(
     instance_id: str,
     idempotency_key: str,
     reported_source_event_id: str,
+    fingerprint: str | None = None,
+    payload: EventIn | None = None,
 ) -> EventObservation | None:
-    return await session.scalar(
-        select(EventObservation).where(
-            EventObservation.instance_id == instance_id,
-            or_(
-                EventObservation.idempotency_key == idempotency_key,
-                EventObservation.reported_source_event_id == reported_source_event_id,
-            ),
+    matches = (
+        await session.scalars(
+            select(EventObservation)
+            .where(
+                EventObservation.instance_id == instance_id,
+                or_(
+                    EventObservation.idempotency_key == idempotency_key,
+                    EventObservation.reported_source_event_id == reported_source_event_id,
+                ),
+            )
+            .limit(2)
         )
+    ).all()
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="event identity resolves to multiple existing observations",
+        )
+    if matches:
+        return matches[0]
+    if fingerprint is None:
+        return None
+
+    fingerprint_matches = (
+        await session.scalars(
+            select(EventObservation)
+            .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .where(
+                EventObservation.instance_id == instance_id,
+                SourceEvent.correlation_fingerprint == fingerprint,
+            )
+            .order_by(EventObservation.received_at, EventObservation.id)
+            .limit(10)
+        )
+    ).all()
+    if payload is not None:
+        incoming_time = _native_identity_time(payload.metadata)
+        incoming_message_id = payload.message.id if payload.message else None
+        fingerprint_matches = [
+            item
+            for item in fingerprint_matches
+            if item.platform_message_id == incoming_message_id
+            # A fingerprint-only same-instance lookup is an identity recovery
+            # path, not a fuzzy replay detector.  If either side lacks the
+            # platform time, the exact source/idempotency keys above remain the
+            # only safe replay identity; accepting a missing value here would
+            # let a later real_seq/message_id reuse alias an older message.
+            and incoming_time is not None
+            and _native_identity_time(item.metadata_json) == incoming_time
+        ]
+    if len(fingerprint_matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="strong event identity resolves to multiple existing observations",
+        )
+    return fingerprint_matches[0] if fingerprint_matches else None
+
+
+async def _validate_existing_observation(
+    session: AsyncSession,
+    existing: EventObservation,
+    payload: EventIn,
+    fingerprint: str | None,
+    conversation_id: str,
+) -> None:
+    """Reject identity-key reuse instead of returning another event's decision."""
+
+    source = await session.get(SourceEvent, existing.source_event_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="existing observation has no source event",
+        )
+    conflicts = (
+        source.platform != payload.instance.platform
+        or source.event_type
+        != canonical_event_type(payload.instance.platform, payload.event_type)
+        or source.conversation_type != payload.conversation.type
+        or source.conversation_id != conversation_id
+        or existing.sender_id != (payload.sender.id if payload.sender else None)
+        or existing.platform_message_id != (payload.message.id if payload.message else None)
     )
+    if (fingerprint is None) != (source.correlation_fingerprint is None) or (
+        fingerprint is not None
+        and source.correlation_fingerprint is not None
+        and source.correlation_fingerprint != fingerprint
+    ):
+        conflicts = True
+
+    existing_native = existing.metadata_json.get("native_identity")
+    incoming_native = payload.metadata.get("native_identity")
+    if isinstance(existing_native, dict) and isinstance(incoming_native, dict):
+        for field in ("real_seq", "time", "user_id", "group_id", "msg_uid", "msg_random"):
+            existing_value = _native_identity_scalar(existing_native, field)
+            incoming_value = _native_identity_scalar(incoming_native, field)
+            if (
+                existing_value is not None
+                and incoming_value is not None
+                and existing_value != incoming_value
+            ):
+                conflicts = True
+                break
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="event identity or idempotency key was reused for a different event",
+        )
 
 
 async def ensure_source_event(
@@ -215,44 +323,85 @@ async def ensure_source_event(
 ) -> tuple[SourceEvent, str]:
     compatible: list[SourceEvent] = []
     time_conflicts = 0
-    if fingerprint is not None and correlation_window_seconds > 0:
+    if fingerprint is not None:
         observed_by_same_instance = exists(
             select(EventObservation.id).where(
                 EventObservation.source_event_id == SourceEvent.id,
                 EventObservation.instance_id == payload.instance.instance_id,
             )
         )
-        window = timedelta(seconds=correlation_window_seconds)
-        candidates = (
-            await session.scalars(
-                select(SourceEvent)
-                .where(
-                    SourceEvent.correlation_fingerprint == fingerprint,
-                    SourceEvent.occurred_at >= payload.occurred_at - window,
-                    SourceEvent.occurred_at <= payload.occurred_at + window,
-                    ~observed_by_same_instance,
-                )
-                .order_by(SourceEvent.first_received_at)
-                .limit(10)
-            )
-        ).all()
         native_time = _native_identity_time(payload.metadata)
+        candidate_query = select(SourceEvent).where(
+            SourceEvent.correlation_fingerprint == fingerprint,
+            ~observed_by_same_instance,
+        )
+        # Native platform time is shared by both QQ account observations.  A
+        # normalized Nekro ChatMessage can arrive several seconds later, so a
+        # receive/normalization window must not split an otherwise identical
+        # identity when every observation carries the same platform time.  If
+        # either side lacks that time, keep the configured window: real_seq can
+        # eventually be reused and must never become an unbounded identity.
+        if native_time is None:
+            if correlation_window_seconds <= 0:
+                candidates = []
+            else:
+                window = timedelta(seconds=correlation_window_seconds)
+                candidates = (
+                    await session.scalars(
+                        candidate_query
+                        .where(
+                            SourceEvent.occurred_at >= payload.occurred_at - window,
+                            SourceEvent.occurred_at <= payload.occurred_at + window,
+                        )
+                        .order_by(SourceEvent.first_received_at)
+                        .limit(10)
+                    )
+                ).all()
+        else:
+            candidates = (
+                await session.scalars(candidate_query.order_by(SourceEvent.first_received_at))
+            ).all()
         for candidate in candidates:
             candidate_observations = (
                 await session.scalars(
                     select(EventObservation).where(EventObservation.source_event_id == candidate.id)
                 )
             ).all()
-            candidate_times = {
+            candidate_time_values = [
                 value
                 for item in candidate_observations
                 if (value := _native_identity_time(item.metadata_json)) is not None
-            }
-            if len(candidate_times) > 1 or (
-                native_time is not None and candidate_times and candidate_times != {native_time}
-            ):
+            ]
+            candidate_times = set(candidate_time_values)
+            complete_candidate_time = bool(candidate_observations) and len(
+                candidate_time_values
+            ) == len(candidate_observations)
+            if len(candidate_times) > 1:
                 time_conflicts += 1
                 continue
+            if native_time is not None and candidate_times and candidate_times != {native_time}:
+                time_conflicts += 1
+                continue
+            if native_time is not None and complete_candidate_time:
+                # All candidate observations carry the same time and the
+                # mismatch case was rejected above, so the identity is safe
+                # outside the receive/normalization window.
+                assert candidate_times == {native_time}
+            else:
+                if correlation_window_seconds <= 0:
+                    time_conflicts += 1
+                    continue
+                candidate_occurred_at = candidate.occurred_at
+                incoming_occurred_at = payload.occurred_at
+                if candidate_occurred_at.tzinfo is None:
+                    candidate_occurred_at = candidate_occurred_at.replace(tzinfo=timezone.utc)
+                if incoming_occurred_at.tzinfo is None:
+                    incoming_occurred_at = incoming_occurred_at.replace(tzinfo=timezone.utc)
+                if abs((candidate_occurred_at - incoming_occurred_at).total_seconds()) > (
+                    correlation_window_seconds
+                ):
+                    time_conflicts += 1
+                    continue
             compatible.append(candidate)
         if len(compatible) == 1:
             return compatible[0], "merged_strong_identity"
@@ -413,6 +562,40 @@ def _segment_target_id(segment: dict[str, Any]) -> str | None:
     return str(value) if value is not None else None
 
 
+def _command_eligible(observation: EventObservation) -> bool:
+    """Mirror the OneBot command rule's leading-segment eligibility.
+
+    NoneBot removes a leading reply and its own at-mention before command
+    matching.  It does not turn an at to somebody else, an image, or another
+    non-text segment into a command.  Core stores concatenated text for search,
+    so it must retain this structural gate separately.
+    """
+
+    segments = observation.segments_json
+    if not segments:
+        return True
+    for segment in segments:
+        segment_type = str(segment.get("type") or "")
+        if segment_type == "reply":
+            continue
+        if segment_type == "text":
+            data = segment.get("data")
+            value = data.get("text") if isinstance(data, dict) else None
+            if value is None or not str(value).strip():
+                continue
+            return True
+        if segment_type == "at":
+            target = _segment_target_id(segment)
+            to_observing_bot = target == str(observation.bot_id) and bool(
+                observation.metadata_json.get("to_me")
+                or observation.metadata_json.get("is_tome")
+            )
+            if to_observing_bot:
+                continue
+        return False
+    return bool(observation.text)
+
+
 async def _reply_context(
     session: AsyncSession,
     source: SourceEvent,
@@ -464,7 +647,7 @@ async def _reply_context(
         if item.target_platform_message_id and link_instance_by_observation.get(item.from_observation_id)
     }
     target_message_ids = {message_id for _, message_id in target_message_keys}
-    if target_message_ids:
+    if target_message_ids and not has_ambiguous:
         responses = (
             await session.scalars(
                 select(ResponseRecord).where(
@@ -472,11 +655,14 @@ async def _reply_context(
                     ResponseRecord.conversation_type == source.conversation_type,
                     ResponseRecord.platform_message_id.in_(target_message_ids),
                     ResponseRecord.success.is_(True),
+                    ResponseRecord.occurred_at <= source.occurred_at,
                 )
             )
         ).all()
+        matching_responses: dict[tuple[str, str], list[ResponseRecord]] = {}
         for response in responses:
-            if (response.instance_id, response.platform_message_id) not in target_message_keys:
+            key = (response.instance_id, response.platform_message_id)
+            if key not in target_message_keys:
                 continue
             response_conversation_id = canonical_conversation_id(
                 response.platform,
@@ -485,10 +671,23 @@ async def _reply_context(
             )
             if response_conversation_id != source.conversation_id:
                 continue
+            matching_responses.setdefault(key, []).append(response)
+        for key, candidates in matching_responses.items():
+            # NapCat's short message_id is collision-prone.  A fallback is
+            # authoritative only when exactly one successful, causal response
+            # has this account-local identity.
+            if len(candidates) != 1:
+                has_ambiguous = True
+                continue
+            response = candidates[0]
             target_instances.add(response.instance_id)
             target_sender_ids.add(response.bot_id)
 
+    if has_ambiguous:
+        return _ReplyContext(True, None, "ambiguous", frozenset(target_sender_ids))
     if len(target_instances) > 1:
+        return _ReplyContext(True, None, "conflict", frozenset(target_sender_ids))
+    if target_instances and resolved_other:
         return _ReplyContext(True, None, "conflict", frozenset(target_sender_ids))
     if target_instances:
         return _ReplyContext(
@@ -497,8 +696,6 @@ async def _reply_context(
             "resolved_bot",
             frozenset(target_sender_ids),
         )
-    if has_ambiguous:
-        return _ReplyContext(True, None, "ambiguous", frozenset(target_sender_ids))
     if resolved_other or any(item.resolver_status == "resolved" for item in links):
         return _ReplyContext(True, None, "resolved_other", frozenset(target_sender_ids))
     return _ReplyContext(True, None, "unresolved", frozenset(target_sender_ids))
@@ -664,6 +861,8 @@ async def _recompute_event_decision_unlocked(
             source.conversation_type,
             source.conversation_id,
         ),
+        command_eligible=_command_eligible(preferred),
+        observing_instance_id=preferred.instance_id,
     )
     features = {
         **decision.features,
@@ -711,11 +910,13 @@ async def _recompute_decisions_for_response(
         await session.scalars(
             select(EventLink)
             .join(EventObservation, EventObservation.id == EventLink.from_observation_id)
+            .join(SourceEvent, SourceEvent.id == EventLink.from_source_event_id)
             .where(
                 EventLink.relation_type == "reply_to",
                 EventLink.target_platform_message_id == response.platform_message_id,
                 EventLink.target_conversation_type == response.conversation_type,
                 EventObservation.instance_id == response.instance_id,
+                response.occurred_at <= SourceEvent.occurred_at,
             )
         )
     ).all()
@@ -899,29 +1100,39 @@ async def ingest_event(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventObservation, bool]:
-    existing = await _existing_observation(
-        session,
-        payload.instance.instance_id,
-        idempotency_key,
-        payload.source_event_id,
-    )
-    if existing:
-        return existing, True
-
     fingerprint = event_correlation_fingerprint(payload)
     conversation_id = canonical_conversation_id(
         payload.instance.platform,
         payload.conversation.type,
         payload.conversation.id,
     )
+    existing = await _existing_observation(
+        session,
+        payload.instance.instance_id,
+        idempotency_key,
+        payload.source_event_id,
+        fingerprint,
+        payload,
+    )
+    if existing:
+        await _validate_existing_observation(
+            session, existing, payload, fingerprint, conversation_id
+        )
+        return existing, True
+
     async with _correlation_guard(session, fingerprint):
         existing = await _existing_observation(
             session,
             payload.instance.instance_id,
             idempotency_key,
             payload.source_event_id,
+            fingerprint,
+            payload,
         )
         if existing:
+            await _validate_existing_observation(
+                session, existing, payload, fingerprint, conversation_id
+            )
             return existing, True
 
         instance = await ensure_instance(session, payload.instance, settings)
@@ -966,6 +1177,19 @@ async def ingest_event(
                 .where(
                     ResponseRecord.instance_id == record.instance_id,
                     ResponseRecord.trigger_source_event_id == payload.source_event_id,
+                    ResponseRecord.platform == payload.instance.platform,
+                    ResponseRecord.conversation_type == payload.conversation.type,
+                    ResponseRecord.conversation_id.in_(
+                        {
+                            payload.conversation.id,
+                            conversation_id,
+                            (
+                                f"{payload.conversation.type}_{conversation_id}"
+                                if payload.instance.platform == "qq"
+                                else conversation_id
+                            ),
+                        }
+                    ),
                 )
                 .values(trigger_source_event_id=source.id)
             )
@@ -981,8 +1205,13 @@ async def ingest_event(
                 payload.instance.instance_id,
                 idempotency_key,
                 payload.source_event_id,
+                fingerprint,
+                payload,
             )
             if duplicate:
+                await _validate_existing_observation(
+                    session, duplicate, payload, fingerprint, conversation_id
+                )
                 return duplicate, True
             raise
     await session.refresh(record)
@@ -1004,22 +1233,91 @@ async def ingest_response(
     if existing:
         return existing, True
 
-    if payload.trigger_observation_id and not await session.get(EventObservation, payload.trigger_observation_id):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="trigger_observation_id does not exist",
-        )
+    trigger_observation: EventObservation | None = None
+    trigger_source: SourceEvent | None = None
+    trigger_resolution_status = "none"
+    if payload.trigger_observation_id:
+        trigger_observation = await session.get(EventObservation, payload.trigger_observation_id)
+        if trigger_observation is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="trigger_observation_id does not exist",
+            )
+        if trigger_observation.instance_id != payload.instance.instance_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="trigger_observation_id belongs to another instance",
+            )
+        trigger_source = await session.get(SourceEvent, trigger_observation.source_event_id)
+        trigger_resolution_status = "observation"
+
     instance = await ensure_instance(session, payload.instance, settings)
     trigger_source_event_id = payload.trigger_source_event_id
     if trigger_source_event_id:
-        trigger_observation = await session.scalar(
-            select(EventObservation).where(
+        reported_candidates = (
+            await session.scalars(
+                select(EventObservation).where(
                 EventObservation.instance_id == payload.instance.instance_id,
                 EventObservation.reported_source_event_id == trigger_source_event_id,
+                ).limit(2)
             )
+        ).all()
+        if len(reported_candidates) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="trigger_source_event_id is ambiguous for this instance",
+            )
+        reported_observation = reported_candidates[0] if reported_candidates else None
+        reported_source = (
+            await session.get(SourceEvent, reported_observation.source_event_id)
+            if reported_observation is not None
+            else await session.get(SourceEvent, trigger_source_event_id)
         )
-        if trigger_observation is not None:
-            trigger_source_event_id = trigger_observation.source_event_id
+        if reported_source is not None:
+            if reported_observation is None:
+                has_instance_observation = await session.scalar(
+                    select(EventObservation.id).where(
+                        EventObservation.source_event_id == reported_source.id,
+                        EventObservation.instance_id == payload.instance.instance_id,
+                    )
+                )
+                if has_instance_observation is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="trigger source was not observed by the response instance",
+                    )
+            if trigger_source is not None and trigger_source.id != reported_source.id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="trigger observation and source identify different events",
+                )
+            trigger_source = reported_source
+            trigger_source_event_id = reported_source.id
+            trigger_resolution_status = (
+                "reported_source" if reported_observation is not None else "canonical_source"
+            )
+        else:
+            trigger_resolution_status = "unresolved"
+
+    if trigger_source is not None:
+        response_conversation_id = canonical_conversation_id(
+            payload.instance.platform,
+            payload.conversation.type,
+            payload.conversation.id,
+        )
+        if (
+            trigger_source.platform != payload.instance.platform
+            or trigger_source.conversation_type != payload.conversation.type
+            or trigger_source.conversation_id != response_conversation_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="response and trigger source belong to different conversations",
+            )
+        trigger_source_event_id = trigger_source.id
+
+    response_metadata = sanitize_payload(payload.metadata, _metadata_policy(settings)) or {}
+    response_metadata["trigger_resolution_status"] = trigger_resolution_status
     record = ResponseRecord(
         source_response_id=payload.source_response_id,
         instance_id=instance.id,
@@ -1042,7 +1340,7 @@ async def ingest_response(
         error=payload.error,
         latency_ms=payload.latency_ms,
         raw_json=sanitize_payload(payload.raw, _raw_policy(settings)),
-        metadata_json=sanitize_payload(payload.metadata, _metadata_policy(settings)) or {},
+        metadata_json=response_metadata,
         occurred_at=payload.occurred_at,
     )
     session.add(record)
@@ -1248,9 +1546,40 @@ def claim_record_payload(record: EventClaim) -> dict[str, Any]:
         "reason": record.reason,
         "ready": record.ready,
         "enforced": record.enforced,
+        "acknowledged_at": record.acknowledged_at,
         "features": record.features_json,
         "created_at": record.created_at,
     }
+
+
+async def acknowledge_event_claim(
+    session: AsyncSession,
+    claim_id: str,
+    authenticated_instance: str,
+) -> tuple[EventClaim, bool]:
+    record = await session.scalar(
+        select(EventClaim).where(EventClaim.id == claim_id).with_for_update()
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="claim_id not found")
+    if record.instance_id != authenticated_instance:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="token is not authorized for claim instance",
+        )
+    if record.action != "deny" or not record.enforced:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="only an enforced deny claim can acknowledge suppression",
+        )
+    if record.acknowledged_at is not None:
+        await session.commit()
+        return record, True
+
+    record.acknowledged_at = utc_now()
+    await session.commit()
+    await session.refresh(record)
+    return record, False
 
 
 async def evaluate_event_claim(
@@ -1259,6 +1588,9 @@ async def evaluate_event_claim(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventClaim, bool]:
+    observation, _ = await ingest_event(session, payload, idempotency_key, settings)
+    source = await session.get(SourceEvent, observation.source_event_id)
+    assert source is not None
     existing = await session.scalar(
         select(EventClaim).where(
             EventClaim.instance_id == payload.instance.instance_id,
@@ -1266,11 +1598,12 @@ async def evaluate_event_claim(
         )
     )
     if existing is not None:
+        if existing.source_event_id != source.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="claim idempotency key was reused for a different event",
+            )
         return existing, True
-
-    observation, _ = await ingest_event(session, payload, idempotency_key, settings)
-    source = await session.get(SourceEvent, observation.source_event_id)
-    assert source is not None
 
     observation_count = await _coalesce_claim_observations(
         session,
@@ -1323,7 +1656,52 @@ async def evaluate_event_claim(
     coordination: dict[str, Any] = {
         "observed_peer_instance_ids": [],
         "enforced_deny_instance_ids": [],
+        "acknowledged_deny_instance_ids": [],
     }
+
+    # Give concurrently evaluating non-target peers a bounded chance to
+    # install and acknowledge suppression before the target takes the claim
+    # lock.  Safety does not depend on this wait: a timeout still becomes an
+    # abstain.  It only makes the healthy-path canary consistently observable.
+    if (
+        enforced
+        and action == "allow"
+        and settings.claim_coalesce_milliseconds > 0
+    ):
+        deadline = (
+            asyncio.get_running_loop().time()
+            + min(settings.claim_coalesce_milliseconds, 500) / 1000
+        )
+        while asyncio.get_running_loop().time() < deadline:
+            observed_peers = set(
+                (
+                    await session.scalars(
+                        select(EventObservation.instance_id)
+                        .where(
+                            EventObservation.source_event_id == source.id,
+                            EventObservation.instance_id != payload.instance.instance_id,
+                        )
+                        .distinct()
+                    )
+                ).all()
+            )
+            acknowledged_peers = set(
+                (
+                    await session.scalars(
+                        select(EventClaim.instance_id).where(
+                            EventClaim.source_event_id == source.id,
+                            EventClaim.instance_id.in_(observed_peers),
+                            EventClaim.action == "deny",
+                            EventClaim.enforced.is_(True),
+                            EventClaim.acknowledged_at.is_not(None),
+                        )
+                    )
+                ).all()
+            )
+            if observed_peers and acknowledged_peers == observed_peers:
+                break
+            await session.commit()
+            await asyncio.sleep(0.02)
 
     async with _correlation_guard(session, lock_fingerprint):
         existing = await session.scalar(
@@ -1336,11 +1714,10 @@ async def evaluate_event_claim(
             await session.commit()
             return existing, True
 
-        # An allow is only an exclusive owner after every other instance that
-        # observed this canonical event has already received an enforced deny.
-        # Without this handshake, a late second observation could grant allow
-        # after the first bridge had timed out, failed open, and continued its
-        # legacy matcher path.  Deny may stand alone safely; allow may not.
+        # An allow is only an exclusive owner after every other observing
+        # instance has acknowledged that it installed an enforced denial.
+        # A committed deny alone is insufficient: the HTTP response carrying
+        # it may have been lost while that bridge failed open.
         if enforced and action == "allow":
             observed_peer_instance_ids = set(
                 (
@@ -1366,13 +1743,30 @@ async def evaluate_event_claim(
                     )
                 ).all()
             )
+            acknowledged_deny_instance_ids = set(
+                (
+                    await session.scalars(
+                        select(EventClaim.instance_id).where(
+                            EventClaim.source_event_id == source.id,
+                            EventClaim.instance_id.in_(observed_peer_instance_ids),
+                            EventClaim.action == "deny",
+                            EventClaim.enforced.is_(True),
+                            EventClaim.acknowledged_at.is_not(None),
+                        )
+                    )
+                ).all()
+            )
             coordination = {
                 "observed_peer_instance_ids": sorted(observed_peer_instance_ids),
                 "enforced_deny_instance_ids": sorted(enforced_deny_instance_ids),
+                "acknowledged_deny_instance_ids": sorted(acknowledged_deny_instance_ids),
             }
-            if not observed_peer_instance_ids or enforced_deny_instance_ids != observed_peer_instance_ids:
+            if (
+                not observed_peer_instance_ids
+                or acknowledged_deny_instance_ids != observed_peer_instance_ids
+            ):
                 action = "abstain"
-                reason = "claim_peers_not_denied"
+                reason = "claim_peer_suppressions_not_acknowledged"
                 ready = False
                 enforced = False
 

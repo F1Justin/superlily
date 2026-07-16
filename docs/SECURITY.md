@@ -20,7 +20,9 @@ OneBot/database/admin/ingest credentials.
 
 - Raw protocol payloads are disabled by default.
 - If temporarily enabled, sensitive keys are recursively redacted, URL/URI
-  userinfo, queries, and fragments are removed for every scheme,
+  userinfo, queries, and fragments are removed for every scheme, including
+  custom-scheme scalar values and fields ending in `href`, `src`, `file`, or
+  `platform_id`,
   strings/collections are bounded, and oversize objects are discarded without
   a preview.
 - Attachment bytes and remote URLs are never copied in phase one; only metadata
@@ -47,11 +49,40 @@ OneBot/database/admin/ingest credentials.
   no wildcard interpretation.
 - Core errors and timeouts are fail-open. A deny is enforced only when every
   readiness gate passes.
+- A committed deny is not proof that the remote bridge received it. A bridge
+  may acknowledge an enforced deny only after installing authoritative
+  suppression; an exclusive allow requires prior acknowledgement from every
+  observed peer. Missing acknowledgement forces abstention. Lily currently
+  meets this with an event-scoped send guard. Nekro deliberately withholds ACK
+  because its public `BLOCK_TRIGGER` is not confirmed until after aggregate
+  plugin signal handling.
 - The current canary never enforces `observe_only`, so an unknown passive
   matcher cannot cause a message to disappear.
 - Lily suppresses send APIs but still runs chat recording and other observers.
-  Nekro uses its public history-preserving `BLOCK_TRIGGER` signal.
+  Nekro uses its public history-preserving `BLOCK_TRIGGER` signal; an outbound
+  guard or upstream post-aggregation hook remains a Phase 2 exit requirement.
 - Claim attempts and suppressed/failed responses remain auditable.
+- Platform send timeouts are ambiguous completion, not confirmed non-delivery.
+  They are never retried automatically without a platform idempotency/recovery
+  contract.
+
+## Phase 3 and control-plane boundary
+
+- Git-reviewed descriptor bundles are the authority source. Runtime inventory
+  and provider health cannot grant permissions or activate tools.
+- Provider credentials are separate from bot-ingest and administrator
+  credentials. A provider can report/lease only its reviewed identity and
+  never receives a bot token or Core administrator token.
+- Tool execution defaults to `off`. `ledger_only`, exact canary, and enforced
+  modes are distinct; global stop, per-tool suspension, and provider quarantine
+  are independent controls.
+- Filesystem, process, network, secret, sandbox, artifact, and remote-fetch
+  permissions are machine-readable descriptor/provider policy. A caller cannot
+  escalate them through tool arguments.
+- The future control panel uses server-side short sessions, CSRF protection,
+  reauthentication for dangerous changes, optimistic version checks,
+  idempotency keys, and append-only audit. Bearer tokens are never stored in
+  browser local storage. See `CONTROL_PLANE.md`.
 
 Recommended starting retention:
 

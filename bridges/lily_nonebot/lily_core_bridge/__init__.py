@@ -28,7 +28,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.2.0"
+BRIDGE_VERSION = "0.3.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -130,7 +130,6 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, 
         "metadata": metadata,
     }
     idempotency_key = stable_key(plugin_config.lily_core_instance_id, event_id)
-    reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
     return payload, idempotency_key
 
 
@@ -140,10 +139,15 @@ async def observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
     observed: tuple[dict[str, Any], str] | None = None
     try:
         observed = await _observe_event(bot, event)
-        if observed is not None and plugin_config.lily_core_claim_enabled:
+        if observed is not None:
             payload, idempotency_key = observed
-            if payload["event_type"].split(".", 1)[0] == "message":
+            claimable = payload["event_type"].split(".", 1)[0] == "message"
+            if plugin_config.lily_core_claim_enabled and claimable:
                 claim = await reporter.request_claim(payload, idempotency_key)
+                if claim is None:
+                    reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
+            else:
+                reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
     except Exception:
         logger.opt(exception=True).warning("Lily Core event observation failed open")
     if observed is None:
@@ -155,11 +159,15 @@ async def observe_event(bot: OneBotBot, event: OneBotEvent) -> None:
         "source_event_id": payload["source_event_id"],
         "claim_denied": denied,
         "claim_reason": reason,
+        "claim_acknowledged": False,
     }
     if denied:
+        claim_id = str(claim.get("claim_id") or "") if claim else ""
+        acknowledged = await reporter.acknowledge_claim(claim_id)
+        event_contexts[id(event)]["claim_acknowledged"] = acknowledged
         logger.info(
             f"Lily Core will suppress sends for event {claim.get('source_event_id')} "
-            f"({claim.get('reason')})"
+            f"({claim.get('reason')}; acknowledged={acknowledged})"
         )
 
 
@@ -215,6 +223,16 @@ async def observe_api_result(
         break
     conversation = conversation_from_api(data)
     event_context = _active_event_context()
+    error_text = str(exception).lower() if exception is not None else ""
+    completion_status = (
+        "suppressed"
+        if blocked
+        else "succeeded"
+        if exception is None
+        else "ambiguous"
+        if "timeout" in error_text or "timed out" in error_text
+        else "failed"
+    )
     payload = {
         "schema_version": "1.0",
         "source_response_id": source_response,
@@ -235,6 +253,13 @@ async def observe_api_result(
         "metadata": {
             "claim_send_suppressed": blocked,
             "claim_reason": event_context.get("claim_reason") if blocked else None,
+            "claim_acknowledged": (
+                event_context.get("claim_acknowledged") if blocked else None
+            ),
+            "trigger_attribution": (
+                "event_context" if event_context.get("source_event_id") else None
+            ),
+            "completion_status": completion_status,
         },
     }
     reporter.enqueue(
@@ -264,6 +289,7 @@ async def heartbeat_loop() -> None:
                 "dropped": reporter.dropped,
                 "claim_enabled": plugin_config.lily_core_claim_enabled,
                 "claim_failures": reporter.claim_failures,
+                "claim_ack_failures": reporter.claim_ack_failures,
                 "bridge_version": BRIDGE_VERSION,
             },
         }
