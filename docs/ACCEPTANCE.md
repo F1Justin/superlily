@@ -135,11 +135,11 @@ response gap.
   canaried.
 - [ ] Policy v5 enforced allow requires an acknowledged installed suppression
   from every other observed instance; a committed deny whose HTTP response was
-  lost cannot create a fictitious exclusive owner. Lily denial can satisfy
-  this gate. Nekro intentionally withholds ACK because its public plugin API
-  has no post-signal-aggregation hook and `FORCE_TRIGGER` can override
-  `BLOCK_TRIGGER`; Lily-target claims therefore conservatively abstain pending
-  an outbound suppression guard/upstream lifecycle hook.
+  lost cannot create a fictitious exclusive owner. Lily uses an event-scoped
+  send guard. Nekro combines `BLOCK_TRIGGER` with an exact-source OneBot guard
+  covering active-event and task-attributed sends, records prior same-event
+  send attempts, and ACKs only after authoritative installation. This remains
+  unchecked until deployment and controlled fault injection.
 - [x] Decision recomputation is serialized per canonical source across event,
   response, resolver, and claim paths.
 - [x] Only actionable `command`/`talk` decisions can allow or deny;
@@ -153,8 +153,8 @@ response gap.
 - [x] One exact QQ test conversation runs in canary mode; all other
   conversations remain unchanged.
 - [x] Lily deny suppresses sends without disabling chat recording. Nekro deny
-  preserves history with `BLOCK_TRIGGER` but is not yet acknowledged as an
-  authoritative installed suppression.
+  preserves history with `BLOCK_TRIGGER`; the policy-v5 bridge also guards
+  attributable `send_*` APIs if another plugin overrides that signal.
 - [x] A Core outage/timeout leaves both bots on their existing behavior.
 - [ ] `qq:source:v2` bridge identity, Core conflict rejection, strong
   fingerprint de-splitting, structural `command_eligible`, private-recipient
@@ -421,8 +421,9 @@ authoritative Phase 2 evidence. The previous aggregate audit did not detect:
   message while the first scheduler task was still running;
 - a Core-committed deny whose HTTP response could be lost before the bridge
   installed suppression; and
-- a Nekro `BLOCK_TRIGGER` that cannot be acknowledged as authoritative before
-  the SDK completes aggregate plugin signal handling; and
+- a Nekro `BLOCK_TRIGGER` that could not be acknowledged as authoritative
+  before aggregate plugin signal handling, now addressed by an exact-source
+  active-event/task outbound guard with prior-send detection; and
 - OneBot send timeouts recorded as confirmed failures even when peer evidence
   showed the message may already have been delivered.
 

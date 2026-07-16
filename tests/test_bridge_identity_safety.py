@@ -16,30 +16,44 @@ def _load_payloads(name: str, relative_path: str):
     return module
 
 
-def test_nekro_does_not_ack_before_plugin_signal_aggregation() -> None:
+def test_nekro_ack_follows_authoritative_outbound_guard_install() -> None:
     bridge_path = ROOT / "bridges" / "nekro" / "superlily_bridge" / "__init__.py"
-    module = ast.parse(bridge_path.read_text(encoding="utf-8"))
+    source = bridge_path.read_text(encoding="utf-8")
+    module = ast.parse(source)
     handler = next(
         node
         for node in module.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "observe_user_message"
     )
-    called_attributes = {
-        node.func.attr
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    }
+    handler_source = ast.get_source_segment(source, handler)
+    assert handler_source is not None
     returned_attributes = {
         node.value.attr
         for node in ast.walk(handler)
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Attribute)
     }
+    send_guard = next(
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "suppress_denied_send"
+    )
+    send_guard_source = ast.get_source_segment(source, send_guard)
+    installer = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_install_claim_suppression"
+    )
+    installer_source = ast.get_source_segment(source, installer)
 
-    # Nekro only aggregates plugin signals after this hook returns, and a
-    # later FORCE_TRIGGER may override BLOCK_TRIGGER.  Claim ACK here would
-    # falsely certify that suppression is already installed.
-    assert "acknowledge_claim" not in called_attributes
+    assert handler_source.index("_install_claim_suppression") < handler_source.index(
+        "acknowledge_claim"
+    )
+    assert "if authoritative and suppression is not None" in handler_source
     assert "BLOCK_TRIGGER" in returned_attributes
+    assert send_guard_source is not None and "MockApiException" in send_guard_source
+    assert "_match_claim_suppression" in send_guard_source
+    assert installer_source is not None and "prior_send_seen" in installer_source
+    assert "return suppression, not prior_send_seen" in installer_source
 
 
 @pytest.fixture(params=["lily", "nekro"])

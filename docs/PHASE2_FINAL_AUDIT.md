@@ -116,13 +116,12 @@ must return zero rows.
   `claim_peer_suppressions_not_acknowledged`/another fail-open abstention rather
   than a fictitious exclusive owner.
 - Lily denial installs an event-scoped outbound guard and may acknowledge it.
-  Nekro denial returns `BLOCK_TRIGGER` but deliberately withholds ACK because
-  its public hook offers no post-aggregation confirmation and a later
-  `FORCE_TRIGGER` can override the signal. Until that lifecycle gap is closed,
-  a controlled Lily-command sample must show Lily `abstain`, Nekro enforced
-  unacknowledged deny, one Lily response, and no Nekro response. A controlled
-  Nekro-talk sample must show Lily acknowledged deny, Nekro enforced allow, one
-  Nekro response, and no Lily response.
+  Nekro denial returns `BLOCK_TRIGGER` and installs an exact-source OneBot
+  outbound guard covering active-event and task-attributed sends. It records
+  prior same-event send attempts and may acknowledge only when the event
+  matches, no prior output exists, and the guard is installed. The controlled
+  command and talk samples must each show one acknowledged peer deny, one
+  enforced target allow, one target response, and no non-target response.
 - `/v1/decisions/outcomes` is reviewed with a grace period; every `missed`,
   `wrong_instance`, `matched_with_extra`,
   `duplicate_successful_target_response`, `unexpected_response`, confirmed
@@ -190,17 +189,16 @@ After all violation sets are empty and every exceptional row is explained:
    Lily, reply to Nekro with and without QQ's automatic `at`, reply to another
    user with and without an explicit summon, leading other-user `at`, leading
    image/non-text, private recipient routing, two close messages in one Nekro
-   chat task sequence, Lily claim acknowledgement, withheld Nekro
-   acknowledgement, simulated lost deny response,
+   chat task sequence, Lily and Nekro claim acknowledgement, Nekro
+   `FORCE_TRIGGER`/outbound-guard suppression, prior-send safe abstention,
+   simulated lost deny response,
    Core timeout, and ambiguous send timeout;
 3. run an uninterrupted new period of at least 24 hours and execute the SQL
    with its exact explicit start/end timestamps;
 4. rerun all tests on SQLite and PostgreSQL 17.10;
 5. rerun the fresh PostgreSQL `base -> head -> base -> head` migration chain;
 6. verify production head/drift and the pre-migration backup listing;
-7. add an authoritative Nekro outbound suppression guard or upstream
-   post-aggregation hook, then update every remaining Phase 2 checkbox and the
-   review conclusion;
+7. update every remaining Phase 2 checkbox and the review conclusion;
 8. run `compileall`, `pip check`, `git diff --check`, and secret-path review;
 9. commit the complete Phase 2 implementation and documentation;
 10. only after the operator signs this evidence may Phase 3a contract/hash work

@@ -32,11 +32,12 @@ controlled matrix in `PHASE2_FINAL_AUDIT.md` must pass in test group
 `708309706`; only then does a new, explicitly timestamped 24-hour window start.
 There is currently no authoritative replacement window and Phase 3 has not
 started. `ACCEPTANCE.md` must contain the signed clean audit before any Phase 3
-code or production authority begins. The current Nekro public hook cannot
-prove that its `BLOCK_TRIGGER` survived aggregate plugin signal handling, so it
-withholds claim ACK and Lily-target claims safely abstain. Closing that gap
-with an authoritative outbound guard or upstream post-aggregation callback is
-a Phase 2 exit condition, not Phase 3 work.
+code or production authority begins. Because Nekro's public hook cannot prove
+that `BLOCK_TRIGGER` survived aggregate plugin signal handling, policy v5 adds
+an exact-source OneBot outbound guard covering both active-event and
+task-attributed sends. It tracks prior same-event send attempts and permits ACK
+only after authoritative guard installation. Deployment and controlled
+fault-injection evidence for that guard remain Phase 2 exit conditions.
 
 ## Sequencing rules
 

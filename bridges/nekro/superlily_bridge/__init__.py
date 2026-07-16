@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from functools import wraps
@@ -11,7 +12,9 @@ import nonebot.message as nonebot_message
 from nonebot import get_bots
 from nonebot.adapters.onebot.v11 import Bot as OneBotBot
 from nonebot.adapters.onebot.v11 import Event as OneBotEvent
-from nonebot.message import event_preprocessor
+from nonebot.exception import MockApiException
+from nonebot.matcher import current_event
+from nonebot.message import event_postprocessor, event_preprocessor
 from pydantic import Field
 
 from nekro_agent.api.core import logger
@@ -21,7 +24,9 @@ from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
 from .identity import (
+    ClaimSuppression,
     NativeIdentityCache,
+    OutboundSuppressionTracker,
     ResponseTriggerTracker,
     claim_decision_targets_instance,
     conversation,
@@ -72,6 +77,12 @@ reporter = BackgroundReporter(
 )
 heartbeat_task: asyncio.Task | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
+_SUPPRESSION_TRACKER_ATTR = "_superlily_outbound_suppression_tracker_v1"
+_EVENT_SUPPRESSIONS_ATTR = "_superlily_event_suppressions_v1"
+_EVENT_SEND_ATTEMPTS_ATTR = "_superlily_event_send_attempts_v1"
+_ACTIVE_CLAIM_EVENTS_ATTR = "_superlily_active_claim_events_v1"
+api_started: dict[int, float] = {}
+blocked_api_calls: dict[int, ClaimSuppression] = {}
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -114,6 +125,38 @@ def _trigger_tracker() -> ResponseTriggerTracker:
     return tracker
 
 
+def _suppression_tracker() -> OutboundSuppressionTracker:
+    tracker = getattr(nonebot_message, _SUPPRESSION_TRACKER_ATTR, None)
+    if tracker is None:
+        tracker = OutboundSuppressionTracker()
+        setattr(nonebot_message, _SUPPRESSION_TRACKER_ATTR, tracker)
+    return tracker
+
+
+def _event_suppressions() -> dict[int, str]:
+    active = getattr(nonebot_message, _EVENT_SUPPRESSIONS_ATTR, None)
+    if active is None:
+        active = {}
+        setattr(nonebot_message, _EVENT_SUPPRESSIONS_ATTR, active)
+    return active
+
+
+def _event_send_attempts() -> dict[int, set[tuple[str, str]]]:
+    attempts = getattr(nonebot_message, _EVENT_SEND_ATTEMPTS_ATTR, None)
+    if attempts is None:
+        attempts = {}
+        setattr(nonebot_message, _EVENT_SEND_ATTEMPTS_ATTR, attempts)
+    return attempts
+
+
+def _active_claim_events() -> set[int]:
+    active = getattr(nonebot_message, _ACTIVE_CLAIM_EVENTS_ATTR, None)
+    if active is None:
+        active = set()
+        setattr(nonebot_message, _ACTIVE_CLAIM_EVENTS_ATTR, active)
+    return active
+
+
 def _chat_key(conv: dict[str, Any]) -> str:
     return f"onebot_v11-{conv['type']}_{conv['id']}"
 
@@ -136,10 +179,6 @@ def _remember_trigger(conv: dict[str, Any], source_id: str, should_remember: boo
 
 def _current_task_trigger(conv: dict[str, Any]) -> str | None:
     return _trigger_tracker().source_for_response(conv, _task_token(conv))
-
-
-def _forget_trigger(conv: dict[str, Any], source_id: str) -> None:
-    _trigger_tracker().forget(conv, source_id)
 
 
 async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], str]:
@@ -206,18 +245,25 @@ async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
             if claim_decision_targets_instance(claim, config.INSTANCE_ID):
                 _remember_trigger(payload["conversation"], payload["source_event_id"], True)
             if claim and claim.get("enforced") is True and claim.get("action") == "deny":
-                _forget_trigger(payload["conversation"], payload["source_event_id"])
+                # Preserve the source in the task tracker: if another plugin's
+                # FORCE_TRIGGER overrides BLOCK_TRIGGER, any later agent send
+                # is still attributable to this denied message and the API
+                # guard below suppresses it.
+                _remember_trigger(payload["conversation"], payload["source_event_id"], True)
+                suppression, authoritative = _install_claim_suppression(payload, claim)
+                acknowledged = False
+                if authoritative and suppression is not None:
+                    acknowledged = await reporter.acknowledge_claim(suppression.claim_id)
+                    _suppression_tracker().set_acknowledged(
+                        payload["conversation"],
+                        payload["source_event_id"],
+                        acknowledged,
+                    )
                 logger.info(
                     f"Lily Core claim denied event {claim.get('source_event_id')} "
-                    f"({claim.get('reason')}; suppression acknowledgement withheld)"
+                    f"({claim.get('reason')}; guard={authoritative}; "
+                    f"acknowledged={acknowledged})"
                 )
-                # Nekro's public hook API aggregates every plugin signal only
-                # after this coroutine returns.  A later FORCE_TRIGGER can
-                # override our BLOCK_TRIGGER and there is no post-aggregation
-                # callback.  Therefore this bridge must not acknowledge an
-                # installed suppression here: doing so could grant the target
-                # an exclusive allow before Nekro has actually consumed the
-                # block.  The target safely abstains and keeps its legacy path.
                 return MsgSignal.BLOCK_TRIGGER
         else:
             reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
@@ -252,6 +298,70 @@ def _onebot_conversation(raw: dict[str, Any]) -> dict[str, str]:
     return {"id": str(raw.get("user_id") or raw.get("target_id") or "unknown"), "type": "private"}
 
 
+def _api_conversation(data: dict[str, Any]) -> dict[str, str]:
+    if data.get("group_id") is not None:
+        return {"id": str(data["group_id"]), "type": "group"}
+    return {
+        "id": str(data.get("user_id") or data.get("target_id") or "unknown"),
+        "type": "private",
+    }
+
+
+def _install_claim_suppression(
+    payload: dict[str, Any],
+    claim: dict[str, Any],
+) -> tuple[ClaimSuppression | None, bool]:
+    """Install exact event/task send guards before a deny can be ACKed."""
+
+    conv = payload["conversation"]
+    source_event_id = str(payload.get("source_event_id") or "")
+    claim_id = str(claim.get("claim_id") or "")
+    if not source_event_id or not claim_id:
+        return None, False
+    suppression = _suppression_tracker().install(
+        conv,
+        source_event_id,
+        claim_id,
+        str(claim.get("reason") or "assigned_to_another_instance"),
+    )
+
+    event = current_event.get(None)
+    if event is None or id(event) not in _active_claim_events():
+        return suppression, False
+    raw = _event_dict(event)
+    if raw.get("post_type") != "message":
+        return suppression, False
+    event_conv = _onebot_conversation(raw)
+    if (
+        event_conv["type"] != str(conv.get("type"))
+        or event_conv["id"] != str(conv.get("id"))
+    ):
+        return suppression, False
+    conversation_key = (event_conv["type"], event_conv["id"])
+    prior_send_seen = conversation_key in _event_send_attempts().get(id(event), set())
+    _event_suppressions()[id(event)] = source_event_id
+    # A plugin that ran before this bridge may already have attempted a send.
+    # Such an event cannot truthfully certify exclusive suppression, even
+    # though every later send is guarded.
+    return suppression, not prior_send_seen
+
+
+def _active_event_suppression(conv: dict[str, Any]) -> ClaimSuppression | None:
+    event = current_event.get(None)
+    if event is None:
+        return None
+    source_event_id = _event_suppressions().get(id(event))
+    return _suppression_tracker().match(conv, source_event_id)
+
+
+def _match_claim_suppression(data: dict[str, Any]) -> ClaimSuppression | None:
+    conv = _api_conversation(data)
+    event_suppression = _active_event_suppression(conv)
+    if event_suppression is not None:
+        return event_suppression
+    return _suppression_tracker().match(conv, _current_task_trigger(conv))
+
+
 def _take_native_identity(conv: dict[str, Any], message_id: Any) -> dict[str, str] | None:
     return _native_identity_cache().pop(native_identity_cache_key(conv, message_id))
 
@@ -274,6 +384,22 @@ if not getattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, False):
             logger.exception("Lily Core native identity capture failed open")
 
     setattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, True)
+
+
+if not getattr(nonebot_message, "_superlily_suppression_cleanup_hook_v1", False):
+
+    @event_preprocessor
+    async def start_claim_event_suppression(event: OneBotEvent) -> None:
+        if _event_dict(event).get("post_type") == "message":
+            _active_claim_events().add(id(event))
+
+    @event_postprocessor
+    async def clear_claim_event_suppression(event: OneBotEvent) -> None:
+        _active_claim_events().discard(id(event))
+        _event_suppressions().pop(id(event), None)
+        _event_send_attempts().pop(id(event), None)
+
+    nonebot_message._superlily_suppression_cleanup_hook_v1 = True
 
 
 def _onebot_message_parts(message: Any) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
@@ -367,26 +493,70 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
     nonebot_message._superlily_message_sent_hook = True
 
 
-if not getattr(OneBotBot, "_superlily_failed_send_hook", False):
+if not getattr(OneBotBot, "_superlily_claim_send_guard_v1", False):
+
+    @OneBotBot.on_calling_api
+    async def suppress_denied_send(
+        _: OneBotBot,
+        api: str,
+        data: dict[str, Any],
+    ) -> None:
+        if not api.startswith("send_"):
+            return
+        api_started[id(data)] = time.monotonic()
+        conv = _api_conversation(data)
+        event = current_event.get(None)
+        if event is not None and id(event) in _active_claim_events():
+            _event_send_attempts().setdefault(id(event), set()).add(
+                (conv["type"], conv["id"])
+            )
+        suppression = _match_claim_suppression(data)
+        if suppression is None:
+            return
+        blocked_api_calls[id(data)] = suppression
+        raise MockApiException({"message_id": -1})
+
+    OneBotBot._superlily_claim_send_guard_v1 = True
+
+
+if not getattr(OneBotBot, "_superlily_send_result_hook_v1", False):
 
     @OneBotBot.on_called_api
-    async def observe_failed_send(
+    async def observe_send_result(
         bot: OneBotBot,
         exception: Exception | None,
         api: str,
         data: dict[str, Any],
         result: Any,
     ) -> None:
-        if exception is None or not api.startswith("send_"):
+        if not api.startswith("send_"):
             return
-        if data.get("group_id") is not None:
-            conv = {"id": str(data["group_id"]), "type": "group", "name": None}
-        else:
-            conv = {"id": str(data.get("user_id") or "unknown"), "type": "private", "name": None}
-        source_response = f"qq:{bot.self_id}:failed-attempt:{uuid4()}"
-        trigger_source_event_id = _current_task_trigger(conv)
+        started = api_started.pop(id(data), None)
+        suppression = blocked_api_calls.pop(id(data), None)
+        if exception is None and suppression is None:
+            # Successful platform sends are recorded from confirmed
+            # message_sent events; do not duplicate them here.
+            return
+        conv = {**_api_conversation(data), "name": None}
+        source_response = (
+            f"qq:{bot.self_id}:suppressed-attempt:{uuid4()}"
+            if suppression is not None
+            else f"qq:{bot.self_id}:failed-attempt:{uuid4()}"
+        )
+        trigger_source_event_id = (
+            suppression.source_event_id
+            if suppression is not None
+            else _current_task_trigger(conv)
+        )
         text, segments, attachments = _onebot_message_parts(data.get("message"))
         error_text = str(exception).lower()
+        latency_ms = int((time.monotonic() - started) * 1000) if started is not None else None
+        if suppression is not None:
+            completion_status = "suppressed"
+        elif "timeout" in error_text or "timed out" in error_text:
+            completion_status = "ambiguous"
+        else:
+            completion_status = "failed"
         payload = {
             "schema_version": "1.0",
             "source_response_id": source_response,
@@ -398,23 +568,32 @@ if not getattr(OneBotBot, "_superlily_failed_send_hook", False):
             "segments": segments,
             "attachments": attachments,
             "success": False,
-            "error": str(exception),
+            "error": "blocked_by_core_claim" if suppression is not None else str(exception),
+            "latency_ms": latency_ms,
             "occurred_at": utc_iso(),
             "raw": None,
             "metadata": {
-                "trigger_attribution": "task_context" if trigger_source_event_id else None,
-                "completion_status": (
-                    "ambiguous"
-                    if "timeout" in error_text or "timed out" in error_text
-                    else "failed"
+                "claim_send_suppressed": suppression is not None,
+                "claim_id": suppression.claim_id if suppression is not None else None,
+                "claim_reason": suppression.reason if suppression is not None else None,
+                "claim_acknowledged": (
+                    suppression.acknowledged if suppression is not None else None
                 ),
+                "trigger_attribution": (
+                    "claim_suppression"
+                    if suppression is not None
+                    else "task_context"
+                    if trigger_source_event_id
+                    else None
+                ),
+                "completion_status": completion_status,
             },
         }
         reporter.enqueue(
             ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
         )
 
-    OneBotBot._superlily_failed_send_hook = True
+    OneBotBot._superlily_send_result_hook_v1 = True
 
 
 async def heartbeat_loop() -> None:

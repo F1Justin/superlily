@@ -1,8 +1,129 @@
+from dataclasses import dataclass, replace
 import time
 from typing import Any
 
 
 CONVERSATION_TYPES = ("group", "private", "channel", "system")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSuppression:
+    conversation_type: str
+    conversation_id: str
+    source_event_id: str
+    claim_id: str
+    reason: str
+    acknowledged: bool = False
+
+
+class OutboundSuppressionTracker:
+    """Bounded exact-source guard for sends caused by an enforced deny.
+
+    A suppression is intentionally content-free and keyed by canonical
+    conversation plus the bridge-local source event ID.  Entries are retained
+    long enough to cover Nekro's debounce/agent task lifecycle; exact source
+    matching prevents a stale entry from blocking a later unrelated message.
+    """
+
+    def __init__(self, max_entries: int = 16384, ttl_seconds: float = 3600.0) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be positive")
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self._entries: dict[
+            tuple[str, str, str],
+            tuple[float, ClaimSuppression],
+        ] = {}
+
+    @staticmethod
+    def _key(conv: dict[str, Any], source_event_id: str) -> tuple[str, str, str]:
+        return (
+            str(conv.get("type", "unknown")),
+            str(conv.get("id", "unknown")),
+            str(source_event_id),
+        )
+
+    def _prune(self, now: float) -> None:
+        expired = [
+            key
+            for key, (installed_at, _) in self._entries.items()
+            if now - installed_at > self.ttl_seconds
+        ]
+        for key in expired:
+            self._entries.pop(key, None)
+
+    def install(
+        self,
+        conv: dict[str, Any],
+        source_event_id: str,
+        claim_id: str,
+        reason: str,
+        *,
+        now: float | None = None,
+    ) -> ClaimSuppression:
+        if not source_event_id or not claim_id:
+            raise ValueError("source_event_id and claim_id are required")
+        current = time.monotonic() if now is None else now
+        self._prune(current)
+        key = self._key(conv, source_event_id)
+        existing = self._entries.get(key)
+        if existing is not None:
+            self._entries[key] = (current, existing[1])
+            return existing[1]
+        if len(self._entries) >= self.max_entries:
+            oldest = min(self._entries, key=lambda item: self._entries[item][0])
+            self._entries.pop(oldest, None)
+        record = ClaimSuppression(
+            conversation_type=key[0],
+            conversation_id=key[1],
+            source_event_id=key[2],
+            claim_id=str(claim_id),
+            reason=str(reason),
+        )
+        self._entries[key] = (current, record)
+        return record
+
+    def set_acknowledged(
+        self,
+        conv: dict[str, Any],
+        source_event_id: str,
+        acknowledged: bool,
+        *,
+        now: float | None = None,
+    ) -> ClaimSuppression | None:
+        current = time.monotonic() if now is None else now
+        self._prune(current)
+        key = self._key(conv, source_event_id)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        installed_at, record = entry
+        updated = replace(record, acknowledged=record.acknowledged or bool(acknowledged))
+        self._entries[key] = (installed_at, updated)
+        return updated
+
+    def match(
+        self,
+        conv: dict[str, Any],
+        source_event_id: str | None,
+        *,
+        now: float | None = None,
+    ) -> ClaimSuppression | None:
+        if not source_event_id:
+            return None
+        current = time.monotonic() if now is None else now
+        self._prune(current)
+        key = self._key(conv, source_event_id)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        self._entries[key] = (current, entry[1])
+        return entry[1]
+
+    def __len__(self) -> int:
+        return len(self._entries)
 
 
 class NativeIdentityCache:
@@ -313,7 +434,9 @@ def conversation(chat_key: str, chat_type: Any = None) -> dict[str, Any]:
 
 
 __all__ = [
+    "ClaimSuppression",
     "NativeIdentityCache",
+    "OutboundSuppressionTracker",
     "ResponseTriggerTracker",
     "claim_decision_targets_instance",
     "claim_targets_instance",

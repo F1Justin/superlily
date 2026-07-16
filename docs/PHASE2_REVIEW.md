@@ -92,12 +92,12 @@ samples, and a new 24-hour window before this review can be signed.
   deny-before-allow database order. A target allow requires all prior observed
   peers to have acknowledged enforced denies; a committed deny whose HTTP
   response was lost cannot manufacture a fictitious exclusive owner. Lily can
-  acknowledge after its event-scoped outbound guard is installed. Nekro's
-  public plugin hook has no post-aggregation callback and another plugin's
-  `FORCE_TRIGGER` can override its returned `BLOCK_TRIGGER`, so the reviewed
-  bridge deliberately withholds Nekro acknowledgements. Lily-target claims
-  consequently remain safe `abstain` and use Lily's legacy command path until
-  an authoritative Nekro outbound guard or upstream callback is implemented.
+  acknowledge after its event-scoped outbound guard is installed. Nekro now
+  supplements `BLOCK_TRIGGER` with an exact-source OneBot send guard bound to
+  the active event and task-aware response tracker. It records same-event send
+  attempts made before its plugin callback and acknowledges only when the
+  event matches, no prior send exists, and both guard paths are installed.
+  Missing context, prior output, or ACK failure remains a safe abstention.
 - Canonical decision recomputation has its own per-source transaction lock, so
   observation, response, reference-backfill, and claim paths cannot overwrite
   one another's revision/features.

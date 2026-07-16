@@ -524,14 +524,21 @@ async def decision_outcomes(
             for item in linked
             if not item.success and item.metadata_json.get("completion_status") == "ambiguous"
         ]
+        suppressed = [
+            item.instance_id
+            for item in linked
+            if not item.success and item.metadata_json.get("completion_status") == "suppressed"
+        ]
         failed = [
             item.instance_id
             for item in linked
-            if not item.success and item.metadata_json.get("completion_status") != "ambiguous"
+            if not item.success
+            and item.metadata_json.get("completion_status") not in {"ambiguous", "suppressed"}
         ]
         successful_counts = Counter(successful)
         failed_counts = Counter(failed)
         ambiguous_counts = Counter(ambiguous)
+        suppressed_counts = Counter(suppressed)
         first_received_at = source.first_received_at
         if first_received_at.tzinfo is None:
             first_received_at = first_received_at.replace(tzinfo=timezone.utc)
@@ -562,6 +569,7 @@ async def decision_outcomes(
                     "successful_response_counts": dict(sorted(successful_counts.items())),
                     "failed_response_counts": dict(sorted(failed_counts.items())),
                     "ambiguous_response_counts": dict(sorted(ambiguous_counts.items())),
+                    "suppressed_response_counts": dict(sorted(suppressed_counts.items())),
                     "response_ids": [item.id for item in linked],
                     "trigger_attribution": [
                         item.metadata_json.get("trigger_attribution") for item in linked

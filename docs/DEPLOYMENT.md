@@ -93,10 +93,11 @@ continues the legacy path. An enforced Lily deny is installed in its
 event-scoped outbound guard and then acknowledged through
 `POST /v1/claims/{claim_id}/ack`; acknowledgement failure does not undo local
 suppression, but it prevents Core from granting a peer an exclusive allow.
-Nekro returns `BLOCK_TRIGGER` but must not acknowledge it: the public Nekro
-hook is aggregated with later plugin signals and exposes no post-aggregation
-confirmation point. Consequently Lily-target claims remain `abstain` until an
-authoritative Nekro outbound guard or upstream callback is available.
+Nekro returns `BLOCK_TRIGGER` and installs an exact-source OneBot outbound API
+guard for both the active event and a later scheduler task. It records any
+same-event send attempted before its callback and acknowledges only when the
+event matches, no prior send exists, and the guard is installed. Missing
+context, prior output, or ACK failure prevents an exclusive peer allow.
 
 ## 3. Nekro bridge
 

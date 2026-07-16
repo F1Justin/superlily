@@ -49,6 +49,54 @@ def test_native_identity_cache_key_includes_conversation() -> None:
     assert identity.native_identity_cache_key({"type": "group", "id": "123"}, "456") == "group:123:456"
 
 
+def test_outbound_suppression_requires_exact_conversation_and_source() -> None:
+    identity = load_identity_module()
+    tracker = identity.OutboundSuppressionTracker(ttl_seconds=60)
+    conv = {"type": "group", "id": "708309706"}
+
+    installed = tracker.install(
+        conv,
+        "event:denied",
+        "claim:deny",
+        "decision_target:lily-command",
+        now=0,
+    )
+
+    assert installed.acknowledged is False
+    assert tracker.match(conv, "event:denied", now=1) == installed
+    assert tracker.match(conv, "event:other", now=1) is None
+    assert tracker.match({"type": "group", "id": "other"}, "event:denied", now=1) is None
+
+
+def test_outbound_suppression_ack_state_is_persisted_for_audit() -> None:
+    identity = load_identity_module()
+    tracker = identity.OutboundSuppressionTracker()
+    conv = {"type": "private", "id": "42"}
+    tracker.install(conv, "event:one", "claim:one", "peer_target", now=0)
+
+    updated = tracker.set_acknowledged(conv, "event:one", True, now=1)
+    retry_after_timeout = tracker.set_acknowledged(conv, "event:one", False, now=2)
+
+    assert updated is not None and updated.acknowledged is True
+    assert retry_after_timeout is not None and retry_after_timeout.acknowledged is True
+    assert tracker.match(conv, "event:one", now=3).acknowledged is True
+
+
+def test_outbound_suppression_is_bounded_and_expires() -> None:
+    identity = load_identity_module()
+    tracker = identity.OutboundSuppressionTracker(max_entries=2, ttl_seconds=10)
+    conv = {"type": "group", "id": "7"}
+
+    tracker.install(conv, "event:first", "claim:first", "deny", now=0)
+    tracker.install(conv, "event:second", "claim:second", "deny", now=1)
+    tracker.install(conv, "event:third", "claim:third", "deny", now=2)
+
+    assert len(tracker) == 2
+    assert tracker.match(conv, "event:first", now=2) is None
+    assert tracker.match(conv, "event:second", now=12) is None
+    assert tracker.match(conv, "event:third", now=13) is None
+
+
 def test_response_trigger_tracker_preserves_1207_task_attribution() -> None:
     identity = load_identity_module()
     tracker = identity.ResponseTriggerTracker(ttl_seconds=180)

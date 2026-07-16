@@ -33,10 +33,12 @@ With `CLAIM_ENABLED=true`, only an enforced deny returns Nekro's
 start the agent. Failure to reach Core returns `CONTINUE`. Nekro's current
 public plugin API aggregates all plugin signals after this bridge returns and
 offers no post-aggregation callback; a later `FORCE_TRIGGER` may override the
-block. The bridge therefore deliberately does **not** acknowledge Nekro deny
-claims. A Lily-target claim safely remains `abstain` while Lily continues its
-legacy command path. Do not enable authoritative Lily-target allow until Nekro
-has an outbound suppression guard or an upstream post-aggregation hook.
+block. The bridge therefore also installs an exact-source OneBot outbound API
+guard covering both the active event and any later Nekro scheduler task. It
+records send attempts made by earlier plugins and acknowledges the deny only
+when the event is matched, no earlier send exists, and the guard is installed.
+Missing context, an earlier send, or ACK failure safely leaves the target at
+`abstain` while the local guard still suppresses later sends.
 
 When the canonical decision targets Nekro but deny-before-allow coordination
 safely returns `abstain`, the bridge retains that decision only as a pending

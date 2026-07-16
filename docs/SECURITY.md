@@ -53,14 +53,15 @@ OneBot/database/admin/ingest credentials.
   may acknowledge an enforced deny only after installing authoritative
   suppression; an exclusive allow requires prior acknowledgement from every
   observed peer. Missing acknowledgement forces abstention. Lily currently
-  meets this with an event-scoped send guard. Nekro deliberately withholds ACK
-  because its public `BLOCK_TRIGGER` is not confirmed until after aggregate
-  plugin signal handling.
+  meets this with an event-scoped send guard. Nekro supplements its public
+  `BLOCK_TRIGGER` with an exact-source OneBot outbound guard covering the
+  active event and task-attributed sends; it withholds ACK when event context
+  is missing or an earlier same-event send was already attempted.
 - The current canary never enforces `observe_only`, so an unknown passive
   matcher cannot cause a message to disappear.
 - Lily suppresses send APIs but still runs chat recording and other observers.
-  Nekro uses its public history-preserving `BLOCK_TRIGGER` signal; an outbound
-  guard or upstream post-aggregation hook remains a Phase 2 exit requirement.
+  Nekro preserves history and guards all attributable `send_*` APIs even if a
+  later plugin signal overrides `BLOCK_TRIGGER`.
 - Claim attempts and suppressed/failed responses remain auditable.
 - Platform send timeouts are ambiguous completion, not confirmed non-delivery.
   They are never retried automatically without a platform idempotency/recovery

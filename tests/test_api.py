@@ -1909,6 +1909,32 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
         headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "audit-ordinary"},
     )
     assert ordinary.status_code == 201
+    suppressed = await client.post(
+        "/v1/responses",
+        json={
+            "schema_version": "1.0",
+            "source_response_id": "qq:985393579:suppressed-attempt:audit",
+            "instance": event_payload()["instance"],
+            "trigger_source_event_id": ordinary.json()["source_event_id"],
+            "response_type": "send_group_msg",
+            "conversation": {"id": "123", "type": "group"},
+            "text": "不会真正发送",
+            "segments": [],
+            "attachments": [],
+            "success": False,
+            "error": "blocked_by_core_claim",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {
+                "completion_status": "suppressed",
+                "trigger_attribution": "event_context",
+            },
+        },
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "audit-suppressed-response",
+        },
+    )
+    assert suppressed.status_code == 201
 
     assert (await client.get("/v1/decisions/outcomes")).status_code == 401
     audit = await client.get(
@@ -1919,7 +1945,7 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
     body = audit.json()
     assert body["decisions"] == 2
     assert body["outcomes"] == {"matched": 1, "matched_no_response": 1}
-    assert body["responses"]["linked"] == 1
+    assert body["responses"]["linked"] == 2
     assert body["responses"]["unlinked"] == 0
 
 

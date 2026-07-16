@@ -552,8 +552,17 @@ WHERE r.resolved_source_id IS NOT NULL
   AND (
       (r.instance_id = 'lily-command'
        AND r.metadata_json->>'trigger_attribution' IS DISTINCT FROM 'event_context')
-      OR (r.instance_id = 'nekro-agent'
-          AND r.metadata_json->>'trigger_attribution' IS DISTINCT FROM 'task_context')
+      OR (
+          r.instance_id = 'nekro-agent'
+          AND (
+              (r.metadata_json->>'completion_status' = 'suppressed'
+               AND r.metadata_json->>'trigger_attribution'
+                   IS DISTINCT FROM 'claim_suppression')
+              OR (r.metadata_json->>'completion_status' IS DISTINCT FROM 'suppressed'
+                  AND r.metadata_json->>'trigger_attribution'
+                      IS DISTINCT FROM 'task_context')
+          )
+      )
   )
 UNION ALL
 SELECT 'completion_status_mismatch', count(*)
@@ -583,7 +592,9 @@ WITH window_decisions AS (
         ) AS ambiguous_instances,
         array_agg(r.instance_id) FILTER (
             WHERE NOT r.success
-              AND r.metadata_json->>'completion_status' IS DISTINCT FROM 'ambiguous'
+              AND coalesce(r.metadata_json->>'completion_status', '') NOT IN (
+                  'ambiguous', 'suppressed'
+              )
         ) AS failed_instances
     FROM window_decisions wd
     LEFT JOIN responses r
@@ -656,7 +667,9 @@ WITH window_decisions AS (
         ) AS ambiguous_instances,
         array_agg(r.instance_id) FILTER (
             WHERE NOT r.success
-              AND r.metadata_json->>'completion_status' IS DISTINCT FROM 'ambiguous'
+              AND coalesce(r.metadata_json->>'completion_status', '') NOT IN (
+                  'ambiguous', 'suppressed'
+              )
         ) AS failed_instances
     FROM window_decisions wd
     LEFT JOIN responses r
