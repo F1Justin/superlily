@@ -17,8 +17,10 @@ LILY_CORE_TOKEN=replace-with-lily-instance-token
 LILY_CORE_INSTANCE_ID=lily-command
 LILY_CORE_BOT_ID=3643287298
 LILY_CORE_CLAIM_ENABLED=false
-LILY_CORE_CLAIM_TIMEOUT_SECONDS=1.0
-LILY_CORE_REPORT_TIMEOUT_SECONDS=2.0
+LILY_CORE_CLAIM_TIMEOUT_SECONDS=3.0
+LILY_CORE_REPORT_TIMEOUT_SECONDS=5.0
+LILY_CORE_REPORT_ATTEMPTS=3
+LILY_CORE_REPORT_RETRY_BACKOFF_SECONDS=0.1
 ```
 
 Raw OneBot payload capture is off by default. Set `LILY_CORE_INCLUDE_RAW=true`
@@ -29,4 +31,6 @@ When a canary claim returns an enforced deny, the bridge suppresses outgoing
 chatrecorder, wordcloud collection, and other observation matchers continue to
 run. Any claim timeout or malformed response leaves sends unchanged. Claim and
 background-ingestion deadlines are separate so a brief database delay does not
-turn a committed event into a false telemetry drop.
+turn a committed event into a false telemetry drop. Background reports retry
+transient transport, 429, and 5xx failures with the same idempotency key before
+incrementing `dropped`.

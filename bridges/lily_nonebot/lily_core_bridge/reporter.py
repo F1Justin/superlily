@@ -30,12 +30,16 @@ class BackgroundReporter:
         queue_size: int,
         claim_timeout_seconds: float,
         report_timeout_seconds: float | None = None,
+        report_attempts: int = 3,
+        report_retry_backoff_seconds: float = 0.1,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.queue: asyncio.Queue[ReportItem] = asyncio.Queue(maxsize=queue_size)
         self.claim_timeout_seconds = claim_timeout_seconds
         self.report_timeout_seconds = report_timeout_seconds or claim_timeout_seconds
+        self.report_attempts = max(1, report_attempts)
+        self.report_retry_backoff_seconds = max(0.0, report_retry_backoff_seconds)
         self.dropped = 0
         self.claim_failures = 0
         self.claim_ack_failures = 0
@@ -136,14 +140,28 @@ class BackgroundReporter:
             if item.idempotency_key:
                 headers["Idempotency-Key"] = item.idempotency_key
             try:
-                response = await self._client.post(
-                    f"{self.base_url}{item.endpoint}",
-                    json=item.payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-            except Exception as exc:
-                self.dropped += 1
-                self._warn_limited(f"Lily Core report failed: {type(exc).__name__}")
+                failure: Exception | None = None
+                for attempt in range(self.report_attempts):
+                    try:
+                        response = await self._client.post(
+                            f"{self.base_url}{item.endpoint}",
+                            json=item.payload,
+                            headers=headers,
+                        )
+                        response.raise_for_status()
+                        failure = None
+                        break
+                    except Exception as exc:
+                        failure = exc
+                        retryable = isinstance(exc, httpx.TransportError) or (
+                            isinstance(exc, httpx.HTTPStatusError)
+                            and (exc.response.status_code == 429 or exc.response.status_code >= 500)
+                        )
+                        if not retryable or attempt + 1 >= self.report_attempts:
+                            break
+                        await asyncio.sleep(self.report_retry_backoff_seconds * (2**attempt))
+                if failure is not None:
+                    self.dropped += 1
+                    self._warn_limited(f"Lily Core report failed: {type(failure).__name__}")
             finally:
                 self.queue.task_done()

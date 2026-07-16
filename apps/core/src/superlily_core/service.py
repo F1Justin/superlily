@@ -1486,9 +1486,11 @@ async def _claim_observation_count(
         )
         or 0
     )
-    # End the short read transaction so SQLite tests and PostgreSQL READ COMMITTED
-    # polling can observe the other bridge's concurrently committed observation.
-    await session.commit()
+    # SQLite needs a fresh read transaction to observe a concurrently committed
+    # peer. PostgreSQL READ COMMITTED already takes a new snapshot per statement;
+    # committing every 20 ms only adds avoidable round trips to the claim path.
+    if session.bind.dialect.name == "sqlite":
+        await session.commit()
     return count
 
 

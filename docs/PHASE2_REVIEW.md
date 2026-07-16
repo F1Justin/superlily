@@ -49,9 +49,10 @@ samples, and a new 24-hour window before this review can be signed.
   rather than only HTTP(S). Custom `scheme://` scalars are covered as well.
 - Reporter queues remain bounded and all reporting/claim failures are fail-open.
 - Claim and background-ingestion deadlines are independent. Claims retain a
-  one-second bounded fail-open path, while the background reporter gets two
-  seconds so a committed request is not routinely counted as dropped under
-  normal PostgreSQL latency.
+  three-second bounded fail-open path, while the background reporter gets five
+  seconds and three bounded idempotent attempts for transient transport, 429,
+  and 5xx failures so a committed request is not routinely counted as dropped
+  under measured PostgreSQL checkpoint latency.
 - Lily runtime snapshot hashing uses the same canonical row ordering as Core;
   the 28-plugin production snapshot is contract- and hash-verified.
 - Alembic 0001-to-0010 upgrade and downgrade paths were previously verified on

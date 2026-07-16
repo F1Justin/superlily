@@ -18,8 +18,10 @@ panel:
 - `INSTANCE_ID=nekro-agent`
 - `BOT_ID=2022692714`
 - `CLAIM_ENABLED=false`
-- `CLAIM_TIMEOUT_SECONDS=1.0`
-- `REPORT_TIMEOUT_SECONDS=2.0`
+- `CLAIM_TIMEOUT_SECONDS=3.0`
+- `REPORT_TIMEOUT_SECONDS=5.0`
+- `REPORT_ATTEMPTS=3`
+- `REPORT_RETRY_BACKOFF_SECONDS=0.1`
 
 The container must join the `superlily_bus` network; see
 `deploy/nekro-compose.override.yml`.
@@ -27,6 +29,9 @@ The container must join the `superlily_bus` network; see
 Do not hot-reload this plugin during the first smoke test. Its global NoneBot
 hooks are guarded against duplicate registration, but a clean process restart
 is easier to audit.
+
+Background reports retry transient transport, 429, and 5xx failures with the
+same idempotency key before incrementing `dropped`.
 
 With `CLAIM_ENABLED=true`, only an enforced deny returns Nekro's
 `BLOCK_TRIGGER`: the incoming message remains in Nekro history but does not

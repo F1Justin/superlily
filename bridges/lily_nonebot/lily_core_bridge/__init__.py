@@ -28,7 +28,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.3.0"
+BRIDGE_VERSION = "0.3.1"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -45,8 +45,10 @@ class Config(BaseModel):
     lily_core_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
     lily_core_queue_size: int = Field(default=1000, ge=10, le=10000)
     lily_core_timeout_seconds: float = Field(default=0.5, ge=0.05, le=5)
-    lily_core_claim_timeout_seconds: float = Field(default=1.0, ge=0.05, le=5)
-    lily_core_report_timeout_seconds: float = Field(default=2.0, ge=0.05, le=10)
+    lily_core_claim_timeout_seconds: float = Field(default=3.0, ge=0.05, le=5)
+    lily_core_report_timeout_seconds: float = Field(default=5.0, ge=0.05, le=10)
+    lily_core_report_attempts: int = Field(default=3, ge=1, le=10)
+    lily_core_report_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=5)
     lily_core_include_raw: bool = False
     lily_core_claim_enabled: bool = False
 
@@ -58,6 +60,8 @@ reporter = BackgroundReporter(
     plugin_config.lily_core_queue_size,
     plugin_config.lily_core_claim_timeout_seconds,
     plugin_config.lily_core_report_timeout_seconds,
+    plugin_config.lily_core_report_attempts,
+    plugin_config.lily_core_report_retry_backoff_seconds,
 )
 driver = get_driver()
 event_contexts: dict[int, dict[str, Any]] = {}

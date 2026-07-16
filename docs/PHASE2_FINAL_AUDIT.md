@@ -26,8 +26,9 @@ and registry checks below.
 
 At the new deployment boundary, record each bridge's `queue_depth`, `dropped`,
 `claim_failures`, process/container start time, code hash, and platform
-connection state. Claim requests use a one-second fail-open deadline while
-background ingestion uses a separate two-second deadline. Final acceptance
+connection state. Claim requests use a three-second fail-open deadline while
+background ingestion uses a separate five-second deadline and three bounded
+idempotent attempts for transient transport, 429, and 5xx failures. Final acceptance
 compares the ending counters with these exact baselines and correlates every
 increase with timestamped bridge, Core, database, and NapCat logs.
 

@@ -1,14 +1,28 @@
+import asyncio
 import importlib.util
+import logging
 import sys
 import time
+import types
 from pathlib import Path
 
+import httpx
 import pytest
 
 
-def load_reporter_module():
-    path = Path("bridges/lily_nonebot/lily_core_bridge/reporter.py")
-    spec = importlib.util.spec_from_file_location("lily_bridge_reporter_test", path)
+def load_reporter_module(
+    path: Path = Path("bridges/lily_nonebot/lily_core_bridge/reporter.py"),
+):
+    if "nekro" in path.parts and "nekro_agent.api.core" not in sys.modules:
+        nekro_package = types.ModuleType("nekro_agent")
+        api_package = types.ModuleType("nekro_agent.api")
+        core_module = types.ModuleType("nekro_agent.api.core")
+        core_module.logger = logging.getLogger("nekro_bridge_reporter_test")
+        sys.modules["nekro_agent"] = nekro_package
+        sys.modules["nekro_agent.api"] = api_package
+        sys.modules["nekro_agent.api.core"] = core_module
+    module_name = f"bridge_reporter_test_{path.parts[-3]}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -53,6 +67,49 @@ def test_claim_and_background_report_timeouts_are_independent() -> None:
 
     assert reporter.claim_timeout_seconds == 1.0
     assert reporter.report_timeout_seconds == 2.0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("bridges/lily_nonebot/lily_core_bridge/reporter.py"),
+        Path("bridges/nekro/superlily_bridge/reporter.py"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_background_reports_retry_transient_failures_with_same_idempotency_key(
+    path: Path,
+) -> None:
+    module = load_reporter_module(path)
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "instance-token",
+        10,
+        claim_timeout_seconds=3.0,
+        report_timeout_seconds=5.0,
+        report_attempts=3,
+        report_retry_backoff_seconds=0,
+    )
+    attempts = 0
+    idempotency_keys: list[str | None] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        idempotency_keys.append(request.headers.get("Idempotency-Key"))
+        if attempts < 3:
+            raise httpx.ReadTimeout("transient database delay", request=request)
+        return httpx.Response(201, request=request)
+
+    reporter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    reporter._worker = asyncio.create_task(reporter._run())
+    assert reporter.enqueue(module.ReportItem("/v1/events", {"event": True}, "event-key"))
+    await asyncio.wait_for(reporter.queue.join(), timeout=1)
+    await reporter.stop()
+
+    assert attempts == 3
+    assert idempotency_keys == ["event-key", "event-key", "event-key"]
+    assert reporter.dropped == 0
 
 
 @pytest.mark.asyncio

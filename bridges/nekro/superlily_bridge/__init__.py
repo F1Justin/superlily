@@ -46,7 +46,7 @@ plugin = NekroPlugin(
     name="Lily Core Bridge",
     module_name="core_bridge",
     description="Fail-open event, response, and heartbeat reporting to Lily Core",
-    version="0.3.0",
+    version="0.3.1",
     author="Superlily",
     url="",
     support_adapter=["onebot_v11"],
@@ -62,8 +62,15 @@ class BridgeConfig(ConfigBase):
     HEARTBEAT_SECONDS: int = Field(default=30, ge=5, le=300, title="Heartbeat interval")
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
     TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="Legacy HTTP timeout")
-    CLAIM_TIMEOUT_SECONDS: float = Field(default=1.0, ge=0.05, le=5, title="Claim HTTP timeout")
-    REPORT_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.05, le=10, title="Report HTTP timeout")
+    CLAIM_TIMEOUT_SECONDS: float = Field(default=3.0, ge=0.05, le=5, title="Claim HTTP timeout")
+    REPORT_TIMEOUT_SECONDS: float = Field(default=5.0, ge=0.05, le=10, title="Report HTTP timeout")
+    REPORT_ATTEMPTS: int = Field(default=3, ge=1, le=10, title="Background report attempts")
+    REPORT_RETRY_BACKOFF_SECONDS: float = Field(
+        default=0.1,
+        ge=0,
+        le=5,
+        title="Background report retry backoff",
+    )
     CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
 
 
@@ -74,6 +81,8 @@ reporter = BackgroundReporter(
     config.QUEUE_SIZE,
     config.CLAIM_TIMEOUT_SECONDS,
     config.REPORT_TIMEOUT_SECONDS,
+    config.REPORT_ATTEMPTS,
+    config.REPORT_RETRY_BACKOFF_SECONDS,
 )
 heartbeat_task: asyncio.Task | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
@@ -617,7 +626,7 @@ async def heartbeat_loop() -> None:
                         "claim_enabled": config.CLAIM_ENABLED,
                         "claim_failures": reporter.claim_failures,
                         "claim_ack_failures": reporter.claim_ack_failures,
-                        "bridge_version": "0.3.0",
+                        "bridge_version": "0.3.1",
                     },
                 },
             )

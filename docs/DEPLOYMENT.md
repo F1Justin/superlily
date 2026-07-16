@@ -80,9 +80,10 @@ existing supervisor, and watch both the unit and the new tmux pane until Lily
 is healthy again. Core failure must not change command behavior.
 
 Keep the default timeout split unless a measured deployment justifies a
-change: claim calls are bounded at one second and fail open, while background
-event/response ingestion uses two seconds. They must not be collapsed back to
-one sub-second deadline; a request may already be durably committed when the
+change: claim calls are bounded at three seconds and fail open, while background
+event/response ingestion uses five seconds and three bounded idempotent attempts
+for transient transport, 429, and 5xx failures. They must not be collapsed back
+to one sub-second deadline; a request may already be durably committed when the
 bridge stops waiting.
 
 When bridge claims are enabled, one incoming message first uses
