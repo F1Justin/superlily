@@ -75,7 +75,9 @@ def evaluate_claim(
     if decision_type == "command" and runtime.get("runtime_match") is None:
         return ClaimEvaluation("abstain", "command_not_confirmed_at_runtime", False, gates)
     if decision_type == "command" and runtime.get("runtime_match", {}).get("complete") is not True:
-        return ClaimEvaluation("abstain", "runtime_match_not_fully_introspected", False, gates)
+        matched_command = decision_features.get("matched_command")
+        if not isinstance(matched_command, dict) or matched_command.get("runtime_introspection") != "reviewed":
+            return ClaimEvaluation("abstain", "runtime_match_not_fully_introspected", False, gates)
     if decision_type == "command":
         matched_command = decision_features.get("matched_command")
         if not isinstance(matched_command, dict):

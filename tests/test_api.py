@@ -576,8 +576,12 @@ async def test_command_registry_debug_endpoint_is_admin_only(client) -> None:
     assert denied.status_code == 401
     assert allowed.status_code == 200
     payload = allowed.json()
-    assert payload["version"] == "2026-07-15-phase2-policy-v5"
+    assert payload["version"] == "2026-07-16-phase2-policy-v5.1"
     assert any(rule["id"] == "lily.wolfram" for rule in payload["rules"])
+    assert any(
+        rule["id"] == "external.random.draw" and rule["runtime_introspection"] == "reviewed"
+        for rule in payload["rules"]
+    )
     assert any(rule["id"] == "external.updater.control" and rule["sensitive"] for rule in payload["rules"])
 
 

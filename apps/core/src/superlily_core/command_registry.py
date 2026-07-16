@@ -13,6 +13,8 @@ from typing import Any, Literal
 DEFAULT_COMMAND_REGISTRY_PATH = "apps/core/config/command_registry.toml"
 CommandRuleKind = Literal["command", "token", "prefix", "exact", "suffix", "contains", "regex"]
 COMMAND_PERMISSIONS = {"public", "group_admin", "superuser"}
+RuntimeIntrospection = Literal["strict", "reviewed"]
+RUNTIME_INTROSPECTION_POLICIES = {"strict", "reviewed"}
 
 
 def runtime_registry_snapshot_hash(
@@ -44,6 +46,7 @@ class CommandRule:
     confidence: int = 95
     permission: str = "public"
     sensitive: bool = False
+    runtime_introspection: RuntimeIntrospection = "strict"
     description: str = ""
     ignore_case: bool = False
     regex_flags: int = 0
@@ -59,6 +62,7 @@ class CommandMatch:
     confidence: int
     permission: str
     sensitive: bool
+    runtime_introspection: RuntimeIntrospection
     description: str
     ignore_case: bool = False
     regex_flags: int = 0
@@ -73,6 +77,7 @@ class CommandMatch:
             "confidence": self.confidence,
             "permission": self.permission,
             "sensitive": self.sensitive,
+            "runtime_introspection": self.runtime_introspection,
             "description": self.description,
         }
 
@@ -150,6 +155,7 @@ class CommandRegistry:
                     "confidence": rule.confidence,
                     "permission": rule.permission,
                     "sensitive": rule.sensitive,
+                    "runtime_introspection": rule.runtime_introspection,
                     "description": rule.description,
                     "ignore_case": rule.ignore_case,
                     "regex_flags": rule.regex_flags,
@@ -176,6 +182,7 @@ def _match_from_rule(rule: CommandRule, trigger: str) -> CommandMatch:
         confidence=rule.confidence,
         permission=rule.permission,
         sensitive=rule.sensitive,
+        runtime_introspection=rule.runtime_introspection,
         description=rule.description,
         ignore_case=rule.ignore_case,
         regex_flags=rule.regex_flags,
@@ -381,6 +388,12 @@ def load_command_registry(path: str | Path = DEFAULT_COMMAND_REGISTRY_PATH) -> C
         permission = str(raw_rule.get("permission", "public"))
         if permission not in COMMAND_PERMISSIONS:
             raise ValueError(f"command registry rule {rule_id!r} has unsupported permission {permission!r}")
+        runtime_introspection = str(raw_rule.get("runtime_introspection", "strict"))
+        if runtime_introspection not in RUNTIME_INTROSPECTION_POLICIES:
+            raise ValueError(
+                f"command registry rule {rule_id!r} has unsupported runtime_introspection "
+                f"{runtime_introspection!r}"
+            )
         ignore_case = raw_rule.get("ignore_case", False)
         if not isinstance(ignore_case, bool):
             raise ValueError(f"command registry rule {rule_id!r} ignore_case must be boolean")
@@ -397,6 +410,7 @@ def load_command_registry(path: str | Path = DEFAULT_COMMAND_REGISTRY_PATH) -> C
                 confidence=confidence,
                 permission=permission,
                 sensitive=bool(raw_rule.get("sensitive", False)),
+                runtime_introspection=runtime_introspection,  # type: ignore[arg-type]
                 description=str(raw_rule.get("description", "")),
                 ignore_case=ignore_case,
                 regex_flags=regex_flags,

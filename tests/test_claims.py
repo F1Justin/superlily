@@ -9,7 +9,11 @@ def _features(**overrides):
             "runtime_match": {"trigger": "wf", "complete": True},
             "unregistered_match": None,
         },
-        "matched_command": {"permission": "public", "sensitive": False},
+        "matched_command": {
+            "permission": "public",
+            "sensitive": False,
+            "runtime_introspection": "strict",
+        },
         "reply_target_status": "none",
     }
     value.update(overrides)
@@ -215,6 +219,46 @@ def test_claim_deterministic_talk_reply_outranks_unregistered_lily_command() -> 
         True,
     )
     assert lily.gates["unregistered_runtime_match"] == runtime["unregistered_match"]
+
+
+def test_claim_allows_explicitly_reviewed_incomplete_runtime_match() -> None:
+    features = _features(
+        command_registry_runtime={
+            "status": "fresh",
+            "runtime_match": {
+                "plugin_id": "nonebot-plugin-random",
+                "kind": "command",
+                "trigger": "随机莉莉",
+                "complete": False,
+            },
+            "unregistered_match": None,
+        },
+        matched_command={
+            "permission": "public",
+            "sensitive": False,
+            "runtime_introspection": "reviewed",
+        },
+    )
+
+    result = evaluate_claim(
+        mode="canary",
+        requesting_instance_id="nekro-agent",
+        decision_type="command",
+        target_instance_id="lily-command",
+        confidence=95,
+        decision_features=features,
+        correlation_version="qq-message-v3",
+        observation_count=2,
+        required_observations=2,
+        minimum_confidence=85,
+        target_status="online",
+    )
+
+    assert (result.action, result.reason, result.ready) == (
+        "deny",
+        "decision_target:lily-command",
+        True,
+    )
 
 
 def test_claim_enforcement_scope_is_explicit() -> None:

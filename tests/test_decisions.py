@@ -51,6 +51,7 @@ def test_decision_routes_registered_prefix_command_to_lily() -> None:
         "confidence": 95,
         "permission": "public",
         "sensitive": False,
+        "runtime_introspection": "strict",
         "description": "",
     }
 
@@ -137,10 +138,12 @@ def test_default_registry_covers_known_external_commands() -> None:
     assert random_selector is not None
     assert random_selector.rule_id == "external.random.draw"
     assert random_selector.trigger == "随机莉莉白语录"
+    assert random_selector.runtime_introspection == "reviewed"
     assert random_mutation is not None
     assert random_mutation.rule_id == "external.random.modify"
     assert random_mutation.permission == "group_admin"
     assert random_mutation.sensitive is True
+    assert random_mutation.runtime_introspection == "strict"
 
 
 def test_command_registry_rejects_unknown_permission(tmp_path) -> None:
@@ -159,6 +162,28 @@ permission = "owner"
     )
 
     with pytest.raises(ValueError, match="unsupported permission"):
+        load_command_registry(registry_path)
+
+
+def test_command_registry_rejects_unknown_runtime_introspection(tmp_path) -> None:
+    registry_path = tmp_path / "bad-runtime-introspection.toml"
+    registry_path.write_text(
+        '\n'.join(
+            [
+                'version = "test"',
+                '',
+                '[[rules]]',
+                'id = "bad"',
+                'kind = "command"',
+                'triggers = ["bad"]',
+                'source_plugin = "bad"',
+                'runtime_introspection = "guessed"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported runtime_introspection"):
         load_command_registry(registry_path)
 
 

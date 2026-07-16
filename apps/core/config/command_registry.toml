@@ -1,4 +1,4 @@
-version = "2026-07-15-phase2-policy-v5"
+version = "2026-07-16-phase2-policy-v5.1"
 default_target_instance_id = "lily-command"
 
 [[rules]]
@@ -104,6 +104,7 @@ triggers = [
   "随机雪音", "随机飞舞", "随机莉莉", "随机GTM", "随机ccb", "随机CW"
 ]
 source_plugin = "nonebot-plugin-random"
+runtime_introspection = "reviewed"
 description = "Runtime-reviewed random media directories; NoneBot command matching uses the longest directory-derived prefix and accepts trailing selector text."
 
 [[rules]]
