@@ -93,6 +93,8 @@ def test_claim_abstains_on_every_fail_open_gate() -> None:
         ),
         (
             {
+                "decision_type": "command",
+                "target_instance_id": "lily-command",
                 "decision_features": _features(
                     command_registry_runtime={
                         "status": "fresh",
@@ -157,6 +159,62 @@ def test_claim_abstains_on_every_fail_open_gate() -> None:
     for changes, reason in cases:
         result = evaluate_claim(**{**base, **changes})
         assert (result.action, result.reason, result.ready) == ("abstain", reason, False)
+
+
+def test_claim_deterministic_talk_reply_outranks_unregistered_lily_command() -> None:
+    runtime = {
+        "status": "fresh",
+        "runtime_match": None,
+        "unregistered_match": {
+            "plugin_id": "nonebot_plugin_today_waifu",
+            "kind": "regex",
+            "trigger": r"^\s*换老婆\s*$",
+            "complete": False,
+        },
+    }
+    features = _features(
+        command_registry_runtime=runtime,
+        reply_target_status="resolved_bot",
+    )
+
+    lily = evaluate_claim(
+        mode="canary",
+        requesting_instance_id="lily-command",
+        decision_type="talk",
+        target_instance_id="nekro-agent",
+        confidence=95,
+        decision_features=features,
+        correlation_version="qq-message-v3",
+        observation_count=2,
+        required_observations=2,
+        minimum_confidence=85,
+        target_status="online",
+    )
+    nekro = evaluate_claim(
+        mode="canary",
+        requesting_instance_id="nekro-agent",
+        decision_type="talk",
+        target_instance_id="nekro-agent",
+        confidence=95,
+        decision_features=features,
+        correlation_version="qq-message-v3",
+        observation_count=2,
+        required_observations=2,
+        minimum_confidence=85,
+        target_status="online",
+    )
+
+    assert (lily.action, lily.reason, lily.ready) == (
+        "deny",
+        "decision_target:nekro-agent",
+        True,
+    )
+    assert (nekro.action, nekro.reason, nekro.ready) == (
+        "allow",
+        "decision_target:nekro-agent",
+        True,
+    )
+    assert lily.gates["unregistered_runtime_match"] == runtime["unregistered_match"]
 
 
 def test_claim_enforcement_scope_is_explicit() -> None:

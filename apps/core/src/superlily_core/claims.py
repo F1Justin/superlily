@@ -66,7 +66,11 @@ def evaluate_claim(
         return ClaimEvaluation("abstain", "command_registry_unavailable", False, gates)
     if runtime.get("status") != "fresh":
         return ClaimEvaluation("abstain", "runtime_registry_not_fresh", False, gates)
-    if runtime.get("unregistered_match") is not None:
+    # Runtime command introspection is a safety gate for command ownership.
+    # Once the canonical policy chooses talk (notably a reply to Nekro), an
+    # unregistered Lily matcher is conflicting local behavior that coordination
+    # must suppress, not a reason to let both bots fail open and respond.
+    if decision_type == "command" and runtime.get("unregistered_match") is not None:
         return ClaimEvaluation("abstain", "unregistered_runtime_command", False, gates)
     if decision_type == "command" and runtime.get("runtime_match") is None:
         return ClaimEvaluation("abstain", "command_not_confirmed_at_runtime", False, gates)
