@@ -13,11 +13,9 @@ for Phases 4–11 without authorizing those phases to start early.
 
 Phase 2 is in its final production gate. Correlation v3, runtime command
 inventory, response attribution, exact-conversation claim canary, typed
-platform capabilities, and policy v4 were deployed. The 2026-07-14 10:19:02
-CST through 2026-07-15 10:19:02 CST window was rejected: a platform message
-containing U+0000 caused four PostgreSQL-backed Core 500 responses; resolved
-reply ownership did not precede command text; and all 138 directory-derived
-random draw/mutation triggers were absent from the reviewed registry.
+platform capabilities, policy v5, migration `0011_claim_ack`, and bridge 0.3.2
+are deployed. Earlier rejected windows remain diagnostic evidence in
+`ACCEPTANCE.md`.
 
 The policy-v4 replacement window reached 24 hours, but the complete row-level
 and code review rejected it as final evidence. It exposed short-message-ID
@@ -26,18 +24,13 @@ leading-segment command false positives, private/reply policy gaps, Nekro
 task-attribution races, a committed-deny/response-loss claim hole, and
 ambiguous send timeouts counted as confirmed failures.
 
-Policy v5 plus migration `0011_claim_ack` is the Phase 2 remediation target.
-After it and both bridge revisions are reviewed, tested, and deployed, the
-controlled matrix in `PHASE2_FINAL_AUDIT.md` must pass in test group
-`708309706`; only then does a new, explicitly timestamped 24-hour window start.
-There is currently no authoritative replacement window and Phase 3 has not
-started. `ACCEPTANCE.md` must contain the signed clean audit before any Phase 3
-code or production authority begins. Because Nekro's public hook cannot prove
-that `BLOCK_TRIGGER` survived aggregate plugin signal handling, policy v5 adds
-an exact-source OneBot outbound guard covering both active-event and
-task-attributed sends. It tracks prior same-event send attempts and permits ACK
-only after authoritative guard installation. Deployment and controlled
-fault-injection evidence for that guard remain Phase 2 exit conditions.
+The policy-v5 controlled matrix passed on the deployed candidate. The
+authoritative replacement window runs from 2026-07-16 21:49:26 CST through
+2026-07-17 21:49:26 CST with clean bridge baselines recorded in
+`ACCEPTANCE.md`. Phase 3 has not started. The remaining gate is the exact-window
+SQL audit, counter and log review, exceptional-row review, and operator
+sign-off. No Phase 3 code or production authority begins before that evidence
+is clean and Phase 2 completion is checked.
 
 ## Sequencing rules
 

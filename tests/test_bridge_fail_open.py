@@ -77,6 +77,57 @@ def test_claim_and_background_report_timeouts_are_independent() -> None:
     ],
 )
 @pytest.mark.asyncio
+async def test_claim_and_ack_retry_transient_failures_with_stable_keys(path: Path) -> None:
+    module = load_reporter_module(path)
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "instance-token",
+        10,
+        claim_timeout_seconds=10.0,
+        report_timeout_seconds=10.0,
+        claim_attempts=2,
+        claim_retry_backoff_seconds=0,
+    )
+    calls: list[tuple[str, str | None]] = []
+    endpoint_attempts: dict[str, int] = {"evaluate": 0, "ack": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        endpoint = "evaluate" if request.url.path.endswith("/evaluate") else "ack"
+        endpoint_attempts[endpoint] += 1
+        calls.append((endpoint, request.headers.get("Idempotency-Key")))
+        if endpoint_attempts[endpoint] == 1:
+            raise httpx.ReadTimeout("transient checkpoint stall", request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"claim_id": "claim-123", "action": "deny"},
+        )
+
+    reporter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    claim = await reporter.request_claim({"event": True}, "event-key-123")
+    acknowledged = await reporter.acknowledge_claim("claim-123")
+    await reporter._client.aclose()
+
+    assert claim == {"claim_id": "claim-123", "action": "deny"}
+    assert acknowledged is True
+    assert calls == [
+        ("evaluate", "event-key-123"),
+        ("evaluate", "event-key-123"),
+        ("ack", "claim-ack-claim-123"),
+        ("ack", "claim-ack-claim-123"),
+    ]
+    assert reporter.claim_failures == 0
+    assert reporter.claim_ack_failures == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("bridges/lily_nonebot/lily_core_bridge/reporter.py"),
+        Path("bridges/nekro/superlily_bridge/reporter.py"),
+    ],
+)
+@pytest.mark.asyncio
 async def test_background_reports_retry_transient_failures_with_same_idempotency_key(
     path: Path,
 ) -> None:

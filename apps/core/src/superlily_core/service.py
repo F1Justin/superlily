@@ -1702,7 +1702,11 @@ async def evaluate_event_claim(
             )
             if observed_peers and acknowledged_peers == observed_peers:
                 break
-            await session.commit()
+            # SQLite needs a fresh transaction to observe the peer ACK.
+            # PostgreSQL READ COMMITTED already refreshes the snapshot for
+            # each SELECT; committing here multiplies checkpoint fsync stalls.
+            if session.bind.dialect.name == "sqlite":
+                await session.commit()
             await asyncio.sleep(0.02)
 
     async with _correlation_guard(session, lock_fingerprint):

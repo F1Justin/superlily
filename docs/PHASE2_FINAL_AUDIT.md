@@ -1,12 +1,11 @@
 # Phase 2 final production audit
 
-This is the repeatable close-out procedure for the final Phase 2 canary. No
-authoritative policy-v5 window is running yet. The next window starts only
-after the reviewed code, migration `0011_claim_ack`, Core, and both bridges are
-deployed; both bridge counters and exact image/config hashes are recorded; and
-the controlled test matrix below passes in `qq:group:708309706`. Its start and
-end must then be passed explicitly to `phase2_final_audit.sql`; the script has
-no stale date defaults.
+This is the repeatable close-out procedure for the final Phase 2 canary. The
+authoritative policy-v5 window runs from `2026-07-16 21:49:26+08` through
+`2026-07-17 21:49:26+08`. The reviewed code, migration `0011_claim_ack`, Core,
+and bridge 0.3.2 are deployed; clean bridge baselines and the controlled matrix
+are recorded in `ACCEPTANCE.md`. These exact start/end values must be passed to
+`phase2_final_audit.sql`; the script has no stale date defaults.
 
 The completed policy-v4 window (`2026-07-15 10:15:49 CST` through
 `2026-07-16 10:15:49 CST`) is retained as diagnostic evidence, not acceptance.
@@ -24,13 +23,13 @@ procedure, not evidence by itself. `phase2_final_audit.sql` is the read-only
 executable form of the count, invariant, outcome, structured-data, instance,
 and registry checks below.
 
-At the new deployment boundary, record each bridge's `queue_depth`, `dropped`,
-`claim_failures`, process/container start time, code hash, and platform
-connection state. Claim requests use a three-second fail-open deadline while
-background ingestion uses a separate five-second deadline and three bounded
-idempotent attempts for transient transport, 429, and 5xx failures. Final acceptance
-compares the ending counters with these exact baselines and correlates every
-increase with timestamped bridge, Core, database, and NapCat logs.
+At the deployment boundary, both bridges reported `queue_depth=0`, `dropped=0`,
+`claim_failures=0`, and `claim_ack_failures=0`. Claim and ACK requests use a
+ten-second per-attempt deadline and two bounded idempotent attempts; background
+ingestion uses a ten-second deadline and three bounded idempotent attempts for
+transient transport, 429, and 5xx failures. Final acceptance compares ending
+counters with these exact baselines and correlates every increase with
+timestamped bridge, Core, database, and NapCat logs.
 
 The earlier candidate window was deliberately not signed off. A pre-close
 audit found six QQ custom-scheme URI query strings and materially increasing

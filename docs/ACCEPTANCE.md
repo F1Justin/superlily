@@ -133,13 +133,14 @@ response gap.
   allow owner cannot race to a different instance.
 - [x] The earlier deny-before-allow database ordering was implemented and
   canaried.
-- [ ] Policy v5 enforced allow requires an acknowledged installed suppression
+- [x] Policy v5 enforced allow requires an acknowledged installed suppression
   from every other observed instance; a committed deny whose HTTP response was
   lost cannot create a fictitious exclusive owner. Lily uses an event-scoped
   send guard. Nekro combines `BLOCK_TRIGGER` with an exact-source OneBot guard
   covering active-event and task-attributed sends, records prior same-event
-  send attempts, and ACKs only after authoritative installation. This remains
-  unchecked until deployment and controlled fault injection.
+  send attempts, and ACKs only after authoritative installation. Deployment,
+  lost-response tests, prior-send tests, and the live command/talk controlled
+  samples all exercised this boundary.
 - [x] Decision recomputation is serialized per canonical source across event,
   response, resolver, and claim paths.
 - [x] Only actionable `command`/`talk` decisions can allow or deny;
@@ -156,7 +157,7 @@ response gap.
   preserves history with `BLOCK_TRIGGER`; the policy-v5 bridge also guards
   attributable `send_*` APIs if another plugin overrides that signal.
 - [x] A Core outage/timeout leaves both bots on their existing behavior.
-- [ ] `qq:source:v2` bridge identity, Core conflict rejection, strong
+- [x] `qq:source:v2` bridge identity, Core conflict rejection, strong
   fingerprint de-splitting, structural `command_eligible`, private-recipient
   policy, task-bound response attribution, and ambiguous completion are
   deployed and covered by controlled samples.
@@ -428,12 +429,51 @@ authoritative Phase 2 evidence. The previous aggregate audit did not detect:
   showed the message may already have been delivered.
 
 Policy v5, bridge source identity v2, task-bound trigger attribution, explicit
-ambiguous completion, and `0011_claim_ack` are the remediation set. They are not
-claimed deployed or accepted in this record. After review/tests/deployment,
-the controlled matrix in `PHASE2_FINAL_AUDIT.md` must pass in test group
-`708309706`. A new baseline then starts a new uninterrupted 24-hour window;
-its exact timestamps, counters, hashes, SQL output, exceptional-row review,
-and operator signature will be appended here. Phase 3 has not started.
+ambiguous completion, and `0011_claim_ack` are now deployed. The remaining
+unchecked item is the uninterrupted 24-hour policy-v5 production review below;
+Phase 3 has not started.
 
-The unchecked items intentionally require an operator-visible live deployment;
-development tests do not mutate either running bot.
+## Policy v5 authoritative window in progress
+
+The reviewed Core/bridge transport candidate was deployed on 2026-07-16 CST.
+Core image
+`sha256:bdfed258dfdb063956b15b1094dffe7154c546ca66d457c10128ce211e57ae2d`
+started at 21:40:30 and is healthy at migration head `0011_claim_ack` with no
+Alembic drift. Lily bridge 0.3.2 started through `tmux-nb.service` at 21:40:49
+and reconnected at 21:41:19. Nekro bridge 0.3.2 last started at 21:43:34 and
+reconnected at 21:44:04. Runtime hashes match the repository copies; no token
+or other key changed.
+
+This transport revision was required by a measured PostgreSQL checkpoint at
+21:30:28 whose 9.476-second sync phase exceeded the earlier three-second claim
+deadline. Claim evaluation and suppression ACK now use a ten-second
+per-attempt deadline and two bounded retries with the same idempotency key;
+background reports use ten seconds and three retries. PostgreSQL claim polling
+uses statement-level `READ COMMITTED` snapshots without a commit every 20 ms.
+Event and response persistence retains synchronous commit semantics.
+
+Both full suites pass 172 tests on SQLite and PostgreSQL. A production
+checkpoint spanning 21:40:28 through 21:42:03 took 94.763 seconds while the
+bridges came online; its sync phase was 82 ms and the later bridge baselines
+remained clean. A concurrent forced-checkpoint probe sent 40 dual-instance
+claim requests with zero failures: maximum 62 ms, p95 48 ms, median 43 ms,
+all correctly abstaining as non-actionable. The probe was metadata-marked and
+did not invoke either bot.
+
+The final real command sample at 21:48:20 used `wf 9+4` in test group
+`708309706`. Lily and Nekro reported account-local message IDs `726135520` and
+`1069052117` with common `real_seq=11126`, forming source
+`event:b82c4803-9da4-4fd5-b9be-be7301fca08e`. The revision-2 canonical
+decision was `command -> lily-command`. Nekro installed and acknowledged an
+enforced deny; Lily received an enforced allow whose coordination set contains
+that acknowledged Nekro deny. Exactly one linked successful response exists,
+from Lily with text `13`; Nekro produced none. Together with the immediately
+preceding talk/reply/rapid-identical-message matrix, the controlled gate is
+complete.
+
+At 2026-07-16 21:49:26 CST both instances were online on bridge 0.3.2 with
+`queue_depth=0`, `dropped=0`, `claim_failures=0`, and
+`claim_ack_failures=0`. This is the authoritative baseline and starts the new
+window. Its planned endpoint is 2026-07-17 21:49:26 CST. The ending SQL audit,
+counter deltas, exceptional-row review, and operator sign-off remain required;
+until then Phase 2c and Phase 2 completion stay unchecked.

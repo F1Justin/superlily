@@ -25,6 +25,8 @@ class BackgroundReporter:
         report_timeout_seconds: float | None = None,
         report_attempts: int = 3,
         report_retry_backoff_seconds: float = 0.1,
+        claim_attempts: int = 2,
+        claim_retry_backoff_seconds: float = 0.1,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token
@@ -33,6 +35,8 @@ class BackgroundReporter:
         self.report_timeout_seconds = report_timeout_seconds or claim_timeout_seconds
         self.report_attempts = max(1, report_attempts)
         self.report_retry_backoff_seconds = max(0.0, report_retry_backoff_seconds)
+        self.claim_attempts = max(1, claim_attempts)
+        self.claim_retry_backoff_seconds = max(0.0, claim_retry_backoff_seconds)
         self.dropped = 0
         self.claim_failures = 0
         self.claim_ack_failures = 0
@@ -82,48 +86,69 @@ class BackgroundReporter:
     async def request_claim(self, payload: dict[str, Any], idempotency_key: str) -> dict[str, Any] | None:
         if not self.enabled or self._client is None:
             return None
-        try:
-            response = await self._client.post(
-                f"{self.base_url}/v1/claims/evaluate",
-                json=payload,
-                timeout=self.claim_timeout_seconds,
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Idempotency-Key": idempotency_key,
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-            return body if isinstance(body, dict) else None
-        except Exception as exc:
-            self.claim_failures += 1
-            self._warn_limited(
-                f"Lily Core claim failed open: {type(exc).__name__}",
-                self.claim_failures,
-            )
-            return None
+        failure: Exception | None = None
+        for attempt in range(self.claim_attempts):
+            try:
+                response = await self._client.post(
+                    f"{self.base_url}/v1/claims/evaluate",
+                    json=payload,
+                    timeout=self.claim_timeout_seconds,
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Idempotency-Key": idempotency_key,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+                return body if isinstance(body, dict) else None
+            except Exception as exc:
+                failure = exc
+                if not self._retryable(exc) or attempt + 1 >= self.claim_attempts:
+                    break
+                await asyncio.sleep(self.claim_retry_backoff_seconds * (2**attempt))
+        assert failure is not None
+        self.claim_failures += 1
+        self._warn_limited(
+            f"Lily Core claim failed open: {type(failure).__name__}",
+            self.claim_failures,
+        )
+        return None
 
     async def acknowledge_claim(self, claim_id: str) -> bool:
         if not self.enabled or self._client is None or not claim_id:
             return False
-        try:
-            response = await self._client.post(
-                f"{self.base_url}/v1/claims/{claim_id}/ack",
-                timeout=self.claim_timeout_seconds,
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Idempotency-Key": f"claim-ack-{claim_id}",
-                },
-            )
-            response.raise_for_status()
-            return True
-        except Exception as exc:
-            self.claim_ack_failures += 1
-            self._warn_limited(
-                f"Lily Core claim ack failed safely: {type(exc).__name__}",
-                self.claim_ack_failures,
-            )
-            return False
+        failure: Exception | None = None
+        for attempt in range(self.claim_attempts):
+            try:
+                response = await self._client.post(
+                    f"{self.base_url}/v1/claims/{claim_id}/ack",
+                    timeout=self.claim_timeout_seconds,
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Idempotency-Key": f"claim-ack-{claim_id}",
+                    },
+                )
+                response.raise_for_status()
+                return True
+            except Exception as exc:
+                failure = exc
+                if not self._retryable(exc) or attempt + 1 >= self.claim_attempts:
+                    break
+                await asyncio.sleep(self.claim_retry_backoff_seconds * (2**attempt))
+        assert failure is not None
+        self.claim_ack_failures += 1
+        self._warn_limited(
+            f"Lily Core claim ack failed safely: {type(failure).__name__}",
+            self.claim_ack_failures,
+        )
+        return False
+
+    @staticmethod
+    def _retryable(exc: Exception) -> bool:
+        return isinstance(exc, httpx.TransportError) or (
+            isinstance(exc, httpx.HTTPStatusError)
+            and (exc.response.status_code == 429 or exc.response.status_code >= 500)
+        )
 
     async def _run(self) -> None:
         assert self._client is not None
@@ -146,10 +171,7 @@ class BackgroundReporter:
                         break
                     except Exception as exc:
                         failure = exc
-                        retryable = isinstance(exc, httpx.TransportError) or (
-                            isinstance(exc, httpx.HTTPStatusError)
-                            and (exc.response.status_code == 429 or exc.response.status_code >= 500)
-                        )
+                        retryable = self._retryable(exc)
                         if not retryable or attempt + 1 >= self.report_attempts:
                             break
                         await asyncio.sleep(self.report_retry_backoff_seconds * (2**attempt))
