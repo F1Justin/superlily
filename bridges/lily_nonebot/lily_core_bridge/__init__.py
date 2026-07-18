@@ -28,7 +28,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.3.2"
+BRIDGE_VERSION = "0.4.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -51,6 +51,16 @@ class Config(BaseModel):
     lily_core_report_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=5)
     lily_core_claim_attempts: int = Field(default=2, ge=1, le=5)
     lily_core_claim_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=5)
+    lily_core_spool_path: str = (
+        "/home/justin/lily/data/superlily-core/ingress-spool.sqlite3"
+    )
+    lily_core_spool_quota_bytes: int = Field(
+        default=268_435_456, ge=1_048_576, le=4_294_967_296
+    )
+    lily_core_spool_retention_seconds: int = Field(default=86_400, ge=0, le=604_800)
+    lily_core_spool_max_record_bytes: int = Field(
+        default=1_048_576, ge=65_536, le=8_388_608
+    )
     lily_core_include_raw: bool = False
     lily_core_claim_enabled: bool = False
 
@@ -66,6 +76,10 @@ reporter = BackgroundReporter(
     plugin_config.lily_core_report_retry_backoff_seconds,
     plugin_config.lily_core_claim_attempts,
     plugin_config.lily_core_claim_retry_backoff_seconds,
+    plugin_config.lily_core_spool_path,
+    plugin_config.lily_core_spool_quota_bytes,
+    plugin_config.lily_core_spool_retention_seconds,
+    plugin_config.lily_core_spool_max_record_bytes,
 )
 driver = get_driver()
 event_contexts: dict[int, dict[str, Any]] = {}
@@ -291,6 +305,7 @@ async def heartbeat_loop() -> None:
             "connection_status": "connected" if bots else "disconnected",
             "occurred_at": utc_iso(),
             "capabilities": ONEBOT_QQ_CAPABILITIES,
+            "ingress_spool": reporter.spool_status(),
             "metadata": {
                 "connected_bots": len(bots),
                 "queue_depth": reporter.queue.qsize(),
@@ -343,7 +358,7 @@ async def start_bridge() -> None:
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="lily-core-heartbeat")
-    logger.info("Lily Core bridge started in fail-open mode")
+    logger.info("Lily Core bridge started with fail-open durable event capture")
 
 
 @driver.on_shutdown

@@ -12,3 +12,4 @@ Current records:
 - `0003-invocation-transitions-and-recovery.md`
 - `0004-artifact-lifecycle-and-storage.md`
 - `0005-control-plane-authentication.md`
+- `0006-c0d-collection-reliability-boundary.md`

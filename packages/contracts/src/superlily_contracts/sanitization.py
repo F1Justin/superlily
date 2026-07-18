@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+SANITIZER_VERSION = "superlily.sanitizer.v1"
+
 _SENSITIVE_KEY = re.compile(
     r"(?:^|_)(?:access_?token|api_?key|authorization|cookie|credential|database_?(?:dsn|url)|dsn|password|private_?key|secret|session|ticket|token)(?:$|_)",
     re.IGNORECASE,

@@ -468,6 +468,8 @@ durable ingress may reasonably move ahead of Renderer and natural-language
 work without enabling new response authority. The third account and automatic
 egress failover still wait for the role-lease/fencing and delivery boundaries.
 
-Whether to pull `HA-0` forward is an explicit roadmap priority choice after the
-Phase 2 final window. Until that choice is made, this document changes no
-running bridge, account, claim mode, or acceptance gate.
+The roadmap has now made that explicit priority choice: the durable spool and
+coverage subset of `HA-0` moves into the authority-neutral C0-D collection
+packet after Phase 3a and before Phase 3b. This does not authorize the third
+account, role failover, egress leases, or any running-service change by itself;
+those remain under the Phase 6 gates in this document.

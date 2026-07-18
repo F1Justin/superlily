@@ -129,3 +129,23 @@ immutable database copies, provider inventory, heartbeat, eligibility and
 execution mode remain separate layers. See `PHASE3_TOOL_REGISTRY.md`,
 `PHASE3_ACCEPTANCE.md`, and the desired/reported/effective/actual operator view
 in `CONTROL_PLANE.md`.
+
+## C0-D collection reliability insertion
+
+C0-D is inserted after deployed Phase 3a and before Phase 3b without reopening
+the Phase 2 routing acceptance. It adds capture-policy/completeness snapshots,
+normalized basic platform actions, bridge-spool commit receipts and collector
+watermarks. It adds no model, tool, claim or delivery authority.
+
+The durable spool remains adapter-local so Core never receives QQ credentials.
+The adapter writes first, submits an authenticated `spool_id + sequence +
+record_sha256`, and deletes only after a matching Core receipt. Core keeps the
+account-local namespace and exposes highest-seen versus highest-contiguous
+watermarks. Platform-reported occurrence time, bridge capture time, Core receive
+time and database commit time remain separate so a reconnect backlog cannot be
+mistaken for genuinely simultaneous messages. C0-D2/D3 provide the actual
+spool files, quotas, quarantine and coverage operations.
+
+C0-A is deliberately separate. Nested merged-forward expansion, formal
+`archive_full` rollout, portable exports, reconstruction, retention/deletion
+propagation and old-history import do not block Phase 3b once C0-D is stable.

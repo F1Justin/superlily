@@ -104,6 +104,9 @@ class EventIn(WireModel):
     sender: SenderRef | None = None
     message: MessageRef | None = None
     references: list[EventReference] = Field(default_factory=list, max_length=128)
+    ingress: "IngressRecordRef | None" = None
+    capture: "CaptureEnvelope | None" = None
+    actions: list["PlatformActionDetail"] = Field(default_factory=list, max_length=128)
     occurred_at: AwareDatetime
     raw: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -114,6 +117,16 @@ class EventIn(WireModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("occurred_at must include a timezone")
         return value
+
+
+from .collection import (  # noqa: E402
+    CaptureEnvelope,
+    IngressRecordRef,
+    IngressSpoolStatus,
+    PlatformActionDetail,
+)
+
+EventIn.model_rebuild()
 
 
 class ResponseIn(WireModel):
@@ -172,6 +185,7 @@ class HeartbeatIn(WireModel):
     error_summary: str | None = Field(default=None, max_length=4096)
     occurred_at: AwareDatetime
     capabilities: PlatformCapabilities | None = None
+    ingress_spool: IngressSpoolStatus | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

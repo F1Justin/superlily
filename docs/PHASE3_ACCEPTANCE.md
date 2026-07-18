@@ -67,10 +67,10 @@ continued successfully immediately after the Core-only replacement.
   tested. Canary binds tool/version/hash, conversation, caller and provider.
 - [ ] Global stop, per-tool/version suspension and provider quarantine each
   independently prevent new leases and have audited rollback.
-- [ ] Migration `0013_tool_invocations` and every legal/illegal transition,
+- [ ] Migration `0014_tool_invocations` and every legal/illegal transition,
   idempotent create, cancellation, deadline and append-only invariant pass both
   databases. `ledger_only` creates no executable lease.
-- [ ] Migration `0014_tool_attempts` proves one active lease, monotonically new
+- [ ] Migration `0015_tool_attempts` proves one active lease, monotonically new
   fences, provider/attempt-secret binding and DB-time authority.
 - [ ] Duplicate, replayed, late and stale-fence start/heartbeat/complete/fail are
   rejected without mutating the current invocation and remain auditable.
@@ -85,7 +85,7 @@ continued successfully immediately after the Core-only replacement.
 
 ## Artifacts and first tools
 
-- [ ] Migration `0015_tool_confirmations_artifacts` passes both databases and
+- [ ] Migration `0016_tool_confirmations_artifacts` passes both databases and
   reservation/upload/finalize state is immutable/idempotent.
 - [ ] Upload secrets are one-use/provider-attempt-fence-bound. Core enforces
   expiry, count, bytes, MIME/hash/dimensions and quarantine before atomic

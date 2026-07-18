@@ -20,6 +20,49 @@ The wire schema is version `1.0` and the HTTP surface is under `/v1`.
 Each token is bound to exactly one `instance.instance_id`. A Lily token cannot
 submit a Nekro payload.
 
+### C0-D collection reliability envelope
+
+An event may carry three optional, backward-compatible C0-D fields:
+
+- `ingress` binds the event to one bridge-owned durable spool record using
+  schema version, `spool_id`, monotonically positive `sequence`, record
+  SHA-256, and timezone-aware capture time;
+- `capture` reports completeness, sanitizer version, source payload hash/size,
+  omitted field paths, bounded sanitized platform extras, and an explicit
+  reason for `partial` or `unavailable` collection;
+- `actions` contains factual normalized platform actions such as reaction,
+  recall or poke, with actor/subject kept separate from the target message.
+
+Capture profile is Core authority, not a bridge claim. Core snapshots the
+effective exact-conversation policy on the observation. C0-D creates no HTTP
+mutation route for `conversation_capture_profiles`, and production
+`archive_full` activation belongs to C0-A.
+
+`POST /v1/events` returns a versioned commit receipt after the database
+transaction. It preserves `observation_id`, canonical `source_event_id` and
+`duplicate`, and adds receipt ID, optional spool binding, committed time, and
+the spool's highest-seen/contiguous sequence. Replaying an event must reproduce
+the same spool binding; one authenticated instance cannot bind the same
+`spool_id + sequence` to another observation. `/v1/claims/evaluate` returns the
+same receipt under `ingest_receipt`, because a claim request may be the only
+ingest path used by a bridge.
+
+The event times have deliberately different meanings. `occurred_at` is the
+platform/adapter-reported event time, `ingress.captured_at` is when this bridge
+durably accepted the delivery, and the receipt's `committed_at` is when Core
+committed it. `/v1/events/recent` exposes all three plus Core `received_at`.
+OneBot implementations may emit a backlog immediately after login and their
+console may print the current time for every line; Core never rewrites that
+uncertainty into a guessed historical time. Identity and replay use the
+account-local message ID, allowlisted native identity, idempotency key and
+spool sequence rather than timestamp equality alone.
+
+Action target resolution is scoped to observer instance, canonical
+conversation, causal time and that account's local message identity. A numeric
+QQ message ID is never global. Missing or multiple candidates remain
+`unresolved` or `ambiguous`; reaction rows carry no positive/negative feedback
+meaning.
+
 Heartbeats may carry a typed `capabilities` snapshot. A snapshot names a
 versioned adapter profile, an explicit list of supported operations, and
 optional numeric limits. Missing capabilities mean unknown, never “supports
@@ -175,6 +218,7 @@ repeated successful send remains exceptional.
   `/v1/claims/recent`, `/v1/claims/summary`,
   `/v1/native-identities/recent`, `/v1/native-identities/coverage`,
   `/v1/command-registry`, `/v1/command-registry/runtime`,
+  `/v1/ingress/watermarks`,
   `/v1/events/{source_event_id}/context`, and `/v1/instances` require the admin
   bearer token.
 - `POST /v1/event-links/resolve` is also admin-only and retries unresolved or

@@ -9,6 +9,11 @@ Detailed post-Tool-Registry design: `docs/FUTURE_PHASES_DESIGN.md`. It defines
 the shared boundaries, internal work packets, failure models, and exit gates
 for Phases 4–11 without authorizing those phases to start early.
 
+The durable product decisions behind collection completeness, progressive
+tool disclosure, Unix-style resource exploration, natural-language command
+compatibility, fast-path chat behavior, and cost-aware model routing are
+recorded in `docs/COLLECTION_AND_AGENT_CONSENSUS.md`.
+
 ## Current position
 
 Phase 2 is complete and signed in `ACCEPTANCE.md`; the Phase 3 entrance gate is
@@ -37,9 +42,18 @@ desired/reported/effective view are deployed in zero-authority mode. The
 complete SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
 backup/restore and production drift checks pass. Production has zero Provider
 credentials, descriptors, active or eligible tools, and execution remains
-off. The next gate is the shared Provider SDK plus the separately reviewed
+off. The next Phase 3 gate is the shared Provider SDK plus the separately reviewed
 real `status.inspect` authority and runtime evidence; no invocation or lease
 surface exists.
+
+Before Phase 3b adds invocation or lease authority, the current operator
+priority is the authority-neutral `C0-D` collection-reliability packet. It
+pulls forward durable bridge spools, commit receipts, capture profiles,
+sanitization, normalized basic platform actions, replay and coverage
+diagnostics. The larger `C0-A` archival packet follows C0-D but is not a Phase
+3b correctness dependency. Phase 2's signed routing acceptance remains valid,
+and Phase 3a's zero-authority Registry remains deployed; neither packet
+changes bot response behavior or tool authority.
 
 ## Sequencing rules
 
@@ -55,6 +69,33 @@ surface exists.
    it.
 6. Existing command entry points stay available until their tool-backed path
    has passed shadow comparison, exact-conversation canary, and rollback.
+
+## Immediate authority-neutral packet: C0-D collection reliability
+
+C0-D is an earlier-layer reliability repair scheduled after deployed Phase 3a
+and before Phase 3b. Its detailed scope and acceptance criteria are in
+`docs/COLLECTION_AND_AGENT_CONSENSUS.md`.
+
+- Define exact capture profiles, versioned sanitizer/completeness metadata,
+  and normalized basic platform actions; reaction capture records facts and
+  assigns no feedback semantics.
+- Keep image bytes out of PostgreSQL while retaining ordered placeholders and
+  available metadata. Any future binary retention uses bounded object storage.
+- Replace loss-prone in-memory-only telemetry with idempotent durable bridge
+  spools, commit receipts, replay, watermarks, lag/gap diagnostics, quotas, and
+  quarantine.
+- Preserve per-account observations and resolve only with verified strong
+  identity. Old or unresolved data is never merged by text/time similarity.
+
+C0-D is complete only when outage/restart replay loses no controlled records,
+Lily and Nekro basic action notices are represented with honest completeness
+status, receipt/coverage diagnostics and media policy are enforced, and
+command/claim/Registry behavior is unchanged.
+
+After C0-D is stable, `C0-A` adds nested merged-forward expansion,
+`archive_full` rollout, portable exports, reconstruction, retention/deletion
+propagation, and old-history import. C0-A and Phase 3b may be scheduled
+independently; Phase 3b does not wait for archival edge cases.
 
 ## Dependency shape
 
@@ -226,10 +267,10 @@ Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-6-watchdog-incidents-and-ro
 Three-account collection/failover design:
 `docs/PHASE6_THREE_ACCOUNT_HA.md`.
 
-Availability-priority option: the authority-neutral `HA-0` durable ingress
-spool and coverage packet may be pulled forward after Phase 2 by an explicit
-roadmap decision. Doing so does not deploy Reserve or enable failover egress;
-the remaining Phase 6 release gates stay in numbered order.
+Availability-priority decision: the authority-neutral `HA-0` durable ingress
+spool and coverage packet is pulled forward into C0-D after Phase 3a and before
+Phase 3b. This does not deploy Reserve or enable failover egress; the remaining
+Phase 6 release gates stay in numbered order.
 
 - Model Command, Talk, and Watchdog as explicit roles with capability and
   health snapshots, not hard-coded account IDs.

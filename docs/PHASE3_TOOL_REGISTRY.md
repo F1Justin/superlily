@@ -346,15 +346,18 @@ Database constraints enforce one active lease, legal terminal uniqueness, and
 idempotency. PostgreSQL advisory locks may serialize transition decisions, but
 full IDs/hashes and unique constraints remain the correctness authority.
 
-Migration allocation is frozen before implementation:
+Migration allocation was shifted only for the inserted C0-D reliability
+foundation; the remaining Phase 3 allocation is frozen before implementation:
 
 - `0011_claim_ack` belongs to and completes Phase 2;
 - `0012_tool_registry`: immutable descriptor versions, review/lifecycle
   records, stable providers, inventory snapshots/entries, and heartbeats
   (Phase 3a only);
-- `0013_tool_invocations`: invocations and append-only transitions;
-- `0014_tool_attempts`: leases, fencing tokens, attempt heartbeats and usage;
-- `0015_tool_confirmations_artifacts`: confirmation ledger plus bounded
+- `0013_collection_reliability`: authority-neutral C0-D capture evidence,
+  actions, receipts and watermarks; no tool execution state;
+- `0014_tool_invocations`: invocations and append-only transitions;
+- `0015_tool_attempts`: leases, fencing tokens, attempt heartbeats and usage;
+- `0016_tool_confirmations_artifacts`: confirmation ledger plus bounded
   artifact reservations and metadata.
 
 Later migrations may split these tables but may not collapse immutable audit
@@ -519,12 +522,12 @@ After the start checklist is green, implementation begins in this exact order:
 5. Import/review only `status.inspect`; keep execution `off` while collecting
    descriptor/provider/effective-state evidence. A read-only control-panel view
    may begin here, but no mutation UI.
-6. Add migration `0013_tool_invocations`, transition/DB-time/reaper tests, and
+6. Add migration `0014_tool_invocations`, transition/DB-time/reaper tests, and
    `ledger_only` proposals. No provider lease exists yet.
-7. Add migration `0014_tool_attempts`, lease/fence fault injection, all three
+7. Add migration `0015_tool_attempts`, lease/fence fault injection, all three
    stop controls, then a standalone status provider. Canary the exact
    tool/version/conversation/caller/provider tuple and prove rollback.
-8. Add migration `0015_tool_confirmations_artifacts` and pass reservation,
+8. Add migration `0016_tool_confirmations_artifacts` and pass reservation,
    upload, finalize, expiry, quota, MIME/hash, reaper, and late-fence tests.
 9. Migrate text-only `wolfram.run`; enable its image output only through the
    artifact path. Migrate `latex.render` after that boundary passes. Old command

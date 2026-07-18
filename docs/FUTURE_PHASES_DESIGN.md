@@ -62,8 +62,9 @@ and reviewed authority remain separate.
 
 ### Logical migration slices
 
-Migration `0011_claim_ack` completes the Phase 2 claim handshake. Only Phase 3
-migration numbers `0012`–`0015` are reserved. Later phases keep
+Migration `0011_claim_ack` completes the Phase 2 claim handshake;
+`0013_collection_reliability` is the inserted authority-neutral C0-D slice.
+Phase 3 reserves `0012` and `0014`–`0016`. Later phases keep
 logical slices until the preceding phase exits, so planning does not force a
 bad physical schema years early:
 

@@ -26,11 +26,13 @@ from .command_registry import (
 from .dependencies import get_session
 from .models import (
     BotInstance,
+    CollectorWatermark,
     CommandRegistrySnapshot,
     EventClaim,
     EventDecision,
     EventLink,
     EventObservation,
+    IngressReceiptRecord,
     ResponseRecord,
     SourceEvent,
 )
@@ -43,6 +45,7 @@ from .service import (
     ingest_event,
     ingest_heartbeat,
     ingest_response,
+    ingress_receipt_view,
     resolve_pending_links,
 )
 from .tool_registry_service import (
@@ -87,12 +90,12 @@ async def post_event(
     session: Session,
     authenticated_instance: Identity,
     idempotency_key: IdempotencyKey,
-) -> dict[str, str | bool]:
+) -> dict:
     _verify_identity(authenticated_instance, payload.instance.instance_id)
     record, duplicate = await ingest_event(session, payload, idempotency_key, session.info["settings"])
     if duplicate:
         response.status_code = status.HTTP_200_OK
-    return {"observation_id": record.id, "source_event_id": record.source_event_id, "duplicate": duplicate}
+    return await ingress_receipt_view(session, record, duplicate=duplicate)
 
 
 @router.post("/v1/claims/evaluate", status_code=status.HTTP_200_OK)
@@ -103,13 +106,22 @@ async def post_claim(
     idempotency_key: IdempotencyKey,
 ) -> dict:
     _verify_identity(authenticated_instance, payload.instance.instance_id)
-    record, duplicate = await evaluate_event_claim(
+    record, duplicate, observation, event_duplicate = await evaluate_event_claim(
         session,
         payload,
         idempotency_key,
         session.info["settings"],
     )
-    return {**claim_record_payload(record), "duplicate": duplicate}
+    receipt = await ingress_receipt_view(
+        session,
+        observation,
+        duplicate=event_duplicate,
+    )
+    return {
+        **claim_record_payload(record),
+        "duplicate": duplicate,
+        "ingest_receipt": receipt,
+    }
 
 
 @router.post("/v1/claims/{claim_id}/ack", status_code=status.HTTP_200_OK)
@@ -216,8 +228,12 @@ async def recent_events(
 ) -> list[dict]:
     rows = (
         await session.execute(
-            select(EventObservation, SourceEvent)
+            select(EventObservation, SourceEvent, IngressReceiptRecord)
             .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .outerjoin(
+                IngressReceiptRecord,
+                IngressReceiptRecord.observation_id == EventObservation.id,
+            )
             .order_by(desc(EventObservation.received_at))
             .limit(limit)
         )
@@ -241,12 +257,140 @@ async def recent_events(
             "native_identity": observation.metadata_json.get("native_identity"),
             "correlation_diagnostic": observation.metadata_json.get("correlation"),
             "correlation_version": source.correlation_version,
+            "capture": {
+                "profile": observation.capture_profile,
+                "policy_version": observation.capture_policy_version,
+                "status": observation.capture_status,
+                "sanitizer_version": observation.sanitizer_version,
+                "collector_sanitizer_version": observation.collector_sanitizer_version,
+                "original_payload_sha256": observation.original_payload_sha256,
+                "original_payload_size_bytes": observation.original_payload_size_bytes,
+                "omitted_fields": observation.omitted_fields_json,
+                "reason": observation.capture_reason,
+            },
+            "ingress": (
+                None
+                if receipt is None
+                else {
+                    "spool_id": receipt.spool_id,
+                    "sequence": receipt.collector_sequence,
+                    "record_sha256": receipt.record_sha256,
+                    "captured_at": receipt.captured_at,
+                    "committed_at": receipt.committed_at,
+                }
+            ),
             "text": observation.text,
             "occurred_at": source.occurred_at,
             "received_at": observation.received_at,
         }
-        for observation, source in rows
+        for observation, source, receipt in rows
     ]
+
+
+@router.get("/v1/ingress/watermarks", dependencies=[Depends(require_admin)])
+async def ingress_watermarks(
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = (
+        await session.scalars(
+            select(CollectorWatermark)
+            .order_by(desc(CollectorWatermark.updated_at))
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "schema_version": "1.0",
+            "instance_id": item.instance_id,
+            "spool_id": item.spool_id,
+            "highest_contiguous_sequence": item.highest_contiguous_sequence,
+            "highest_seen_sequence": item.highest_seen_sequence,
+            "next_gap_sequence": (
+                item.highest_contiguous_sequence + 1
+                if item.highest_seen_sequence > item.highest_contiguous_sequence
+                else None
+            ),
+            "last_receipt_at": item.last_receipt_at,
+            "updated_at": item.updated_at,
+        }
+        for item in rows
+    ]
+
+
+@router.get("/v1/ingress/status", dependencies=[Depends(require_admin)])
+async def ingress_status(request: Request, session: Session) -> list[dict]:
+    instances = (await session.scalars(select(BotInstance).order_by(BotInstance.id))).all()
+    watermarks = (await session.scalars(select(CollectorWatermark))).all()
+    watermark_by_scope = {
+        (item.instance_id, item.spool_id): item for item in watermarks
+    }
+    result: list[dict] = []
+    for item in instances:
+        spool = item.metadata_json.get("ingress_spool")
+        spool = spool if isinstance(spool, dict) else None
+        spool_id = spool.get("spool_id") if spool is not None else None
+        watermark = (
+            watermark_by_scope.get((item.id, spool_id))
+            if isinstance(spool_id, str) and spool_id
+            else None
+        )
+        highest_sequence = (
+            int(spool.get("highest_sequence", 0)) if spool is not None else 0
+        )
+        highest_contiguous = (
+            watermark.highest_contiguous_sequence if watermark is not None else 0
+        )
+        highest_seen = watermark.highest_seen_sequence if watermark is not None else 0
+        lag_records = max(0, highest_sequence - highest_contiguous)
+        collector_status = effective_status(
+            item,
+            request.app.state.settings.stale_after_seconds,
+        )
+        if spool is None:
+            reconciliation_state = "unknown"
+        elif collector_status == "offline":
+            reconciliation_state = "stale"
+        elif spool.get("state") in {"error", "quarantined", "quota_pressure"}:
+            reconciliation_state = str(spool["state"])
+        elif lag_records > 0 or int(spool.get("pending_records", 0)) > 0:
+            reconciliation_state = "pending"
+        else:
+            reconciliation_state = "reconciled"
+        result.append(
+            {
+                "schema_version": "1.0",
+                "instance_id": item.id,
+                "collector_status": collector_status,
+                "last_heartbeat_at": item.last_heartbeat_at,
+                "spool": spool,
+                "core_watermark": (
+                    None
+                    if watermark is None
+                    else {
+                        "spool_id": watermark.spool_id,
+                        "highest_contiguous_sequence": highest_contiguous,
+                        "highest_seen_sequence": highest_seen,
+                        "next_gap_sequence": (
+                            highest_contiguous + 1
+                            if highest_seen > highest_contiguous
+                            else None
+                        ),
+                        "last_receipt_at": watermark.last_receipt_at,
+                    }
+                ),
+                "reconciliation": {
+                    "state": reconciliation_state,
+                    "lag_records": lag_records,
+                    "next_gap_sequence": (
+                        highest_contiguous + 1
+                        if highest_seen > highest_contiguous
+                        else None
+                    ),
+                },
+            }
+        )
+    return result
 
 
 @router.get("/v1/responses/recent", dependencies=[Depends(require_admin)])
@@ -924,6 +1068,7 @@ async def instances(request: Request, session: Session) -> list[dict]:
             "last_event_at": item.last_event_at,
             "last_response_at": item.last_response_at,
             "capabilities": item.metadata_json.get("capabilities"),
+            "ingress_spool": item.metadata_json.get("ingress_spool"),
         }
         for item in rows
     ]

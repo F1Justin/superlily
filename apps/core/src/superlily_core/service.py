@@ -20,6 +20,7 @@ from superlily_contracts import (
     EventReference,
     HeartbeatIn,
     ResponseIn,
+    SANITIZER_VERSION,
     SanitizationPolicy,
     sanitize_payload,
 )
@@ -42,12 +43,16 @@ from .correlation import (
 from .decisions import POLICY_VERSION, decide_event
 from .models import (
     BotInstance,
+    CollectorWatermark,
     CommandRegistrySnapshot,
+    ConversationCaptureProfile,
     EventClaim,
     EventDecision,
     EventLink,
     EventObservation,
+    IngressReceiptRecord,
     InstanceStatusTransition,
+    PlatformActionObservation,
     ResponseRecord,
     SourceEvent,
     utc_now,
@@ -78,6 +83,53 @@ def _dump_list(items: list[Any], settings: Settings) -> list[dict[str, Any]]:
     sanitized = sanitize_payload(payload, _metadata_policy(settings)) or {"items": []}
     value = sanitized.get("items", [])
     return value if isinstance(value, list) else []
+
+
+def _dump_mapping(value: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    return sanitize_payload(value, _metadata_policy(settings)) or {}
+
+
+async def _capture_policy_snapshot(
+    session: AsyncSession,
+    payload: EventIn,
+    conversation_id: str,
+) -> tuple[str, str]:
+    policy = await session.scalar(
+        select(ConversationCaptureProfile).where(
+            ConversationCaptureProfile.platform == payload.instance.platform,
+            ConversationCaptureProfile.conversation_type == payload.conversation.type,
+            ConversationCaptureProfile.conversation_id == conversation_id,
+            ConversationCaptureProfile.active.is_(True),
+        )
+    )
+    if policy is None:
+        return "operational", "default-operational-v1"
+    return policy.capture_profile, policy.policy_version
+
+
+def _capture_values(payload: EventIn, settings: Settings) -> dict[str, Any]:
+    capture = payload.capture
+    if capture is None:
+        return {
+            "capture_status": "unassessed",
+            "sanitizer_version": SANITIZER_VERSION,
+            "collector_sanitizer_version": None,
+            "original_payload_sha256": None,
+            "original_payload_size_bytes": None,
+            "omitted_fields_json": [],
+            "platform_extra_json": {},
+            "capture_reason": None,
+        }
+    return {
+        "capture_status": capture.status,
+        "sanitizer_version": SANITIZER_VERSION,
+        "collector_sanitizer_version": capture.sanitizer_version,
+        "original_payload_sha256": capture.original_payload_sha256,
+        "original_payload_size_bytes": capture.original_payload_size_bytes,
+        "omitted_fields_json": list(capture.omitted_fields),
+        "platform_extra_json": _dump_mapping(capture.platform_extra, settings),
+        "capture_reason": capture.reason,
+    }
 
 
 def _reported_status(heartbeat: HeartbeatIn) -> str:
@@ -269,6 +321,7 @@ async def _validate_existing_observation(
     payload: EventIn,
     fingerprint: str | None,
     conversation_id: str,
+    settings: Settings,
 ) -> None:
     """Reject identity-key reuse instead of returning another event's decision."""
 
@@ -311,6 +364,72 @@ async def _validate_existing_observation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="event identity or idempotency key was reused for a different event",
+        )
+
+    capture_values = _capture_values(payload, settings)
+    capture_conflicts = any(
+        (
+            existing.capture_status != capture_values["capture_status"],
+            existing.sanitizer_version != capture_values["sanitizer_version"],
+            existing.collector_sanitizer_version
+            != capture_values["collector_sanitizer_version"],
+            existing.original_payload_sha256
+            != capture_values["original_payload_sha256"],
+            existing.original_payload_size_bytes
+            != capture_values["original_payload_size_bytes"],
+            existing.omitted_fields_json != capture_values["omitted_fields_json"],
+            existing.platform_extra_json != capture_values["platform_extra_json"],
+            existing.capture_reason != capture_values["capture_reason"],
+        )
+    )
+    stored_actions = (
+        await session.scalars(
+            select(PlatformActionObservation)
+            .where(PlatformActionObservation.observation_id == existing.id)
+            .order_by(PlatformActionObservation.action_index)
+        )
+    ).all()
+    if len(stored_actions) != len(payload.actions):
+        capture_conflicts = True
+    else:
+        for action_index, (stored, incoming) in enumerate(
+            zip(stored_actions, payload.actions, strict=True)
+        ):
+            target_conversation = incoming.target_conversation or payload.conversation
+            target_conversation_id = canonical_conversation_id(
+                payload.instance.platform,
+                target_conversation.type,
+                target_conversation.id,
+            )
+            incoming_occurred_at = incoming.occurred_at or payload.occurred_at
+            stored_occurred_at = stored.occurred_at
+            if stored_occurred_at.tzinfo is None:
+                stored_occurred_at = stored_occurred_at.replace(tzinfo=timezone.utc)
+            if incoming_occurred_at.tzinfo is None:
+                incoming_occurred_at = incoming_occurred_at.replace(tzinfo=timezone.utc)
+            if (
+                stored.action_index != action_index
+                or stored.action_kind != incoming.action_kind
+                or stored.operation != incoming.operation
+                or stored.actor_principal_id != incoming.actor_principal_id
+                or stored.subject_principal_id != incoming.subject_principal_id
+                or stored.target_reported_source_event_id
+                != incoming.target_source_event_id
+                or stored.target_platform_message_id
+                != incoming.target_platform_message_id
+                or stored.target_conversation_id != target_conversation_id
+                or stored.target_conversation_type != target_conversation.type
+                or stored.value_json != _dump_mapping(incoming.value, settings)
+                or stored.capture_status != incoming.capture_status
+                or stored.reason != incoming.reason
+                or stored_occurred_at != incoming_occurred_at
+            ):
+                capture_conflicts = True
+                break
+    if capture_conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="event replay changed its capture or platform action details",
         )
 
 
@@ -1094,6 +1213,302 @@ async def _resolve_links_targeting_observation(
         await _recompute_sources_for_links(session, affected_sources, settings)
 
 
+async def _resolve_stored_action(
+    session: AsyncSession,
+    action: PlatformActionObservation,
+) -> str:
+    target_filters = []
+    if action.target_reported_source_event_id:
+        target_filters.extend(
+            (
+                SourceEvent.id == action.target_reported_source_event_id,
+                EventObservation.reported_source_event_id
+                == action.target_reported_source_event_id,
+            )
+        )
+    if action.target_platform_message_id:
+        target_filters.append(
+            EventObservation.platform_message_id == action.target_platform_message_id
+        )
+    if not target_filters:
+        action.target_source_event_id = None
+        action.resolver_status = "unavailable"
+        return action.resolver_status
+
+    candidates = (
+        await session.scalars(
+            select(EventObservation.source_event_id)
+            .join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .where(
+                EventObservation.instance_id == action.observer_instance_id,
+                SourceEvent.conversation_id == action.target_conversation_id,
+                SourceEvent.conversation_type == action.target_conversation_type,
+                SourceEvent.occurred_at <= action.occurred_at,
+                or_(*target_filters),
+            )
+            .group_by(EventObservation.source_event_id)
+            .order_by(func.max(SourceEvent.occurred_at).desc())
+            .limit(2)
+        )
+    ).all()
+    if len(candidates) == 1:
+        action.target_source_event_id = candidates[0]
+        action.resolver_status = "resolved"
+    elif len(candidates) > 1:
+        action.target_source_event_id = None
+        action.resolver_status = "ambiguous"
+    else:
+        action.target_source_event_id = None
+        action.resolver_status = "unresolved"
+    return action.resolver_status
+
+
+async def _record_platform_actions(
+    session: AsyncSession,
+    payload: EventIn,
+    observation: EventObservation,
+    settings: Settings,
+) -> None:
+    for action_index, action in enumerate(payload.actions):
+        target_conversation = action.target_conversation or payload.conversation
+        target_conversation_id = canonical_conversation_id(
+            payload.instance.platform,
+            target_conversation.type,
+            target_conversation.id,
+        )
+        record = PlatformActionObservation(
+            observation_id=observation.id,
+            observer_instance_id=observation.instance_id,
+            action_index=action_index,
+            action_kind=action.action_kind,
+            operation=action.operation,
+            actor_principal_id=action.actor_principal_id,
+            subject_principal_id=action.subject_principal_id,
+            target_reported_source_event_id=action.target_source_event_id,
+            target_platform_message_id=action.target_platform_message_id,
+            target_conversation_id=target_conversation_id,
+            target_conversation_type=target_conversation.type,
+            value_json=_dump_mapping(action.value, settings),
+            capture_status=action.capture_status,
+            reason=action.reason,
+            occurred_at=action.occurred_at or payload.occurred_at,
+        )
+        session.add(record)
+        await session.flush()
+        await _resolve_stored_action(session, record)
+
+
+async def _resolve_actions_targeting_observation(
+    session: AsyncSession,
+    observation: EventObservation,
+    source: SourceEvent,
+) -> None:
+    hints = [
+        PlatformActionObservation.target_reported_source_event_id
+        == observation.reported_source_event_id,
+        PlatformActionObservation.target_reported_source_event_id == source.id,
+    ]
+    if observation.platform_message_id:
+        hints.append(
+            PlatformActionObservation.target_platform_message_id
+            == observation.platform_message_id
+        )
+    candidates = (
+        await session.scalars(
+            select(PlatformActionObservation)
+            .where(
+                PlatformActionObservation.resolver_status.in_(("unresolved", "ambiguous")),
+                PlatformActionObservation.observer_instance_id == observation.instance_id,
+                PlatformActionObservation.target_conversation_id == source.conversation_id,
+                PlatformActionObservation.target_conversation_type == source.conversation_type,
+                PlatformActionObservation.occurred_at >= source.occurred_at,
+                or_(*hints),
+            )
+            .order_by(PlatformActionObservation.occurred_at, PlatformActionObservation.id)
+            .limit(500)
+        )
+    ).all()
+    for action in candidates:
+        await _resolve_stored_action(session, action)
+
+
+async def _advance_collector_watermark(
+    session: AsyncSession,
+    receipt: IngressReceiptRecord,
+) -> CollectorWatermark | None:
+    if receipt.spool_id is None or receipt.collector_sequence is None:
+        return None
+    watermark = await session.get(
+        CollectorWatermark,
+        (receipt.instance_id, receipt.spool_id),
+    )
+    now = receipt.committed_at
+    if watermark is None:
+        watermark = CollectorWatermark(
+            instance_id=receipt.instance_id,
+            spool_id=receipt.spool_id,
+            highest_contiguous_sequence=0,
+            highest_seen_sequence=0,
+            last_receipt_at=now,
+            updated_at=now,
+        )
+        session.add(watermark)
+        await session.flush()
+
+    watermark.highest_seen_sequence = max(
+        watermark.highest_seen_sequence,
+        receipt.collector_sequence,
+    )
+    watermark.last_receipt_at = now
+    watermark.updated_at = now
+    if receipt.collector_sequence <= watermark.highest_contiguous_sequence:
+        return watermark
+
+    sequences = (
+        await session.scalars(
+            select(IngressReceiptRecord.collector_sequence)
+            .where(
+                IngressReceiptRecord.instance_id == receipt.instance_id,
+                IngressReceiptRecord.spool_id == receipt.spool_id,
+                IngressReceiptRecord.collector_sequence
+                > watermark.highest_contiguous_sequence,
+            )
+            .order_by(IngressReceiptRecord.collector_sequence)
+        )
+    ).all()
+    expected = watermark.highest_contiguous_sequence + 1
+    for sequence in sequences:
+        if sequence is None or sequence < expected:
+            continue
+        if sequence != expected:
+            break
+        watermark.highest_contiguous_sequence = sequence
+        expected += 1
+    return watermark
+
+
+async def _ensure_ingress_receipt_locked(
+    session: AsyncSession,
+    observation: EventObservation,
+    payload: EventIn,
+) -> IngressReceiptRecord:
+    existing = await session.scalar(
+        select(IngressReceiptRecord).where(
+            IngressReceiptRecord.observation_id == observation.id
+        )
+    )
+    ingress = payload.ingress
+    if existing is not None:
+        expected = (
+            ingress.spool_id if ingress else None,
+            ingress.sequence if ingress else None,
+            ingress.record_sha256 if ingress else None,
+            ingress.captured_at if ingress else None,
+        )
+        actual = (
+            existing.spool_id,
+            existing.collector_sequence,
+            existing.record_sha256,
+            existing.captured_at,
+        )
+        normalized_actual_time = actual[3]
+        normalized_expected_time = expected[3]
+        if normalized_actual_time is not None and normalized_actual_time.tzinfo is None:
+            normalized_actual_time = normalized_actual_time.replace(tzinfo=timezone.utc)
+        if normalized_expected_time is not None and normalized_expected_time.tzinfo is None:
+            normalized_expected_time = normalized_expected_time.replace(tzinfo=timezone.utc)
+        if (*actual[:3], normalized_actual_time) != (*expected[:3], normalized_expected_time):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="event replay changed its durable spool binding",
+            )
+        return existing
+
+    if ingress is not None:
+        collision = await session.scalar(
+            select(IngressReceiptRecord).where(
+                IngressReceiptRecord.instance_id == observation.instance_id,
+                IngressReceiptRecord.spool_id == ingress.spool_id,
+                IngressReceiptRecord.collector_sequence == ingress.sequence,
+            )
+        )
+        if collision is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="durable spool sequence is already bound to another observation",
+            )
+
+    now = utc_now()
+    receipt = IngressReceiptRecord(
+        observation_id=observation.id,
+        instance_id=observation.instance_id,
+        spool_id=ingress.spool_id if ingress else None,
+        collector_sequence=ingress.sequence if ingress else None,
+        record_sha256=ingress.record_sha256 if ingress else None,
+        captured_at=ingress.captured_at if ingress else None,
+        committed_at=now,
+    )
+    session.add(receipt)
+    await session.flush()
+    await _advance_collector_watermark(session, receipt)
+    return receipt
+
+
+async def _ensure_ingress_receipt(
+    session: AsyncSession,
+    observation: EventObservation,
+    payload: EventIn,
+) -> IngressReceiptRecord:
+    if payload.ingress is None:
+        return await _ensure_ingress_receipt_locked(session, observation, payload)
+    lock_fingerprint = hashlib.sha256(
+        f"ingress:{observation.instance_id}:{payload.ingress.spool_id}".encode()
+    ).hexdigest()
+    async with _correlation_guard(session, lock_fingerprint):
+        return await _ensure_ingress_receipt_locked(session, observation, payload)
+
+
+async def ingress_receipt_view(
+    session: AsyncSession,
+    observation: EventObservation,
+    *,
+    duplicate: bool,
+) -> dict[str, Any]:
+    receipt = await session.scalar(
+        select(IngressReceiptRecord).where(
+            IngressReceiptRecord.observation_id == observation.id
+        )
+    )
+    assert receipt is not None
+    watermark = (
+        await session.get(
+            CollectorWatermark,
+            (receipt.instance_id, receipt.spool_id),
+        )
+        if receipt.spool_id is not None
+        else None
+    )
+    return {
+        "schema_version": "1.0",
+        "receipt_id": receipt.id,
+        "observation_id": observation.id,
+        "source_event_id": observation.source_event_id,
+        "instance_id": observation.instance_id,
+        "outcome": "duplicate" if duplicate else "committed",
+        "duplicate": duplicate,
+        "spool_id": receipt.spool_id,
+        "sequence": receipt.collector_sequence,
+        "record_sha256": receipt.record_sha256,
+        "committed_at": receipt.committed_at,
+        "highest_contiguous_sequence": (
+            watermark.highest_contiguous_sequence if watermark is not None else None
+        ),
+        "highest_seen_sequence": (
+            watermark.highest_seen_sequence if watermark is not None else None
+        ),
+    }
+
+
 async def ingest_event(
     session: AsyncSession,
     payload: EventIn,
@@ -1116,8 +1531,10 @@ async def ingest_event(
     )
     if existing:
         await _validate_existing_observation(
-            session, existing, payload, fingerprint, conversation_id
+            session, existing, payload, fingerprint, conversation_id, settings
         )
+        await _ensure_ingress_receipt(session, existing, payload)
+        await session.commit()
         return existing, True
 
     async with _correlation_guard(session, fingerprint):
@@ -1131,8 +1548,10 @@ async def ingest_event(
         )
         if existing:
             await _validate_existing_observation(
-                session, existing, payload, fingerprint, conversation_id
+                session, existing, payload, fingerprint, conversation_id, settings
             )
+            await _ensure_ingress_receipt(session, existing, payload)
+            await session.commit()
             return existing, True
 
         instance = await ensure_instance(session, payload.instance, settings)
@@ -1143,6 +1562,12 @@ async def ingest_event(
             conversation_id,
             settings.correlation_window_seconds,
         )
+        capture_profile, capture_policy_version = await _capture_policy_snapshot(
+            session,
+            payload,
+            conversation_id,
+        )
+        capture_values = _capture_values(payload, settings)
 
         metadata = sanitize_payload(payload.metadata, _metadata_policy(settings)) or {}
         metadata["correlation"] = {
@@ -1167,6 +1592,9 @@ async def ingest_event(
             attachments_json=_dump_list(payload.message.attachments if payload.message else [], settings),
             raw_json=sanitize_payload(payload.raw, _raw_policy(settings)),
             metadata_json=metadata,
+            capture_profile=capture_profile,
+            capture_policy_version=capture_policy_version,
+            **capture_values,
         )
         session.add(record)
         instance.last_event_at = payload.occurred_at
@@ -1194,9 +1622,12 @@ async def ingest_event(
                 .values(trigger_source_event_id=source.id)
             )
             await record_event_links(session, payload, record, settings)
+            await _record_platform_actions(session, payload, record, settings)
+            await _ensure_ingress_receipt(session, record, payload)
             await session.flush()
             await recompute_event_decision(session, source, settings)
             await _resolve_links_targeting_observation(session, record, source, settings)
+            await _resolve_actions_targeting_observation(session, record, source)
             await session.commit()
         except IntegrityError:
             await session.rollback()
@@ -1210,9 +1641,31 @@ async def ingest_event(
             )
             if duplicate:
                 await _validate_existing_observation(
-                    session, duplicate, payload, fingerprint, conversation_id
+                    session,
+                    duplicate,
+                    payload,
+                    fingerprint,
+                    conversation_id,
+                    settings,
                 )
+                await _ensure_ingress_receipt(session, duplicate, payload)
+                await session.commit()
                 return duplicate, True
+            if payload.ingress is not None:
+                collision = await session.scalar(
+                    select(IngressReceiptRecord).where(
+                        IngressReceiptRecord.instance_id
+                        == payload.instance.instance_id,
+                        IngressReceiptRecord.spool_id == payload.ingress.spool_id,
+                        IngressReceiptRecord.collector_sequence
+                        == payload.ingress.sequence,
+                    )
+                )
+                if collision is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="durable spool sequence is already bound to another observation",
+                    )
             raise
     await session.refresh(record)
     return record, False
@@ -1390,6 +1843,8 @@ async def ingest_heartbeat(
     metadata["heartbeat_reported_at"] = payload.occurred_at.isoformat()
     if payload.capabilities is not None:
         metadata["capabilities"] = payload.capabilities.model_dump(mode="json")
+    if payload.ingress_spool is not None:
+        metadata["ingress_spool"] = payload.ingress_spool.model_dump(mode="json")
     instance.metadata_json = metadata
     if current != previous:
         session.add(
@@ -1589,8 +2044,10 @@ async def evaluate_event_claim(
     payload: EventIn,
     idempotency_key: str,
     settings: Settings,
-) -> tuple[EventClaim, bool]:
-    observation, _ = await ingest_event(session, payload, idempotency_key, settings)
+) -> tuple[EventClaim, bool, EventObservation, bool]:
+    observation, event_duplicate = await ingest_event(
+        session, payload, idempotency_key, settings
+    )
     source = await session.get(SourceEvent, observation.source_event_id)
     assert source is not None
     existing = await session.scalar(
@@ -1605,7 +2062,7 @@ async def evaluate_event_claim(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="claim idempotency key was reused for a different event",
             )
-        return existing, True
+        return existing, True, observation, event_duplicate
 
     observation_count = await _coalesce_claim_observations(
         session,
@@ -1719,7 +2176,7 @@ async def evaluate_event_claim(
         )
         if existing is not None:
             await session.commit()
-            return existing, True
+            return existing, True, observation, event_duplicate
 
         # An allow is only an exclusive owner after every other observing
         # instance has acknowledged that it installed an enforced denial.
@@ -1821,7 +2278,7 @@ async def evaluate_event_claim(
                 )
             )
             if duplicate is not None:
-                return duplicate, True
+                return duplicate, True, observation, event_duplicate
             raise
     await session.refresh(record)
-    return record, False
+    return record, False, observation, event_duplicate

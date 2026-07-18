@@ -286,6 +286,18 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 截至 2026-07-18，Phase 2 已完成最终签署。最终基线部署 Correlation v3、policy v6、运行时命令清单、response outcome、唯一引用解析、typed platform capability、claim/ACK 协调和长任务 response attribution；policy-v5 稳定窗口、policy-v6 counterfactual、无显式召唤/显式召唤实测、SQLite/PostgreSQL、迁移/漂移、备份和回滚证据均记录在 `docs/ACCEPTANCE.md`。Phase 3 入口已经开放，但签署本身没有启用任何工具执行权。
 
+7.4 C0-D / C0-A：采集可靠性与史料持久化补充
+
+Phase 2 的签署证明了当前消息路由和 claim 基线，但不代表平台事件和复合消息已经完整归档。最新产品要求是在 bot 有权看到且被配置为允许长期留存的会话内，对结构化消息与平台事件“应采尽采”：reaction/贴表情、recall、poke 等动作成为一等 observation；合并转发必须异步展开并保存多层嵌套节点、顺序和完整性状态；无法取得、被限制或截断的内容也必须留下明确缺口。采集事实不预设训练、反馈或自动行为。
+
+图片字节第一版不长期保存，但消息段中的图片位置、平台资源 ID 和可得类型、大小、尺寸、哈希等元数据需要保留。文件、语音、视频等大对象不得直接写入 PostgreSQL；未来如需保存，使用独立的有界内容寻址存储。已知字段规范化入库，未映射字段经过版本化 sanitizer 后有限保存，凭证、会话密钥、本地路径和带授权参数的临时媒体 URL 不进入长期档案。
+
+长期运行 bot 还要求把 Phase 6 设计中的 `HA-0` durable ingress spool 提前：bridge 先把事件原子落到本地持久队列，Core 幂等提交并返回 receipt 后才能清理；Core、网络或 PostgreSQL 故障后可以重放，并公开 watermark、lag、gap 和 quarantine。这个 Phase 3b 前置包命名为 C0-D，只包含 capture profile、durable spool、commit receipt、覆盖诊断、幂等重放、sanitizer 和基础 action 事件。
+
+C0-A 随后负责多层合并转发、`archive_full` 正式启用、离线导出、重建、保留/删除传播和旧历史导入。它在 C0-D 稳定后可以与 Phase 3b 分别推进，不是 invocation ledger 的 correctness 前置条件。数据库之外的版本化导出及恢复重建仍是史料目标，但不能用罕见的嵌套转发极端案例长期阻塞核心工具迁移。
+
+C0-D/C0-A 属于 Phase 1/2 观察基础的完整性回补。Phase 2 已签署结论不回滚，已部署的 Phase 3a 零权限 Registry 也不撤销；实施顺序是在 Phase 3b invocation/lease 之前先完成 C0-D，且不改变命令、Nekro 回复、claim 或工具权限。完整数据模型、此前关于快速回复、模型自主选工具、渐进式披露、Unix 原语、自然语言命令和成本感知模型路由的共识，见 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
+
 8. 第三阶段：Tool Registry 与现有插件迁移
 
 第三阶段目标是把现有命令插件逐步改造成结构化工具。wf 应当成为 wolfram.run，tex 应当成为 latex.render，Markdown 帮助图片应当成为 markdown.render_image，状态图应当成为 status.inspect，历史检索应当成为 history.search。命令入口仍然保留，但它们只是工具的一种调用方式。
@@ -300,7 +312,7 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。包含 Registry 持久化/API 的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 211 项通过。
 
-`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署。生产 migration head 为 `0012_tool_registry` 且无 drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，没有 invocation、attempt 或 lease 表/路由；Lily、Nekro、NapCat 和 PostgreSQL 均未重启，旧事件、claim、heartbeat 与 command registry 上报继续正常。下一步是实现共享 Provider SDK、审阅真正的 `status.inspect` authority，并在另一次明确授权后只登记为 `reviewed`、继续保持 execution `off`。
+`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署。生产 migration head 为 `0012_tool_registry` 且无 drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，没有 invocation、attempt 或 lease 表/路由；Lily、Nekro、NapCat 和 PostgreSQL 均未重启，旧事件、claim、heartbeat 与 command registry 上报继续正常。Phase 3 轨道的下一步仍是共享 Provider SDK 和真正的 `status.inspect` authority，但当前跨阶段实施顺序先插入不增加权限的 C0-D 采集可靠性包；C0-D 完成后即可在另一次明确授权下继续 Phase 3b，C0-A 可分别推进，Registry 在此期间保持 execution `off`。
 
 9. 第四阶段：统一 Renderer
 

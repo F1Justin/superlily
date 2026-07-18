@@ -6,7 +6,18 @@ import pytest
 from sqlalchemy import delete, select
 
 from superlily_core.command_registry import runtime_registry_snapshot_hash
-from superlily_core.models import EventClaim, EventDecision, EventLink, EventObservation, ResponseRecord, SourceEvent
+from superlily_core.models import (
+    CollectorWatermark,
+    ConversationCaptureProfile,
+    EventClaim,
+    EventDecision,
+    EventLink,
+    EventObservation,
+    IngressReceiptRecord,
+    PlatformActionObservation,
+    ResponseRecord,
+    SourceEvent,
+)
 
 
 def event_payload(
@@ -111,6 +122,431 @@ async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
             "url": "https://example.test/a",
         }
         assert records[0].segments_json[1]["data"]["jumpUrl"] == "mqqapi://qzoneschema/feed"
+
+
+async def test_c0d_action_capture_receipt_and_replay_are_idempotent(client, app) -> None:
+    target = event_payload(
+        source_event_id="qq:source:v2:" + "1" * 64,
+        message_id="target-message",
+        real_seq="target-real-seq",
+    )
+    target_response = await client.post(
+        "/v1/events",
+        json=target,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "c0d-target"},
+    )
+    assert target_response.status_code == 201, target_response.text
+
+    occurred_at = datetime.now(timezone.utc)
+    reaction = event_payload(
+        source_event_id="qq:reaction:" + "2" * 64,
+        message_id="reaction-notice",
+        real_seq="reaction-notice",
+        event_type="notice.group_msg_emoji_like",
+        occurred_at=occurred_at,
+    )
+    reaction["message"] = None
+    reaction["ingress"] = {
+        "spool_id": "lily-main",
+        "sequence": 1,
+        "record_sha256": "3" * 64,
+        "captured_at": occurred_at.isoformat(),
+    }
+    reaction["capture"] = {
+        "status": "partial",
+        "sanitizer_version": "superlily.sanitizer.v1",
+        "original_payload_sha256": "4" * 64,
+        "original_payload_size_bytes": 1234,
+        "omitted_fields": ["image.url"],
+        "platform_extra": {
+            "sub_type": "add",
+            "callback_url": "https://example.test/action?token=secret",
+        },
+        "reason": "image bytes excluded",
+    }
+    reaction["actions"] = [
+        {
+            "action_kind": "reaction",
+            "operation": "add",
+            "actor_principal_id": "owner",
+            "subject_principal_id": "bot",
+            "target_platform_message_id": "target-message",
+            "value": {
+                "emoji_id": "128074",
+                "count": 1,
+                "jump_url": "https://example.test/reaction?ticket=secret",
+            },
+            "capture_status": "complete",
+        }
+    ]
+    headers = {
+        "Authorization": "Bearer lily-secret",
+        "Idempotency-Key": "c0d-reaction-1",
+    }
+    first = await client.post("/v1/events", json=reaction, headers=headers)
+    replay = await client.post("/v1/events", json=reaction, headers=headers)
+
+    assert first.status_code == 201, first.text
+    assert replay.status_code == 200, replay.text
+    assert first.json()["receipt_id"] == replay.json()["receipt_id"]
+    assert first.json()["outcome"] == "committed"
+    assert replay.json()["outcome"] == "duplicate"
+    assert first.json()["highest_contiguous_sequence"] == 1
+    assert first.json()["highest_seen_sequence"] == 1
+
+    async with app.state.database.sessions() as session:
+        observation = await session.get(EventObservation, first.json()["observation_id"])
+        assert observation is not None
+        assert observation.capture_profile == "operational"
+        assert observation.capture_status == "partial"
+        assert observation.platform_extra_json == {
+            "sub_type": "add",
+            "callback_url": "https://example.test/action",
+        }
+        receipts = (await session.scalars(select(IngressReceiptRecord))).all()
+        actions = (await session.scalars(select(PlatformActionObservation))).all()
+        assert len(receipts) == 2  # The pre-spool target also receives a generic receipt.
+        assert len(actions) == 1
+        assert actions[0].target_source_event_id == target_response.json()["source_event_id"]
+        assert actions[0].resolver_status == "resolved"
+        assert actions[0].value_json == {
+            "emoji_id": "128074",
+            "count": 1,
+            "jump_url": "https://example.test/reaction",
+        }
+
+    watermark_response = await client.get(
+        "/v1/ingress/watermarks",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert watermark_response.status_code == 200
+    assert watermark_response.json() == [
+        {
+            "schema_version": "1.0",
+            "instance_id": "lily-command",
+            "spool_id": "lily-main",
+            "highest_contiguous_sequence": 1,
+            "highest_seen_sequence": 1,
+            "next_gap_sequence": None,
+            "last_receipt_at": watermark_response.json()[0]["last_receipt_at"],
+            "updated_at": watermark_response.json()[0]["updated_at"],
+        }
+    ]
+
+    recent = await client.get(
+        "/v1/events/recent",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert recent.status_code == 200
+    reaction_view = next(
+        item
+        for item in recent.json()
+        if item["observation_id"] == first.json()["observation_id"]
+    )
+    assert (
+        datetime.fromisoformat(reaction_view["occurred_at"]).replace(tzinfo=timezone.utc)
+        == occurred_at
+    )
+    assert (
+        datetime.fromisoformat(reaction_view["ingress"]["captured_at"]).replace(
+            tzinfo=timezone.utc
+        )
+        == occurred_at
+    )
+    assert reaction_view["ingress"]["committed_at"] is not None
+    assert reaction_view["ingress"]["sequence"] == 1
+
+    changed = {**reaction, "actions": [{**reaction["actions"][0], "value": {"emoji_id": "9"}}]}
+    conflict = await client.post("/v1/events", json=changed, headers=headers)
+    assert conflict.status_code == 409
+
+
+async def test_c0d_watermark_exposes_and_closes_gaps(client, app) -> None:
+    async def ingest(sequence: int) -> dict:
+        occurred_at = datetime.now(timezone.utc)
+        payload = event_payload(
+            source_event_id=f"qq:source:v2:{sequence:064x}",
+            message_id=f"c0d-message-{sequence}",
+            real_seq=f"c0d-real-{sequence}",
+            occurred_at=occurred_at,
+        )
+        payload["ingress"] = {
+            "spool_id": "gap-spool",
+            "sequence": sequence,
+            "record_sha256": f"{sequence:064x}",
+            "captured_at": occurred_at.isoformat(),
+        }
+        response = await client.post(
+            "/v1/events",
+            json=payload,
+            headers={
+                "Authorization": "Bearer lily-secret",
+                "Idempotency-Key": f"c0d-gap-{sequence}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    assert (await ingest(1))["highest_contiguous_sequence"] == 1
+    third = await ingest(3)
+    assert third["highest_contiguous_sequence"] == 1
+    assert third["highest_seen_sequence"] == 3
+    second = await ingest(2)
+    assert second["highest_contiguous_sequence"] == 3
+    assert second["highest_seen_sequence"] == 3
+
+    async with app.state.database.sessions() as session:
+        watermark = await session.get(CollectorWatermark, ("lily-command", "gap-spool"))
+        assert watermark is not None
+        assert watermark.highest_contiguous_sequence == 3
+        assert watermark.highest_seen_sequence == 3
+
+    collision_payload = event_payload(
+        source_event_id="qq:source:v2:" + "f" * 64,
+        message_id="c0d-collision",
+        real_seq="c0d-collision",
+    )
+    collision_payload["ingress"] = {
+        "spool_id": "gap-spool",
+        "sequence": 2,
+        "record_sha256": "f" * 64,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    collision = await client.post(
+        "/v1/events",
+        json=collision_payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-gap-collision",
+        },
+    )
+    assert collision.status_code == 409
+
+
+async def test_c0d_user_target_action_persists_without_message_target(client, app) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    payload = event_payload(
+        source_event_id="qq:poke:" + "e" * 64,
+        message_id="poke-notice",
+        real_seq="poke-notice",
+        event_type="notice.notify.poke",
+        occurred_at=occurred_at,
+    )
+    payload["message"] = None
+    payload["actions"] = [
+        {
+            "action_kind": "poke",
+            "operation": "observed_state",
+            "actor_principal_id": "42",
+            "subject_principal_id": "43",
+            "value": {"sub_type": "poke"},
+        }
+    ]
+    response = await client.post(
+        "/v1/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-poke-subject",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    async with app.state.database.sessions() as session:
+        action = await session.scalar(
+            select(PlatformActionObservation).where(
+                PlatformActionObservation.observation_id
+                == response.json()["observation_id"]
+            )
+        )
+        assert action is not None
+        assert action.action_kind == "poke"
+        assert action.subject_principal_id == "43"
+        assert action.target_platform_message_id is None
+        assert action.resolver_status == "unavailable"
+
+
+async def test_c0d_ingress_status_reconciles_bridge_and_core_watermarks(client) -> None:
+    occurred_at = datetime.now(timezone.utc)
+    payload = event_payload(
+        source_event_id="qq:diagnostic:" + "d" * 64,
+        message_id="diagnostic-message",
+        real_seq="diagnostic-message",
+        occurred_at=occurred_at,
+    )
+    payload["ingress"] = {
+        "spool_id": "diagnostic-spool",
+        "sequence": 1,
+        "record_sha256": "d" * 64,
+        "captured_at": occurred_at.isoformat(),
+    }
+    event = await client.post(
+        "/v1/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-diagnostic-event",
+        },
+    )
+    assert event.status_code == 201, event.text
+
+    heartbeat = {
+        "instance": payload["instance"],
+        "process_status": "running",
+        "connection_status": "connected",
+        "occurred_at": occurred_at.isoformat(),
+        "ingress_spool": {
+            "state": "pending",
+            "durability_mode": "sqlite_full",
+            "spool_id": "diagnostic-spool",
+            "pending_records": 1,
+            "pending_bytes": 2048,
+            "committed_records": 1,
+            "quarantined_records": 0,
+            "quarantined_files": 0,
+            "oldest_pending_seconds": 2.0,
+            "live_bytes": 8192,
+            "quota_bytes": 268_435_456,
+            "highest_sequence": 2,
+            "replay_successes": 1,
+            "replay_failures": 0,
+            "capture_failures": 0,
+            "quota_rejections": 0,
+            "observed_at": occurred_at.isoformat(),
+        },
+    }
+    sent = await client.post(
+        "/v1/heartbeats",
+        json=heartbeat,
+        headers={"Authorization": "Bearer lily-secret"},
+    )
+    assert sent.status_code == 200, sent.text
+    assert (await client.get("/v1/ingress/status")).status_code == 401
+    status_response = await client.get(
+        "/v1/ingress/status",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert status_response.status_code == 200
+    status = status_response.json()[0]
+    assert status["instance_id"] == "lily-command"
+    assert status["spool"]["pending_records"] == 1
+    assert status["core_watermark"]["highest_contiguous_sequence"] == 1
+    assert status["core_watermark"]["highest_seen_sequence"] == 1
+    assert status["reconciliation"] == {
+        "state": "pending",
+        "lag_records": 1,
+        "next_gap_sequence": None,
+    }
+    instances = await client.get(
+        "/v1/instances",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert instances.json()[0]["ingress_spool"]["spool_id"] == "diagnostic-spool"
+
+
+async def test_c0d_claim_ingest_returns_receipt_and_late_action_target_resolves(
+    client,
+    app,
+) -> None:
+    target_time = datetime.now(timezone.utc)
+    action_time = target_time + timedelta(seconds=1)
+    action_payload = event_payload(
+        source_event_id="qq:late-action:" + "a" * 64,
+        message_id="late-action-notice",
+        real_seq="late-action-notice",
+        event_type="notice.group_msg_emoji_like",
+        occurred_at=action_time,
+    )
+    action_payload["message"] = None
+    action_payload["ingress"] = {
+        "spool_id": "claim-spool",
+        "sequence": 1,
+        "record_sha256": "a" * 64,
+        "captured_at": action_time.isoformat(),
+    }
+    action_payload["actions"] = [
+        {
+            "action_kind": "reaction",
+            "operation": "add",
+            "actor_principal_id": "owner",
+            "target_platform_message_id": "late-target-message",
+            "value": {"emoji_id": "1"},
+        }
+    ]
+    claim = await client.post(
+        "/v1/claims/evaluate",
+        json=action_payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-claim-action",
+        },
+    )
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["ingest_receipt"]["spool_id"] == "claim-spool"
+    assert claim.json()["ingest_receipt"]["sequence"] == 1
+    assert claim.json()["ingest_receipt"]["outcome"] == "committed"
+
+    claim_replay = await client.post(
+        "/v1/claims/evaluate",
+        json=action_payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-claim-action",
+        },
+    )
+    assert claim_replay.status_code == 200, claim_replay.text
+    assert claim_replay.json()["duplicate"] is True
+    assert claim_replay.json()["ingest_receipt"]["outcome"] == "duplicate"
+    assert (
+        claim_replay.json()["ingest_receipt"]["receipt_id"]
+        == claim.json()["ingest_receipt"]["receipt_id"]
+    )
+
+    async with app.state.database.sessions() as session:
+        action = await session.scalar(select(PlatformActionObservation))
+        assert action is not None
+        assert action.resolver_status == "unresolved"
+        session.add(
+            ConversationCaptureProfile(
+                platform="qq",
+                conversation_type="group",
+                conversation_id="123",
+                capture_profile="operational",
+                retention_class="operational",
+                policy_version="group-policy-v2",
+                source_commit="b" * 40,
+            )
+        )
+        await session.commit()
+
+    target_payload = event_payload(
+        source_event_id="qq:source:v2:" + "b" * 64,
+        message_id="late-target-message",
+        real_seq="late-target-real-seq",
+        occurred_at=target_time,
+    )
+    target = await client.post(
+        "/v1/events",
+        json=target_payload,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-late-target",
+        },
+    )
+    assert target.status_code == 201, target.text
+
+    async with app.state.database.sessions() as session:
+        action = await session.scalar(select(PlatformActionObservation))
+        target_observation = await session.get(
+            EventObservation,
+            target.json()["observation_id"],
+        )
+        assert action is not None
+        assert action.resolver_status == "resolved"
+        assert action.target_source_event_id == target.json()["source_event_id"]
+        assert target_observation is not None
+        assert target_observation.capture_profile == "operational"
+        assert target_observation.capture_policy_version == "group-policy-v2"
 
 
 async def test_reused_short_message_id_with_distinct_v2_identity_creates_two_sources(

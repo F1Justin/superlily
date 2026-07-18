@@ -5,8 +5,15 @@ import pytest
 from pydantic import ValidationError
 
 from superlily_contracts import (
+    CaptureEnvelope,
+    CollectorWatermarkView,
+    ConversationCapturePolicy,
     EventIn,
     EventReference,
+    IngestReceipt,
+    IngressRecordRef,
+    IngressSpoolStatus,
+    PlatformActionDetail,
     ResponseIn,
     PlatformCapabilities,
     RuntimePlugin,
@@ -223,3 +230,150 @@ def test_platform_capabilities_are_canonical_and_conservative() -> None:
             profile="onebot_v11.qq.v1",
             limits={"text_chars": -1},
         )
+
+
+def test_c0d_collection_contracts_are_bounded_and_explicit() -> None:
+    event = EventIn.model_validate(
+        {
+            "source_event_id": "qq:group:1:notice:reaction:2",
+            "instance": {
+                "instance_id": "lily-command",
+                "platform": "qq",
+                "adapter": "onebot_v11",
+                "bot_id": "1",
+                "role": "command",
+            },
+            "event_type": "notice.group_msg_emoji_like",
+            "conversation": {"id": "1", "type": "group"},
+            "ingress": {
+                "spool_id": "lily-main",
+                "sequence": 7,
+                "record_sha256": "a" * 64,
+                "captured_at": "2026-07-18T08:00:00+00:00",
+            },
+            "capture": {
+                "status": "partial",
+                "sanitizer_version": "superlily.sanitizer.v1",
+                "original_payload_sha256": "b" * 64,
+                "original_payload_size_bytes": 2_048,
+                "omitted_fields": ["image.url", "raw.cookie"],
+                "platform_extra": {"notice_sub_type": "add"},
+                "reason": "image bytes excluded by policy",
+            },
+            "actions": [
+                {
+                    "action_kind": "reaction",
+                    "operation": "add",
+                    "actor_principal_id": "42",
+                    "target_platform_message_id": "99",
+                    "value": {"emoji_id": "128074", "count": 1},
+                    "capture_status": "complete",
+                }
+            ],
+            "occurred_at": "2026-07-18T08:00:01+00:00",
+        }
+    )
+
+    assert event.ingress == IngressRecordRef(
+        spool_id="lily-main",
+        sequence=7,
+        record_sha256="a" * 64,
+        captured_at="2026-07-18T08:00:00+00:00",
+    )
+    assert event.capture is not None
+    assert event.capture.omitted_fields == ["image.url", "raw.cookie"]
+    assert event.actions == [
+        PlatformActionDetail(
+            action_kind="reaction",
+            operation="add",
+            actor_principal_id="42",
+            target_platform_message_id="99",
+            value={"emoji_id": "128074", "count": 1},
+            capture_status="complete",
+        )
+    ]
+
+
+def test_c0d_collection_contracts_reject_ambiguous_completeness() -> None:
+    with pytest.raises(ValidationError, match="requires a reason"):
+        CaptureEnvelope(status="partial")
+    with pytest.raises(ValidationError, match="sanitizer_version"):
+        CaptureEnvelope(status="complete", platform_extra={"unknown": 1})
+    with pytest.raises(ValidationError, match="requires a target"):
+        PlatformActionDetail(action_kind="reaction")
+    with pytest.raises(ValidationError, match="entirely present"):
+        IngestReceipt(
+            receipt_id="receipt",
+            observation_id="observation",
+            source_event_id="event",
+            instance_id="lily-command",
+            outcome="committed",
+            spool_id="lily-main",
+            committed_at="2026-07-18T08:00:00+00:00",
+        )
+    with pytest.raises(ValidationError, match="contiguous watermark"):
+        CollectorWatermarkView(
+            instance_id="lily-command",
+            spool_id="lily-main",
+            highest_contiguous_sequence=3,
+            highest_seen_sequence=2,
+            next_gap_sequence=None,
+            last_receipt_at="2026-07-18T08:00:00+00:00",
+            updated_at="2026-07-18T08:00:00+00:00",
+        )
+
+
+def test_c0d_user_target_action_does_not_require_a_message_target() -> None:
+    poke = PlatformActionDetail(
+        action_kind="poke",
+        operation="observed_state",
+        actor_principal_id="42",
+        subject_principal_id="43",
+        value={"sub_type": "poke"},
+    )
+    assert poke.subject_principal_id == "43"
+    assert poke.target_platform_message_id is None
+
+
+def test_c0d_ingress_spool_status_requires_honest_pending_age() -> None:
+    status = IngressSpoolStatus(
+        state="pending",
+        durability_mode="sqlite_full",
+        spool_id="spool-lily",
+        pending_records=2,
+        pending_bytes=4096,
+        committed_records=3,
+        quarantined_records=0,
+        quarantined_files=0,
+        oldest_pending_seconds=4.5,
+        live_bytes=8192,
+        quota_bytes=268_435_456,
+        highest_sequence=5,
+        replay_successes=3,
+        replay_failures=1,
+        capture_failures=0,
+        quota_rejections=0,
+        observed_at="2026-07-18T12:00:00+00:00",
+    )
+    assert status.pending_records == 2
+    with pytest.raises(ValidationError, match="requires oldest pending age"):
+        IngressSpoolStatus(
+            **{
+                **status.model_dump(),
+                "pending_records": 1,
+                "oldest_pending_seconds": None,
+            }
+        )
+
+
+def test_capture_policy_is_exact_scope_and_metadata_only_for_images() -> None:
+    policy = ConversationCapturePolicy(
+        platform="qq",
+        conversation={"id": "1080353942", "type": "group"},
+        profile="archive_full",
+        retention_class="historical",
+        policy_version="archive-v1",
+        source_commit="a" * 40,
+    )
+    assert policy.image_policy == "metadata_only"
+    assert policy.binary_policy == "metadata_only"

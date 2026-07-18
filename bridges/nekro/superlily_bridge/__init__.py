@@ -42,7 +42,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.3.4"
+BRIDGE_VERSION = "0.4.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -80,6 +80,28 @@ class BridgeConfig(ConfigBase):
         le=5,
         title="Claim and ACK retry backoff",
     )
+    SPOOL_PATH: str = Field(
+        default="/home/justin/nekro/plugin_data/Superlily.core_bridge/ingress-spool.sqlite3",
+        title="Durable ingress spool path",
+    )
+    SPOOL_QUOTA_BYTES: int = Field(
+        default=268_435_456,
+        ge=1_048_576,
+        le=4_294_967_296,
+        title="Durable ingress spool quota",
+    )
+    SPOOL_RETENTION_SECONDS: int = Field(
+        default=86_400,
+        ge=0,
+        le=604_800,
+        title="Committed record retention",
+    )
+    SPOOL_MAX_RECORD_BYTES: int = Field(
+        default=1_048_576,
+        ge=65_536,
+        le=8_388_608,
+        title="Maximum durable event bytes",
+    )
     CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
 
 
@@ -94,6 +116,10 @@ reporter = BackgroundReporter(
     config.REPORT_RETRY_BACKOFF_SECONDS,
     config.CLAIM_ATTEMPTS,
     config.CLAIM_RETRY_BACKOFF_SECONDS,
+    config.SPOOL_PATH,
+    config.SPOOL_QUOTA_BYTES,
+    config.SPOOL_RETENTION_SECONDS,
+    config.SPOOL_MAX_RECORD_BYTES,
 )
 heartbeat_task: asyncio.Task | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
@@ -700,6 +726,7 @@ async def heartbeat_loop() -> None:
                     "connection_status": "connected" if bots else "disconnected",
                     "occurred_at": utc_iso(),
                     "capabilities": ONEBOT_QQ_CAPABILITIES,
+                    "ingress_spool": reporter.spool_status(),
                     "metadata": {
                         "connected_bots": len(bots),
                         "queue_depth": reporter.queue.qsize(),
@@ -723,7 +750,7 @@ async def init_bridge() -> None:
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="nekro-lily-core-heartbeat")
-    logger.info("Lily Core bridge started in fail-open mode")
+    logger.info("Lily Core bridge started with fail-open durable event capture")
 
 
 @plugin.mount_cleanup_method()

@@ -21,7 +21,11 @@ def load_reporter_module(
         sys.modules["nekro_agent"] = nekro_package
         sys.modules["nekro_agent.api"] = api_package
         sys.modules["nekro_agent.api.core"] = core_module
-    module_name = f"bridge_reporter_test_{path.parts[-3]}"
+    package_name = f"bridge_reporter_test_{path.parts[-3]}"
+    package = types.ModuleType(package_name)
+    package.__path__ = [str(path.parent.resolve())]
+    sys.modules[package_name] = package
+    module_name = f"{package_name}.reporter"
     spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

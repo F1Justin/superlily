@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     Boolean,
     CheckConstraint,
@@ -89,6 +90,18 @@ class EventObservation(Base):
     attachments_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    capture_profile: Mapped[str] = mapped_column(String(32), default="operational", nullable=False)
+    capture_policy_version: Mapped[str] = mapped_column(
+        String(64), default="default-operational-v1", nullable=False
+    )
+    capture_status: Mapped[str] = mapped_column(String(32), default="unassessed", nullable=False)
+    sanitizer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    collector_sanitizer_version: Mapped[str | None] = mapped_column(String(64))
+    original_payload_sha256: Mapped[str | None] = mapped_column(String(64))
+    original_payload_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    omitted_fields_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    platform_extra_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    capture_reason: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (
@@ -105,6 +118,191 @@ class EventObservation(Base):
             "instance_id",
             "platform_message_id",
         ),
+        CheckConstraint(
+            "capture_profile IN ('off', 'operational', 'archive_full')",
+            name="ck_event_observation_capture_profile",
+        ),
+        CheckConstraint(
+            "capture_status IN ('unassessed', 'complete', 'partial', 'unavailable')",
+            name="ck_event_observation_capture_status",
+        ),
+        CheckConstraint(
+            "original_payload_size_bytes IS NULL OR original_payload_size_bytes >= 0",
+            name="ck_event_observation_payload_size",
+        ),
+    )
+
+
+class ConversationCaptureProfile(Base):
+    __tablename__ = "conversation_capture_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    capture_profile: Mapped[str] = mapped_column(String(32), nullable=False)
+    image_policy: Mapped[str] = mapped_column(String(32), default="metadata_only", nullable=False)
+    binary_policy: Mapped[str] = mapped_column(String(32), default="metadata_only", nullable=False)
+    retention_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_commit: Mapped[str | None] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "platform",
+            "conversation_type",
+            "conversation_id",
+            name="uq_conversation_capture_profile_scope",
+        ),
+        CheckConstraint(
+            "capture_profile IN ('off', 'operational', 'archive_full')",
+            name="ck_conversation_capture_profile",
+        ),
+        CheckConstraint(
+            "image_policy IN ('metadata_only')",
+            name="ck_conversation_capture_image_policy",
+        ),
+        CheckConstraint(
+            "binary_policy IN ('metadata_only', 'object_store')",
+            name="ck_conversation_capture_binary_policy",
+        ),
+        Index("ix_conversation_capture_profiles_active", "active"),
+    )
+
+
+class PlatformActionObservation(Base):
+    __tablename__ = "platform_action_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    observation_id: Mapped[str] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False
+    )
+    observer_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    action_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    action_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_principal_id: Mapped[str | None] = mapped_column(String(256))
+    subject_principal_id: Mapped[str | None] = mapped_column(String(256))
+    target_reported_source_event_id: Mapped[str | None] = mapped_column(String(512))
+    target_platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    target_conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    target_conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_source_event_id: Mapped[str | None] = mapped_column(
+        ForeignKey("source_events.id", ondelete="SET NULL")
+    )
+    resolver_status: Mapped[str] = mapped_column(String(32), default="unresolved", nullable=False)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    capture_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "observation_id", "action_index", name="uq_platform_action_observation_index"
+        ),
+        CheckConstraint(
+            "operation IN ('add', 'remove', 'update', 'observed_state', 'unknown')",
+            name="ck_platform_action_operation",
+        ),
+        CheckConstraint(
+            "capture_status IN ('unassessed', 'complete', 'partial', 'unavailable')",
+            name="ck_platform_action_capture_status",
+        ),
+        CheckConstraint(
+            "resolver_status IN ('resolved', 'unresolved', 'ambiguous', 'unavailable')",
+            name="ck_platform_action_resolver_status",
+        ),
+        CheckConstraint(
+            "target_reported_source_event_id IS NOT NULL "
+            "OR target_platform_message_id IS NOT NULL "
+            "OR subject_principal_id IS NOT NULL",
+            name="ck_platform_action_target_hint",
+        ),
+        Index("ix_platform_actions_observation", "observation_id"),
+        Index("ix_platform_actions_target_source", "target_source_event_id"),
+        Index(
+            "ix_platform_actions_pending_target",
+            "observer_instance_id",
+            "target_conversation_type",
+            "target_conversation_id",
+            "target_platform_message_id",
+        ),
+    )
+
+
+class IngressReceiptRecord(Base):
+    __tablename__ = "ingress_receipts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    observation_id: Mapped[str] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False
+    )
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    spool_id: Mapped[str | None] = mapped_column(String(128))
+    collector_sequence: Mapped[int | None] = mapped_column(BigInteger)
+    record_sha256: Mapped[str | None] = mapped_column(String(64))
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    committed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("observation_id", name="uq_ingress_receipt_observation"),
+        UniqueConstraint(
+            "instance_id",
+            "spool_id",
+            "collector_sequence",
+            name="uq_ingress_receipt_spool_sequence",
+        ),
+        CheckConstraint(
+            "(spool_id IS NULL AND collector_sequence IS NULL AND record_sha256 IS NULL "
+            "AND captured_at IS NULL) OR (spool_id IS NOT NULL AND collector_sequence IS NOT NULL "
+            "AND record_sha256 IS NOT NULL AND captured_at IS NOT NULL)",
+            name="ck_ingress_receipt_spool_binding",
+        ),
+        CheckConstraint(
+            "collector_sequence IS NULL OR collector_sequence >= 1",
+            name="ck_ingress_receipt_sequence",
+        ),
+        Index("ix_ingress_receipts_instance_committed", "instance_id", "committed_at"),
+    )
+
+
+class CollectorWatermark(Base):
+    __tablename__ = "collector_watermarks"
+
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="CASCADE"), primary_key=True
+    )
+    spool_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    highest_contiguous_sequence: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    highest_seen_sequence: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    last_receipt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "highest_contiguous_sequence >= 0 "
+            "AND highest_seen_sequence >= highest_contiguous_sequence",
+            name="ck_collector_watermark_order",
+        ),
+        Index("ix_collector_watermarks_updated", "updated_at"),
     )
 
 

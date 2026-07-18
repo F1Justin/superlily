@@ -56,6 +56,11 @@ Phase 3a persistence and Core API regression tests are isolated with:
   tests/test_migrations.py
 ```
 
+C0-D contracts, action ingestion, receipt/watermark idempotency and migration
+round trips are covered by `tests/test_contracts.py`, the `test_c0d_*` cases in
+`tests/test_api.py`, and `tests/test_migrations.py`. Run them on both disposable
+SQLite and PostgreSQL before changing bridge spool behavior.
+
 After `0012_tool_registry` is applied, the initial admin read must report zero
 descriptors/providers and execution `off`. The local administration CLI has
 only `import-descriptor` and `register-provider`; it reads descriptor bytes
