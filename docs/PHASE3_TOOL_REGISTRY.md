@@ -15,9 +15,10 @@ things that old command plugins commonly combine:
 The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
-**Status:** design only. Phase 3 implementation has not started and remains
-blocked by the signed policy-v6 Phase 2 gate in `PHASE2_FINAL_AUDIT.md`.
-`PHASE3_ACCEPTANCE.md` is the executable release checklist; this document
+**Status:** Phase 3a contract work may begin. The signed policy-v6 Phase 2 gate
+is recorded in `PHASE2_FINAL_AUDIT.md`; execution authority remains disabled.
+`PHASE3_ACCEPTANCE.md` is the executable release checklist, the accepted ADRs
+under `docs/adr/` freeze the first implementation decisions, and this document
 defines the architecture.
 
 ## Non-goals

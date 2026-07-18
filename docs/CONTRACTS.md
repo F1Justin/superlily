@@ -201,3 +201,29 @@ metadata. Only reported status changes append history.
 
 The authoritative Pydantic definitions are in
 `packages/contracts/src/superlily_contracts/models.py`.
+
+## Phase 3a Tool Registry authority contracts
+
+Tool descriptor authority is strict UTF-8 JSON loaded from reviewed Git
+content. `superlily_contracts.tool_registry` rejects duplicate keys,
+non-finite numbers, permissive coercion, unknown fields, and schemas outside
+the bounded `json-schema-2020-12-superlily-v1` profile. It preserves string
+content exactly, canonicalizes the decoded authority document with RFC 8785,
+and uses the SHA-256 of those canonical bytes as descriptor identity.
+
+The restricted schema profile requires an explicit Draft 2020-12 declaration,
+closed and bounded objects, bounded arrays/strings/numbers, and local acyclic
+`#/$defs/` references. Remote and dynamic references, boolean schemas, union
+keywords, unknown formats/keywords, and unbounded expansion are forbidden.
+
+The same package defines strict provider registration, inventory, heartbeat,
+and budget-enforcement payloads. Provider identity and credentials remain
+separate from bot ingestion and administrator identity. Inventory hashes are
+order-independent over tool entries and bind the provider, protocol,
+descriptor identity, implementation identity, and enforceable budgets.
+
+`superlily-tool-registry verify-descriptor` and `verify-schema` expose offline
+verification using exactly these contracts. Shared acceptance and rejection
+vectors live in `packages/contracts/vectors/tool_registry`. The bundled
+`status.inspect` descriptor is only a golden vector: it is not imported,
+reviewed, active, eligible, or executable production authority.

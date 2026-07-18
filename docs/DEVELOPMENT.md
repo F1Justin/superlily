@@ -33,6 +33,20 @@ Production schema changes use Alembic; `create_schema` and `drop_schema` exist
 only for disposable tests. The constraints files are the verified resolver
 input; `pyproject.toml` ranges remain the package compatibility declaration.
 
+Run the Phase 3a authority-contract tests and verify the shared descriptor with
+the same parser, validator, canonicalizer, and hash implementation used by the
+contracts package:
+
+```bash
+.venv/bin/pytest -q tests/test_tool_registry_contracts.py
+.venv/bin/superlily-tool-registry verify-descriptor \
+  packages/contracts/vectors/tool_registry/status.inspect-1.0.0.json
+```
+
+The descriptor under `vectors/` is a test vector, not an active registry entry.
+The CLI performs offline verification only and cannot import, activate, or run
+a tool.
+
 Historical imports start with a write-free dry run. Candidate records should be
 normalized to EventIn-shaped JSONL first, then inspected with:
 

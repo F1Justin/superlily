@@ -12,7 +12,7 @@ for Phases 4–11 without authorizing those phases to start early.
 ## Current position
 
 Phase 2 is complete and signed in `ACCEPTANCE.md`; the Phase 3 entrance gate is
-open, but Phase 3 implementation has not started. Correlation v3, runtime
+open, and Phase 3a contract implementation has started. Correlation v3, runtime
 command inventory, response attribution, the exact-conversation claim canary,
 typed platform capabilities, policy v6, migration `0011_claim_ack`, Lily bridge
 0.3.2, and Nekro bridge 0.3.4 are deployed. A deterministic reply to another
@@ -31,8 +31,10 @@ The completed policy-v5 window, policy-v6 counterfactual replay, live
 no-summon/summon pair, post-deployment claim/ACK/response checks, long-task
 attribution repair, and operator sign-off are recorded in `ACCEPTANCE.md`.
 Earlier rejected windows remain diagnostic evidence. The next implementation
-work is Phase 3a's descriptor contract and canonical hash vectors; no tool
-execution or production authority is enabled at its start.
+work is migration `0012_tool_registry` and the zero-active-descriptor Core
+registry. The accepted ADRs, descriptor/provider models, restricted JSON
+Schema profile, RFC 8785 verifier CLI, and shared vectors do not themselves
+grant production authority or enable tool execution.
 
 ## Sequencing rules
 

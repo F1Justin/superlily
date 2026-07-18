@@ -2,15 +2,16 @@
 
 ## Status and entrance gate
 
-Phase 3 implementation has not started. Its Phase 2 entrance prerequisite is
-now recorded; every Phase 3 implementation item remains unchecked until its
-own evidence exists, and design prose is not implementation evidence.
+Phase 3a contract implementation has started after its recorded Phase 2
+entrance prerequisite. The accepted ADRs and contract library are evidence for
+their narrow checked items only; production registry, provider, invocation,
+artifact, and execution items remain unchecked until their own evidence exists.
 
 - [x] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
   reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
   acknowledged claim coordination, response attribution, SQLite/PostgreSQL
   tests, `0011_claim_ack` migration/drift, backup and rollback.
-- [ ] Phase 3 ADRs approve descriptor/JCS authority, provider identity,
+- [x] Phase 3 ADRs approve descriptor/JCS authority, provider identity,
   transitions/recovery, artifact storage, credentials and control-plane auth.
 
 ## 3a: authority and effective registry

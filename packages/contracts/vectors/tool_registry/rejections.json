@@ -1,0 +1,42 @@
+[
+  {
+    "name": "duplicate-key",
+    "layer": "json",
+    "source": "{\"tool_id\":\"status.inspect\",\"tool_id\":\"wolfram.run\"}"
+  },
+  {
+    "name": "non-finite-number",
+    "layer": "json",
+    "source": "{\"value\":NaN}"
+  },
+  {
+    "name": "remote-reference",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"value\":{\"$ref\":\"https://example.invalid/schema\"}},\"required\":[],\"additionalProperties\":false,\"maxProperties\":1}"
+  },
+  {
+    "name": "unknown-keyword",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"maxLength\":32,\"format\":\"uri\"}"
+  },
+  {
+    "name": "ambiguous-union",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"oneOf\":[{\"type\":\"string\",\"maxLength\":32},{\"type\":\"integer\",\"minimum\":0,\"maximum\":10}]}"
+  },
+  {
+    "name": "unbounded-string",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"
+  },
+  {
+    "name": "cyclic-local-reference",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"$defs\":{\"A\":{\"$ref\":\"#/$defs/B\"},\"B\":{\"$ref\":\"#/$defs/A\"}},\"type\":\"object\",\"properties\":{\"value\":{\"$ref\":\"#/$defs/A\"}},\"required\":[],\"additionalProperties\":false,\"maxProperties\":1}"
+  },
+  {
+    "name": "unbounded-object",
+    "layer": "schema",
+    "source": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"
+  }
+]

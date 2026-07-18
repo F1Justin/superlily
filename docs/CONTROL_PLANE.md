@@ -2,10 +2,11 @@
 
 ## Status and boundary
 
-This is a design contract, not a deployed panel. Phase 3 has not started. A
-panel must expose existing Core truth before it is allowed to mutate anything;
-it is not an alternate authority store and must never infer “healthy” or
-“eligible” from one green status.
+This is a design contract, not a deployed panel. Phase 3a authority contracts
+have started, but there is no panel and no control-plane mutation surface. A
+future panel must expose existing Core truth before it is allowed to mutate
+anything; it is not an alternate authority store and must never infer
+“healthy” or “eligible” from one green status.
 
 The panel always separates:
 

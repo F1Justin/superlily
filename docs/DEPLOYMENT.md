@@ -161,8 +161,10 @@ Do not jump directly from shadow to enforcement.
 
 ## 6. Phase 3 deployment boundary
 
-Phase 3 has not started. After the Phase 2 signature, follow
-`PHASE3_ACCEPTANCE.md` and `PHASE3_TOOL_REGISTRY.md`. Deploy descriptor/runtime
-registry work with zero active descriptors and execution `off`; the future
-control panel described in `CONTROL_PLANE.md` is read-only until its own
-authentication, authorization, preview, audit, and mutation gates pass.
+Phase 3a contract work has started after the Phase 2 signature, but no Phase 3
+schema, endpoint, provider credential, active descriptor, or execution path is
+deployed. Follow `PHASE3_ACCEPTANCE.md` and `PHASE3_TOOL_REGISTRY.md`. Deploy
+future descriptor/runtime registry work with zero active descriptors and
+execution `off`; the future control panel described in `CONTROL_PLANE.md` is
+read-only until its own authentication, authorization, preview, audit, and
+mutation gates pass.

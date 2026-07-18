@@ -1,0 +1,81 @@
+{
+  "tool_id": "status.inspect",
+  "version": "1.0.0",
+  "title": "Inspect service status",
+  "description": "Return a bounded, structured status snapshot.  Semantic spacing is preserved.",
+  "provider_selector": {
+    "provider_ids": ["provider-status-primary"],
+    "protocol": "superlily-provider-pull-v1"
+  },
+  "source_plugin": "plugins.status",
+  "schema_profile": "json-schema-2020-12-superlily-v1",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "scope": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "required": ["scope"],
+    "additionalProperties": false,
+    "minProperties": 1,
+    "maxProperties": 1
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 16,
+        "enum": ["ok", "degraded", "unavailable"]
+      },
+      "checked_at": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40
+      }
+    },
+    "required": ["status", "checked_at"],
+    "additionalProperties": false,
+    "minProperties": 2,
+    "maxProperties": 2
+  },
+  "side_effect": "read",
+  "determinism": "external_state",
+  "retry_policy": "retry_safe",
+  "permission": "public",
+  "confirmation": "never",
+  "allowed_callers": ["command", "admin_api"],
+  "natural_language": false,
+  "timeout_ms": 5000,
+  "concurrency_limit": 4,
+  "rate_limit": {
+    "requests": 10,
+    "window_seconds": 60,
+    "scope": "sender"
+  },
+  "resource_budget": {
+    "cpu_ms": 1000,
+    "memory_bytes": 67108864,
+    "input_bytes": 4096,
+    "output_bytes": 32768,
+    "artifact_bytes": null
+  },
+  "required_budget_enforcement": ["wall_time", "output_bytes"],
+  "execution_permissions": {
+    "network": "deny",
+    "filesystem": "deny",
+    "subprocess": "deny",
+    "secrets": [],
+    "remote_fetch": "deny",
+    "artifacts": []
+  },
+  "required_capabilities": [],
+  "data_classification": "public",
+  "result_retention_seconds": 2592000
+}

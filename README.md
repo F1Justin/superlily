@@ -4,14 +4,17 @@ Superlily is the Lily Core described in [`manifesto.md`](manifesto.md). Phase 1
 provides the observability spine; Phase 2 adds canonical correlation,
 deterministic decisions, authenticated runtime command inventory, outcome
 auditing, and an opt-in fail-open claim canary. Tool execution remains outside
-Core until Phase 3.
+Core. Phase 3a has started with authority contracts, bounded JSON Schema/JCS
+validation, provider inventory models, a verifier CLI, and shared vectors;
+production registry rows and execution remain absent and disabled.
 
 The runtime is deliberately fail-open: telemetry failures never block either
 bot, and claim failures preserve their existing behavior.
 
 ## Layout
 
-- `packages/contracts`: versioned ingestion schemas and payload sanitization.
+- `packages/contracts`: versioned ingestion/tool schemas, canonical authority
+  validation, shared vectors, and payload sanitization.
 - `apps/core`: FastAPI ingestion/query service and database models.
 - `bridges/lily_nonebot`: NoneBot event/API observer.
 - `bridges/nekro`: Nekro local plugin observer.
