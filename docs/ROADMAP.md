@@ -40,10 +40,12 @@ mutation 基础：角色/短会话、重认证、preview、CAS、幂等、append
 回滚。该门通过后，才评审一个 `admin_api` 精确 canary；自然语言 tool loop 仍属
 Phase 5。
 
-该治理包的 M0 会话/审计底座已完成发布前实现：SQLite 323 项通过、1 项
+该治理包的 M0 会话/审计底座已完成实现并以默认禁用状态部署：SQLite 323 项通过、1 项
 PostgreSQL 专用测试跳过，PostgreSQL 17 全量 324 项通过；两端 migration 往返、
-drift、CSRF/CAS、限速、脱敏和 append-only 证据均成立。M0 本身不提供 mutation
-端点，下一实现包是 M1 descriptor lifecycle preview/CAS。
+drift、CSRF/CAS、限速、脱敏和 append-only 证据均成立。生产为
+`0015a_control_plane_auth` head、无 drift，4 张新表为空，operator/Host/Origin/
+pepper 均未配置，工具执行仍为 `ledger_only` 且零 attempt。M0 本身不提供 mutation
+端点；下一实现包是 M1 descriptor lifecycle preview/CAS。
 
 ## Sequencing rules
 

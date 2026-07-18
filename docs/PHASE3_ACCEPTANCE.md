@@ -186,6 +186,20 @@ M0 没有 descriptor lifecycle、Provider quarantine 或 rollout mutation 端点
 单独解除 canary 门。下一包是 M1 的 server-computed preview、角色授权、资源版本
 CAS、幂等 apply、接受/拒绝审计与回滚测试。
 
+### 最小控制面 M0 生产默认禁用证据
+
+2026-07-19 03:21 CST，提交 `5e2e299` 的 Core 镜像
+`sha256:9d4470d72edcf2b1d61525e5d040fd86f76c3680fdaeb9a6f7a308ef927c2501`
+上线。生产为 `0015a_control_plane_auth` head 且无 drift；4 张控制面表、3 个
+append-only trigger 存在，所有新表均为 0 行。operator、Host/Origin 和 audit
+pepper 均未配置，登录端点返回带完整安全头的 503。
+
+备份目录、150,140,201 字节 dump、SHA-256、隔离实际恢复结果、镜像/配置哈希与
+回滚约束见 `DEPLOYMENT.md` 第 10 节。工具模式保持 `ledger_only`；两个 descriptor
+仍为 `reviewed`，原 invocation 仍为 `recorded_only`，attempt/event 均为 0；两个
+bot 与 Provider 心跳新鲜。由此只签署 M0 默认禁用上线，不签署任何 mutation 或
+canary authority。
+
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
   enforce uses its own exact allowlist.

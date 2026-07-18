@@ -387,3 +387,39 @@ quarantine 和 canary 变更必须先通过角色/会话、重认证、CAS、幂
 保持/退回 `ledger_only` 或 `off`。只有无 active attempt、另做新备份并同步回退
 应用时，才考虑 downgrade 到 `0014_tool_invocations`；不得删除 invocation、attempt
 或 append-only 事件来伪造回滚。
+
+## 10. 最小控制面 M0 默认禁用上线记录
+
+2026-07-19 03:21 CST，提交 `5e2e2997495bbb9e3a84f96beb7fd0fbb3ab838e`
+只重建并替换 Core，生产迁移从 `0015_tool_attempts` 线性升级到
+`0015a_control_plane_auth`。Core 镜像为
+`sha256:9d4470d72edcf2b1d61525e5d040fd86f76c3680fdaeb9a6f7a308ef927c2501`，
+容器环境配置单向哈希为
+`e2932ebe551338fe62e4233a9440f1289b646cebfcbb0ec9d28a5e8b2c5e5cc5`。
+PostgreSQL、Provider、Lily、Nekro 与 NapCat 均未因本次迁移重启。
+
+上线前自定义格式备份位于
+`/home/justin/backups/superlily/20260719-phase3-control-m0/superlily-pre-control-m0-5e2e299.dump`，
+大小 150,140,201 字节，SHA-256
+`aa2e6dda601fcbb8b6df3412e6e5d407459b396dd3815c466cc074da0b7f6c71`；
+目录权限为 `0700`，root 所有的 dump 权限为 `0600`。`pg_restore --list` 通过，
+并在同一 PostgreSQL 17 容器的隔离数据库实际恢复出 `0015_tool_attempts`、386,124
+条 source event、2 个 descriptor、1 个 invocation 和 0 attempt。验证数据库与
+容器临时 dump 已删除，主机备份保留。
+
+生产 `alembic current` 为 `0015a_control_plane_auth (head)`，`alembic check` 无
+drift；4 张控制面表和 3 个 PostgreSQL append-only trigger 存在，session、login
+attempt、mutation、audit event 均为 0。生产配置确认 operator、Host/Origin 与 audit
+pepper 均为空，控制面登录稳定返回带 `no-store`、`nosniff`、`no-referrer` 和 CSP
+的 503。因此 M0 上线只签署“默认不可用的会话/审计底座”，没有产生任何 operator
+authority。
+
+工具执行继续为 `ledger_only`、global stop=false；`status.inspect@1.0.0/1.0.1`
+仍为 `reviewed`，原 invocation 仍为 1 条 `recorded_only`，attempt/attempt event/
+active attempt 均为 0。切换后 Lily/Nekro 均为 online，心跳年龄 17/18 秒；Provider
+为 healthy、0/1 并发、心跳年龄 11 秒。
+
+第一回滚手段是保持 operator 配置为空并回退应用镜像；这不会改变工具热路径。只有
+确认应用必须回到旧 schema、控制面四表仍为空且已经另做新备份时，才可将 Core 与
+数据库一起 downgrade 到 `0015_tool_attempts`。一旦 M1 以后产生 mutation/audit，
+不得用 downgrade 删除证据，必须使用新的反向 mutation 作为回滚。

@@ -11,7 +11,7 @@ Admin、自然语言 tool calling 或写操作工具。控制面不可参与工�
 
 ## 当前实现状态
 
-2026-07-19，M0 已完成代码与发布前验收，但尚未开放任何 mutation。新增服务端短
+2026-07-19，M0 已完成代码、双数据库验收和默认禁用的生产部署，但尚未开放任何 mutation。新增服务端短
 会话、离线 scrypt verifier 生成器、精确 Host/Origin/JSON 边界、Secure/HttpOnly/
 SameSite cookie、内存态 CSRF、数据库时间过期、再认证/退出 CAS、登录限速、scrypt
 并发上限、脱敏 422、安全响应头和 append-only 登录/审计证据。
@@ -19,7 +19,7 @@ SameSite cookie、内存态 CSRF、数据库时间过期、再认证/退出 CAS�
 SQLite 全量为 323 项通过、1 项 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段
 全量 324 项通过。两种数据库均完成 fresh upgrade、downgrade/re-upgrade、
 `alembic check`、触发器不可变和并发旧 CSRF 最多成功一次验证。控制面 operator
-配置仍默认为空，因此这些表和路由不会激活 descriptor、quarantine Provider 或
+配置在生产仍为空，4 张新表也均为空，因此这些表和路由不会激活 descriptor、quarantine Provider 或
 创建 canary。M1–M3 仍必须逐包通过后，才可能进入首个精确 canary。
 
 ## 分包顺序
