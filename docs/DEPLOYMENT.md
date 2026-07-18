@@ -505,3 +505,55 @@ hash `156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`、
 Provider preview/mutation/audit、新 lifecycle event 或资源版本变化，已经另做新备份，
 且应用已同步回退时，才可考虑 downgrade 到 `0015b`。一旦产生治理证据，只能使用
 新的反向 mutation 降低 authority，禁止靠删表或 downgrade 抹除历史。
+
+## 13. Git-bound rollout plan M3 默认禁用上线记录
+
+2026-07-19 06:01–06:04 CST，提交
+`8f2547362c722a4ff1eb4c612f71c383e268cb3c` 只重建并替换 Core，生产迁移从
+`0015c_provider_quarantine` 线性升级到 `0015d_rollout_plans`。Core 镜像为
+`sha256:5de28375836bc342840a9a5e8ddbf5f5d9aaf269221f8bac6364e1b6c78a8e7f`，
+镜像内 `pip check` 通过；Core Compose 配置哈希为
+`b86d57acf3739921dc4631253841d09d44911a4e7f62d0318f30cc077c30d9b0`。
+未重建的 Provider 配置哈希仍为
+`ea06bcdd92005d0eb2d284c87383c031fb1cccfc83631736f2b9ddc1d9b2b05f`，
+镜像仍为
+`sha256:db13bb712ea72c3edf729a053d51b696e5d070131ff0eb262ce4d12636dcec8d`。
+PostgreSQL 与 Provider 的容器启动时间分别保持
+`2026-07-18T13:38:21Z` 和 `2026-07-18T20:54:20Z`，没有随 Core 重启。
+
+上线前自定义格式备份位于
+`/home/justin/backups/superlily/20260719-phase3-control-m3/superlily-pre-control-m3-8f25473.dump`，
+大小 150,464,738 字节、权限 `0600`、SHA-256
+`25f4333b811773051126653ee235de485621b25211c3996010054daca32b252a`；
+`pg_restore --list` 通过。第一次隔离恢复使用 2 GiB tmpfs，数据导入后在验证两张大表
+外键时因 PostgreSQL 临时空间耗尽而失败；该一次性副本已删除，没有触碰生产库。
+随后从空库改用自动清理的 Docker 临时磁盘卷，并以 `--exit-on-error` 零错误恢复。
+恢复结果为 `0015c_provider_quarantine`、386,650 条 source event、418,421 条
+observation、6,812 条 receipt、3 个 descriptor、1 个 Provider、1 条 invocation、
+0 attempt/event 和全零的 5 张控制面表。成功的一次性容器及临时卷已删除，主机备份
+保留；生产 PostgreSQL 容器内临时 dump 副本也已删除。
+
+生产启动日志明确记录
+`0015c_provider_quarantine -> 0015d_rollout_plans`；`alembic current` 为 head，
+`alembic check` 无 drift。四张 rollout 表、plan item/event/counter 均为 0；四个
+rollout trigger 和三个 PostgreSQL guard function 均存在。operator、Host、Origin 与
+audit pepper 仍未配置，执行上限保持 `ledger_only`、global stop=false。Admin
+Registry API 返回 rollout plans=0、active=0、`active_rollout_plan=null` 和
+`leases_enabled=false`；M3 preview 返回带 `no-store`、`no-referrer`、`nosniff` 和
+CSP 的 503。真实 Provider 身份的 lease 探测返回 204/空正文，探测后仍只有原来的
+1 条 `recorded_only` invocation，attempt/event 和五张控制面表合计均为 0。
+
+三版 `status.inspect` descriptor 均为 `reviewed/resource_version=1`；Provider 保持
+`active/resource_version=1`。最新 runtime 仍精确报告 `1.0.2` descriptor hash、
+implementation hash
+`156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`、
+hard wall-time/output-bytes、healthy 和 0/1 并发。Core 替换后 Lily/Nekro 分别为
+online，心跳年龄 24/27 秒。因此本次只签署 M3 默认禁用底座，不导入或激活任何
+rollout plan，不激活 descriptor，也不签署 canary。
+
+第一回滚手段仍是保持 `ledger_only` 或进一步降到 `off`，无需改 schema。若必须回退
+到不认识 `0015d` 的旧 Core 镜像，不能直接替换：旧 Alembic 不认识新 revision。
+只有确认四张 rollout 表全零、没有任何 M3 preview/mutation/audit、已经另做新备份时，
+才可先用当前镜像 downgrade 到 `0015c`，再替换旧 Core。一旦导入过 plan 或产生 M3
+治理证据，就不得用 downgrade 抹除；应保持兼容应用并通过 plan pause/global stop
+降低 authority。

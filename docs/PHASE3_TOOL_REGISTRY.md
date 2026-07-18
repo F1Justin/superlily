@@ -18,8 +18,9 @@ same tool protocol that future natural-language planning will use.
 **当前状态：** Phase 3a、`0014_tool_invocations`、`0015_tool_attempts` 与最小控制面
 M0–M2 已默认禁用部署。真实 `status.inspect@1.0.2` authority 和 Provider runtime
 已经精确对齐，但 descriptor 仍为 `reviewed`、执行仍为 `ledger_only`、零 attempt。
-M3 Git-bound 精确 rollout plan 已实现；它关闭环境 scope 旁路，首包不开放
-`enforce`。真实 plan、descriptor activation、自然语言 caller 和生产 canary 尚未签署。
+M3 Git-bound 精确 rollout plan 已实现并默认禁用部署；它关闭环境 scope 旁路，首包
+不开放 `enforce`。生产四张 rollout 表全零、无 active plan/lease、零 attempt。
+真实 plan、descriptor activation、自然语言 caller 和生产 canary 尚未签署。
 `PHASE3_ACCEPTANCE.md` 是可执行发布清单，`docs/adr/` 中的 accepted ADR 冻结实现
 决策，本文定义总体架构。
 

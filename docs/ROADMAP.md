@@ -54,8 +54,9 @@ M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，Postg
 rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废止，执行模式只作为
 `off/ledger_only/canary` 上限；reviewed plan 精确绑定工具、会话、caller、Provider、
 资源版本、24 小时内窗口和调用上限，调用创建与 lease 都会重验并支持可审计 pause。
-默认禁用生产迁移、真实停止演练和首个 `admin_api` 精确 canary 仍待签署。自然语言
-工具循环仍属 Phase 5。
+默认禁用生产迁移已于 2026-07-19 完成：`0015d` head/no drift、四张 rollout 表全零、
+operator 为空、Registry 无 active plan/lease，真实 Provider lease=204 且零 attempt。
+真实停止演练和首个 `admin_api` 精确 canary 仍待签署。自然语言工具循环仍属 Phase 5。
 
 ## Sequencing rules
 

@@ -60,6 +60,12 @@ PostgreSQL 17 为 374 项全部通过。它包含 fresh upgrade、downgrade/re-u
 漂移、CAS/幂等、无计划安全降级、资源版本阻断、调用上限唯一胜者、pause/lease
 行锁、不可变 trigger 和旧功能全量回归。编译检查与 `git diff --check` 也通过。
 
+M3 已于 2026-07-19 06:01–06:04 CST 默认禁用部署到生产 `0015d`。备份在一次
+2 GiB tmpfs 空间不足后，改用空的临时磁盘卷完成零错误实际恢复；head/no drift
+通过。四张 rollout 表全零、数据库 guard 完整，operator/Host/Origin/pepper 仍空；
+Registry 显示无 active plan/lease，preview=503，真实 Provider lease=204，探测后
+仍为 1 条 `recorded_only`、零 attempt/event 和零控制面记录。真实 authority 未开放。
+
 ## 分包顺序
 
 ### M0：会话与审计底座

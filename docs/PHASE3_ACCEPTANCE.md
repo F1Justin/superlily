@@ -274,7 +274,7 @@ SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL 1
 343 项通过。测试覆盖默认禁用、角色/CSRF/再认证、quarantine/restore、runtime
 漂移与恢复 blocker、幂等、并发 CAS、preview/mutation 限速、直接 SQL 拒绝、secret
 不落证据、quarantine 期间上报和 lease 行锁。两种数据库迁移往返与 drift 均通过。
-这些是发布前证据；M2 默认禁用生产签署见下一节，M3 rollout plan 仍未完成。
+这些是当时的发布前证据；M2 默认禁用生产签署见下一节，该时点 M3 尚未完成。
 
 ### Provider quarantine M2 生产默认禁用证据
 
@@ -299,7 +299,8 @@ implementation hash、hard budgets、healthy 和 0/1 并发。
 未配置，Host/Origin 为空数组；M2 preview 返回带安全响应头的 503。探测后 5 张控制面
 表仍全零。生产继续为 `ledger_only`、global stop=false、空 canary/enforce scopes、
 1 条既有 invocation、0 attempt/event。因此只签署 M2 默认禁用上线，不签署真实
-Provider mutation、descriptor activation 或 canary；M3 仍是下一 authority 门。
+Provider mutation、descriptor activation 或 canary；在该 M2 时点，M3 仍是下一
+authority 门。
 
 ### Git-bound rollout plan M3 发布前证据
 
@@ -317,9 +318,29 @@ pause/lease 共用行锁后暂停接受不会产生新 attempt。另有回归证
 漂移 fail closed，而暂停不会被调用计数等运行态漂移阻塞。编译检查和
 `git diff --check` 通过。
 
-这些只签署 M3 发布前实现。生产仍保持 `0015c`、`ledger_only`、零 rollout plan 和
-零 attempt；默认禁用生产迁移证据在部署后另行追加，真实 descriptor activation、
-operator authority 和 canary 不由本节授权。
+这些只签署 M3 发布前实现。在该发布前快照中，生产仍保持 `0015c`、
+`ledger_only`、零 rollout plan 和零 attempt；默认禁用生产迁移证据见下一节，真实
+descriptor activation、operator authority 和 canary 不由本节授权。
+
+### Git-bound rollout plan M3 生产默认禁用证据
+
+2026-07-19 06:01–06:04 CST，提交
+`8f2547362c722a4ff1eb4c612f71c383e268cb3c` 只替换 Core，并把生产迁移到
+`0015d_rollout_plans`。上线前备份为 150,464,738 字节、0600，SHA-256
+`25f4333b811773051126653ee235de485621b25211c3996010054daca32b252a`；在第一次
+2 GiB tmpfs 空间不足后，从空库改用临时磁盘卷并以 `--exit-on-error` 完成零错误实际
+恢复，核对 `0015c`、386,650 条 source event 和预期工具/控制面计数。失败和成功的
+临时副本均已删除，主机备份保留。
+
+生产迁移日志、head 与无 drift 均通过。Core 镜像为
+`sha256:5de28375836bc342840a9a5e8ddbf5f5d9aaf269221f8bac6364e1b6c78a8e7f`，
+Compose 配置哈希为
+`b86d57acf3739921dc4631253841d09d44911a4e7f62d0318f30cc077c30d9b0`；
+PostgreSQL 与 Provider 未重启。四张 rollout 表全零，四个 trigger/三个 function
+存在；operator/Host/Origin/pepper 仍空，Registry 报告 plan=0、active=0、lease
+disabled，preview 为带安全头 503。真实 Provider lease 探测为 204，之后仍是
+1 条 `recorded_only` invocation、0 attempt/event、控制面总计 0。Lily/Nekro 在线。
+因此只签署 M3 默认禁用生产底座，未签署任何 plan、activation 或 canary authority。
 
 - [x] `off`、`ledger_only` 与 Git-bound exact `canary` 权限上限已测试；canary
   精确绑定 tool/version/hash、conversation、caller、provider、资源版本、时间窗口和
