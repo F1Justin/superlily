@@ -18,11 +18,12 @@ same tool protocol that future natural-language planning will use.
 **Status:** Phase 3a implementation is in progress. The signed policy-v6 Phase
 2 gate is recorded in `PHASE2_FINAL_AUDIT.md`; contracts, migration
 `0012_tool_registry`, Git-bound local imports, provider reporting, and
-admin-only effective-state reads exist on the Phase 3a branch. They are not
-deployed, all imported descriptors start `reviewed` rather than `active`, and
-execution authority remains hard-off. `PHASE3_ACCEPTANCE.md` is the executable
-release checklist, the accepted ADRs under `docs/adr/` freeze the first
-implementation decisions, and this document defines the architecture.
+admin-only effective-state reads are deployed in zero-authority mode. The
+production Registry has no Provider credential or descriptor, all future
+imports start `reviewed` rather than `active`, and execution authority remains
+hard-off. `PHASE3_ACCEPTANCE.md` is the executable release checklist, the
+accepted ADRs under `docs/adr/` freeze the first implementation decisions, and
+this document defines the architecture.
 
 ## Non-goals
 

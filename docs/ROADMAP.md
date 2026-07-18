@@ -12,10 +12,10 @@ for Phases 4–11 without authorizing those phases to start early.
 ## Current position
 
 Phase 2 is complete and signed in `ACCEPTANCE.md`; the Phase 3 entrance gate is
-open, and Phase 3a contract implementation has started. Correlation v3, runtime
-command inventory, response attribution, the exact-conversation claim canary,
-typed platform capabilities, policy v6, migration `0011_claim_ack`, Lily bridge
-0.3.2, and Nekro bridge 0.3.4 are deployed. A deterministic reply to another
+open, and the Phase 3a zero-authority Registry is deployed. Correlation v3,
+runtime command inventory, response attribution, the exact-conversation claim
+canary, typed platform capabilities, policy v6, migration `0011_claim_ack`,
+Lily bridge 0.3.2, and Nekro bridge 0.3.4 are deployed. A deterministic reply to another
 person without an explicit Lily summon denies every observing bot in claim
 scope, while an explicit summon still routes to Nekro. The canary allowlist
 remains exactly `qq:group:708309706`.
@@ -33,11 +33,13 @@ attribution repair, and operator sign-off are recorded in `ACCEPTANCE.md`.
 Earlier rejected windows remain diagnostic evidence. Migration
 `0012_tool_registry`, local Git-bound imports, separately authenticated
 provider inventory/heartbeat endpoints, and the admin-only
-desired/reported/effective view are implemented on the Phase 3a branch. They
-pass the complete SQLite/PostgreSQL 17 suite plus fresh migration,
-downgrade/re-upgrade, and drift checks, but are not deployed. The next gate is
-a separately authorized zero-active-descriptor, execution-off deployment and
-production drift proof. No invocation or lease surface exists.
+desired/reported/effective view are deployed in zero-authority mode. The
+complete SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
+backup/restore and production drift checks pass. Production has zero Provider
+credentials, descriptors, active or eligible tools, and execution remains
+off. The next gate is the shared Provider SDK plus the separately reviewed
+real `status.inspect` authority and runtime evidence; no invocation or lease
+surface exists.
 
 ## Sequencing rules
 

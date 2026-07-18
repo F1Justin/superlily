@@ -300,7 +300,7 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。包含 Registry 持久化/API 的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 211 项通过。
 
-这些代码只是 authority contract，不是生产 authority。`status.inspect-1.0.0.json` 只是 golden vector。Phase 3a 分支现已增加 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图，并已通过 SQLite/PostgreSQL fresh migration、downgrade/re-upgrade、drift、并发和全量回归，但尚未部署，也没有活动描述符、eligible tool、invocation 或 lease。下一步是在单独获得上线授权后，以空 Provider token map、零 descriptor 和 execution `off` 部署并核验生产 drift；之后才导入并审阅真正的 `status.inspect` authority。
+`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署。生产 migration head 为 `0012_tool_registry` 且无 drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，没有 invocation、attempt 或 lease 表/路由；Lily、Nekro、NapCat 和 PostgreSQL 均未重启，旧事件、claim、heartbeat 与 command registry 上报继续正常。下一步是实现共享 Provider SDK、审阅真正的 `status.inspect` authority，并在另一次明确授权后只登记为 `reviewed`、继续保持 execution `off`。
 
 9. 第四阶段：统一 Renderer
 
@@ -370,11 +370,11 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经推进到 Phase 3a 的持久化与只读 Registry：
+当前近期优先级已经推进到 Phase 3a 的真实 Provider 与 descriptor 证据：
 
-1. 在生产备份后只部署已冻结的 `0012_tool_registry`、Git-bound import、独立 Provider 认证和 desired/reported/effective 只读 Core 视图；该步骤需要单独的上线授权。
-2. 首个部署保持空 Provider token map、零描述符与 execution `off`，并核验 migration head/drift、`active_descriptors=0`、`eligible_tools=0`、无 invocation/lease 路由以及旧 bot 行为不变。
-3. 让后续 Provider SDK 与 Core/CLI 共同消费同一组接受/拒绝及 JCS golden vectors，再导入并审阅真正的 `status.inspect` authority，签署 Phase 3a gate。
+1. 实现共享 Provider SDK，使它与 Core/CLI 消费同一组接受/拒绝及 JCS golden vectors，并保持 Provider 只能报告 inventory/heartbeat、不能获得执行权。
+2. 准备并代码审阅真正的 `status.inspect` descriptor、Provider registration 和 implementation hash；golden vector 不直接充当生产 authority。
+3. 在另一次明确授权后配置独立 Provider credential、注册 Provider、导入 `status.inspect` 为 `reviewed`，继续保持 execution `off`，收集 desired/reported/effective 与失效原因证据并签署 Phase 3a gate。
 4. 3a 通过后再实现 3b invocation ledger、attempt、confirmation、provider lease/fencing、deadline、budget 和 artifact，不接自然语言模型。
 5. 依次迁移 status.inspect、文本模式 wolfram.run、具备安全 artifact 生命周期后的 latex.render；每个工具单独经过 off、ledger-only、shadow、精确 canary 和回滚。
 6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置到 Phase 5。

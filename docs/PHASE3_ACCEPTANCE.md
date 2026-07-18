@@ -3,9 +3,11 @@
 ## Status and entrance gate
 
 Phase 3a contract implementation has started after its recorded Phase 2
-entrance prerequisite. The accepted ADRs and contract library are evidence for
-their narrow checked items only; production registry, provider, invocation,
-artifact, and execution items remain unchecked until their own evidence exists.
+entrance prerequisite, and its zero-authority Registry schema/read surface is
+now deployed. The accepted ADRs and contract library are evidence for their
+narrow checked items only; production Provider/descriptor authority,
+invocation, artifact, and execution items remain unchecked until their own
+evidence exists.
 
 - [x] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
   reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
@@ -23,7 +25,7 @@ artifact, and execution items remain unchecked until their own evidence exists.
   depth, item and expansion-limit violations.
 - [ ] Shared JCS golden vectors produce identical canonical bytes/hash in Core,
   CLI and provider SDK; semantic Wolfram/LaTeX whitespace is preserved.
-- [ ] Migration `0012_tool_registry` passes SQLite/PostgreSQL fresh upgrade,
+- [x] Migration `0012_tool_registry` passes SQLite/PostgreSQL fresh upgrade,
   downgrade/re-upgrade, concurrency and production drift tests.
 - [x] Provider identity/credential is separate from bot ingest/admin identity;
   inventory snapshots are immutable/hash-verified and heartbeat freshness is
@@ -31,8 +33,33 @@ artifact, and execution items remain unchecked until their own evidence exists.
 - [x] Desired, reported and effective state plus stable ineligibility reasons
   are independently testable. Unknown/stale/mismatched inventory or heartbeat
   never grants authority.
-- [ ] First deployment has zero active descriptors and execution `off`; runtime
+- [x] First deployment has zero active descriptors and execution `off`; runtime
   discovery alone cannot create an invocation or lease.
+
+### Zero-authority production deployment evidence
+
+On 2026-07-18 at 14:21 CST, commit `164c81b` was deployed as Core image
+`sha256:ae1686707cec1c2b6f1ebe11be16698218ebca1b59a7c892e4e64c3b8efb298d`
+with Compose config hash
+`a81571e3303bcb033a53a3ef9b3cb4766f41f0c50c7e3a283c33691fc159e5ff`.
+Before migration, PostgreSQL 17.10 was backed up to
+`/home/justin/backups/superlily/superlily-pre-phase3a-20260718-141630.dump`
+(141,659,973 bytes, SHA-256
+`5e2d87098245cd4b3ae9bb4087d2034a3730a72b77ede2056fcbf459eccff199`)
+and restored successfully into an isolated PostgreSQL 17 container at
+`0011_claim_ack`; the restored key-table counts were internally consistent.
+
+The production startup log records `0011_claim_ack -> 0012_tool_registry`.
+`alembic current` reports `0012_tool_registry`, `alembic check` reports no
+drift, and all eight Registry tables contain zero rows. The running environment
+has zero Provider tokens; the admin view reports zero descriptors, active
+descriptors, eligible tools, providers and healthy inventories with execution
+`off`. Both Provider write surfaces reject unauthenticated probes, no
+invocation/attempt/lease table or route exists, and `status.inspect` remains
+404 because the golden vector was not imported. PostgreSQL, Lily, Nekro and
+NapCat were not restarted; both bot instances remained online, their runtime
+command snapshot remained fresh, and legacy event/claim/heartbeat ingestion
+continued successfully immediately after the Core-only replacement.
 
 ## 3b: invocation and execution safety
 

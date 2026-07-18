@@ -178,12 +178,12 @@ Do not jump directly from shadow to enforcement.
 
 ## 6. Phase 3 deployment boundary
 
-Phase 3a contract/schema/API work exists on its development branch after the
-Phase 2 signature, but no Phase 3 schema, endpoint, provider credential, active
-descriptor, or execution path is deployed. Follow `PHASE3_ACCEPTANCE.md` and
-`PHASE3_TOOL_REGISTRY.md`. The first `0012_tool_registry` deployment must keep
-`SUPERLILY_PROVIDER_TOKENS_JSON={}`, import no descriptor, expose only the
-admin read surface, and prove `active_descriptors=0`, `eligible_tools=0`, and
-execution `off`. The future control panel described in `CONTROL_PLANE.md` is
-read-only until its own authentication, authorization, preview, audit, and
-mutation gates pass.
+The first `0012_tool_registry` production deployment completed on 2026-07-18
+after the Phase 2 signature. It keeps `SUPERLILY_PROVIDER_TOKENS_JSON={}`,
+imports no descriptor, exposes only the admin read surface, and reports
+`active_descriptors=0`, `eligible_tools=0`, and execution `off`. Keep this
+zero-authority state until the Provider SDK, real descriptor review and their
+separate rollout authorization are ready. Follow `PHASE3_ACCEPTANCE.md` and
+`PHASE3_TOOL_REGISTRY.md`. The future control panel described in
+`CONTROL_PLANE.md` remains read-only until its own authentication,
+authorization, preview, audit, and mutation gates pass.
