@@ -22,6 +22,7 @@ from superlily_status_provider.main import (
     StatusProviderConfig,
     _execute_lease,
     _load_runtime,
+    _next_idle_poll_seconds,
 )
 from superlily_status_provider.status import StatusInspector, status_implementation_hash
 
@@ -50,6 +51,29 @@ def test_real_status_authority_is_bound_to_the_standalone_implementation() -> No
         "output_bytes": "hard",
         "wall_time": "hard",
     }
+
+
+def test_status_provider_idle_poll_backoff_is_bounded_and_resets_after_work() -> None:
+    config = StatusProviderConfig(
+        core_url="http://core.test",
+        token="provider-token",
+        poll_seconds=0.25,
+        max_idle_poll_seconds=5,
+    )
+
+    delay = config.poll_seconds
+    for expected in (0.5, 1, 2, 4, 5, 5):
+        delay = _next_idle_poll_seconds(config, delay, lease_received=False)
+        assert delay == expected
+    assert _next_idle_poll_seconds(config, delay, lease_received=True) == 0.25
+
+    with pytest.raises(ValueError, match="max idle poll interval"):
+        StatusProviderConfig(
+            core_url="http://core.test",
+            token="provider-token",
+            poll_seconds=1,
+            max_idle_poll_seconds=0.5,
+        )
 
 
 def test_status_1_0_1_changes_only_version_and_measured_memory_budget() -> None:

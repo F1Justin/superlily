@@ -320,7 +320,7 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
 
-同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 各通过 311 项测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。该实现只授权先以 `ledger_only` 部署，生产 descriptor 激活与精确 canary 仍是下一次独立 authority 提升点，不是自然语言 tool loop。
+同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 各通过 313 项测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。该实现只授权先以 `ledger_only` 部署，生产 descriptor 激活与精确 canary 仍是下一次独立 authority 提升点，不是自然语言 tool loop。
 
 9. 第四阶段：统一 Renderer
 

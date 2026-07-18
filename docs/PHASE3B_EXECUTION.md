@@ -65,6 +65,7 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 - 父进程强制 wall-time，超时或取消时 terminate、必要时 kill，并等待回收；
 - 父进程校验子进程返回的精确整数 usage、输出 schema 和规范化输出字节数；
 - Provider 当前串行执行，heartbeat 宣告最大并发为 1，即使 descriptor 上限更高也不会并行领取。
+- 无工作时轮询间隔从 0.25 秒指数退避到 5 秒；HTTPX 与 Core 只隐藏成功的空 lease 204 日志，真实 200 lease 和全部错误仍保留。
 
 这一边界足以承载当前固定的只读 `status.inspect` 实现，但它不是通用敌对代码沙箱。清空环境和不传能力在结构上隔离了秘密与平台发送；对未来会读取文件、联网、创建子进程或执行任意模型代码的工具，仍需独立的操作系统级 sandbox/cgroup/seccomp/网络策略。不能把这个 `multiprocessing` 监督器直接当作 Wolfram、TeX 或通用 Python runner 的安全证明。
 
@@ -104,6 +105,6 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 
 ## 实现期验证证据
 
-截至 2026-07-19，SQLite 与 PostgreSQL 17 全量套件各 311 项通过。覆盖范围包括四种模式、精确 canary/enforce、三个 stop、并发领取、单活动 lease、单调 fence、secret/Provider 绑定、迟到与重放、取消竞态、预算取消、非法输出、append-only trigger、reaper、管理 CLI 的真实模式回报与真实 `status.inspect` 子进程端到端路径。
+截至 2026-07-19，SQLite 与 PostgreSQL 17 全量套件各 313 项通过。覆盖范围包括四种模式、精确 canary/enforce、三个 stop、并发领取、单活动 lease、单调 fence、secret/Provider 绑定、迟到与重放、取消竞态、预算取消、非法输出、append-only trigger、reaper、管理 CLI 的真实模式回报、空闲轮询退避/日志保真与真实 `status.inspect` 子进程端到端路径。
 
 这些结果授权部署“仍为 `ledger_only` 的 0015 底座”，不等于已经签署生产 canary，也不等于 Phase 3b/3c 整体完成。

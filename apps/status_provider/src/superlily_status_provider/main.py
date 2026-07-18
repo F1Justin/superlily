@@ -48,6 +48,7 @@ class StatusProviderConfig:
     inventory_seconds: int = 300
     timeout_seconds: float = 5.0
     poll_seconds: float = 0.25
+    max_idle_poll_seconds: float = 5.0
     execution_heartbeat_seconds: float = 1.0
 
     def __post_init__(self) -> None:
@@ -63,6 +64,10 @@ class StatusProviderConfig:
             raise ValueError("status provider timeout must be positive")
         if not 0.05 <= self.poll_seconds <= 5:
             raise ValueError("status provider poll interval must be between 0.05 and 5 seconds")
+        if not self.poll_seconds <= self.max_idle_poll_seconds <= 60:
+            raise ValueError(
+                "status provider max idle poll interval must be between poll interval and 60 seconds"
+            )
         if not 0.1 <= self.execution_heartbeat_seconds <= 5:
             raise ValueError(
                 "execution heartbeat interval must be between 0.1 and 5 seconds"
@@ -90,6 +95,9 @@ class StatusProviderConfig:
             ),
             poll_seconds=float(
                 os.getenv("SUPERLILY_STATUS_PROVIDER_POLL_SECONDS", "0.25")
+            ),
+            max_idle_poll_seconds=float(
+                os.getenv("SUPERLILY_STATUS_PROVIDER_MAX_IDLE_POLL_SECONDS", "5")
             ),
             execution_heartbeat_seconds=float(
                 os.getenv("SUPERLILY_STATUS_PROVIDER_EXECUTION_HEARTBEAT_SECONDS", "1")
@@ -208,6 +216,20 @@ def _remaining_execution_seconds(lease: ToolLeaseOut, *, descriptor_timeout_ms: 
     # 给 fail/complete 的网络往返留出固定余量；不足时宁可不启动。
     absolute_remaining = (absolute_stop - now).total_seconds() - 0.25
     return max(0.0, min(descriptor_timeout_ms / 1_000, absolute_remaining))
+
+
+def _next_idle_poll_seconds(
+    config: StatusProviderConfig,
+    current: float,
+    *,
+    lease_received: bool,
+) -> float:
+    if lease_received:
+        return config.poll_seconds
+    return min(
+        config.max_idle_poll_seconds,
+        max(config.poll_seconds, current * 2),
+    )
 
 
 async def _cancel_supervisor(task: asyncio.Task[SupervisedStatusResult]) -> None:
@@ -366,9 +388,11 @@ async def run_executor(config: StatusProviderConfig, *, once: bool = False) -> N
     last_inventory_report = 0.0
     last_heartbeat_report = 0.0
     inventory_hash: str | None = None
+    idle_poll_seconds = config.poll_seconds
     async with registry, executor:
         while True:
             loop_started = time.monotonic()
+            lease_received = False
             if (
                 inventory_hash is None
                 or loop_started - last_inventory_report >= config.inventory_seconds
@@ -424,6 +448,7 @@ async def run_executor(config: StatusProviderConfig, *, once: bool = False) -> N
                         raise
                     lease = None
                 if lease is not None:
+                    lease_received = True
                     await _execute_lease(
                         executor,
                         supervisor,
@@ -435,8 +460,13 @@ async def run_executor(config: StatusProviderConfig, *, once: bool = False) -> N
 
             if once:
                 return
+            idle_poll_seconds = _next_idle_poll_seconds(
+                config,
+                idle_poll_seconds,
+                lease_received=lease_received,
+            )
             elapsed = time.monotonic() - loop_started
-            await asyncio.sleep(max(0.0, config.poll_seconds - elapsed))
+            await asyncio.sleep(max(0.0, idle_poll_seconds - elapsed))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -463,6 +493,8 @@ def main(argv: list[str] | None = None) -> int:
         level=os.getenv("SUPERLILY_STATUS_PROVIDER_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # 空 lease 轮询是内部健康流量；错误仍由 Provider 自己以 warning 记录。
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         if args.command == "verify":
             inspector, implementation = _load_runtime(args.descriptor)

@@ -27,7 +27,7 @@ Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。exec
 
 `0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、attempt secret、
 数据库时间、恢复 reaper、四种模式和三个独立 stop 已实现，并在 SQLite 与
-PostgreSQL 17 各通过 311 项测试。可执行候选升级为不可变的
+PostgreSQL 17 各通过 313 项测试。可执行候选升级为不可变的
 `status.inspect@1.0.1`，其独立子进程执行器硬性限制 wall-time 和输出字节，且不接收
 Provider secret 或平台发送能力。详细边界见 `docs/PHASE3B_EXECUTION.md`。
 

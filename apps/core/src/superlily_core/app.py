@@ -14,6 +14,23 @@ from .tool_invocation_service import reap_expired_invocations
 logger = logging.getLogger(__name__)
 
 
+class _EmptyLeaseAccessFilter(logging.Filter):
+    """只隐藏成功的空 lease 轮询；真实 lease 和全部错误仍保留。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (
+            '"POST /v1/tool-executions/lease HTTP/' in message
+            and message.rstrip().endswith(" 204")
+        )
+
+
+def _install_access_log_filter() -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, _EmptyLeaseAccessFilter) for item in access_logger.filters):
+        access_logger.addFilter(_EmptyLeaseAccessFilter())
+
+
 async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
     """只在可执行模式回收过期调用；异常记日志，不能拖垮 Core。"""
 
@@ -32,6 +49,7 @@ async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    _install_access_log_filter()
     active_settings = settings or Settings.from_env()
     database = Database(active_settings.database_url)
 

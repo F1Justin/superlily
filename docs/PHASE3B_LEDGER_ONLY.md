@@ -100,7 +100,7 @@ attempt/lease/fence/硬预算及独立 stop 全部验收前，`canary` 和 `enfo
 
 2026-07-19，`0015_tool_attempts`、Provider execution SDK 与
 `status.inspect@1.0.1` 硬边界执行器已经完成实现，并在 SQLite/PostgreSQL 17 各
-通过 311 项测试。`0014` 本文继续作为“当时生产只有账本、没有执行面”的历史签署，
+通过 313 项测试。`0014` 本文继续作为“当时生产只有账本、没有执行面”的历史签署，
 不回写成后来能力的说明。
 
 `0015` 的模式、精确范围、lease/fence/secret、恢复语义、执行器限制、部署与回滚

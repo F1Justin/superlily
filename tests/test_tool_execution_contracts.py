@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+import logging
 import math
 
 from pydantic import ValidationError
 import pytest
 
+from superlily_core.app import _EmptyLeaseAccessFilter
 from superlily_contracts import (
     ToolExecutionCompleteIn,
     ToolExecutionFailIn,
@@ -18,6 +20,29 @@ from superlily_contracts import (
 
 
 SECRET = "s" * 43
+
+
+def test_access_log_filter_only_hides_successful_empty_lease_polls() -> None:
+    access_filter = _EmptyLeaseAccessFilter()
+
+    def record(message: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            __file__,
+            1,
+            message,
+            (),
+            None,
+        )
+
+    assert not access_filter.filter(
+        record('client - "POST /v1/tool-executions/lease HTTP/1.1" 204')
+    )
+    assert access_filter.filter(
+        record('client - "POST /v1/tool-executions/lease HTTP/1.1" 200')
+    )
+    assert access_filter.filter(record('client - "POST /v1/events HTTP/1.1" 204'))
 
 
 def proof_payload() -> dict:
