@@ -49,6 +49,7 @@ WITH window_sources AS (
 ), deciding_observations AS (
     SELECT
         ed.source_event_id,
+        se.event_type,
         ed.features_json,
         ed.decision_type,
         eo.text,
@@ -64,7 +65,10 @@ WITH window_sources AS (
                     segment->>'type' = 'reply'
                     OR (
                         segment->>'type' = 'text'
-                        AND btrim(coalesce(segment->'data'->>'text', '')) = ''
+                        AND btrim(
+                            coalesce(segment->'data'->>'text', ''),
+                            E' \t\n\r\f\v'
+                        ) = ''
                     )
                     OR (
                         segment->>'type' = 'at'
@@ -85,10 +89,11 @@ WITH window_sources AS (
                 ORDER BY position
                 LIMIT 1
             ),
-            btrim(coalesce(eo.text, '')) <> ''
+            btrim(coalesce(eo.text, ''), E' \t\n\r\f\v') <> ''
         ) AS derived_command_eligible
     FROM event_decisions ed
     JOIN window_sources w ON w.id = ed.source_event_id
+    JOIN source_events se ON se.id = ed.source_event_id
     JOIN event_observations eo ON eo.id = ed.deciding_observation_id
 )
 SELECT 'decision_count' AS violation, count(*)
@@ -198,16 +203,19 @@ WHERE ed.policy_version <> 'qq-v3-policy-v5'
 UNION ALL
 SELECT 'command_eligible_missing_or_invalid', count(*)
 FROM deciding_observations decision
-WHERE jsonb_typeof((decision.features_json::jsonb)->'command_eligible') IS DISTINCT FROM 'boolean'
+WHERE decision.event_type = 'message'
+  AND jsonb_typeof((decision.features_json::jsonb)->'command_eligible') IS DISTINCT FROM 'boolean'
 UNION ALL
 SELECT 'command_eligible_structure_mismatch', count(*)
 FROM deciding_observations decision
-WHERE ((decision.features_json::jsonb)->'command_eligible')
+WHERE decision.event_type = 'message'
+  AND ((decision.features_json::jsonb)->'command_eligible')
       IS DISTINCT FROM to_jsonb(decision.derived_command_eligible)
 UNION ALL
 SELECT 'command_ineligible_actionable_command', count(*)
 FROM deciding_observations decision
-WHERE decision.derived_command_eligible IS FALSE
+WHERE decision.event_type = 'message'
+  AND decision.derived_command_eligible IS FALSE
   AND decision.decision_type = 'command'
 UNION ALL
 SELECT 'group_mode_missing_or_invalid', count(*)
@@ -543,16 +551,34 @@ WITH window_responses AS (
            END AS canonical_response_conversation_id
     FROM window_responses r
     LEFT JOIN source_events se ON se.id = r.trigger_source_event_id
-)
-SELECT 'duplicate_same_instance_successful_response' AS violation, count(*)
-FROM (
-    SELECT trigger_source_event_id, instance_id
+), successful_response_groups AS (
+    SELECT
+        trigger_source_event_id,
+        instance_id,
+        count(*) AS response_count,
+        (
+            count(*) = 2
+            AND count(*) FILTER (
+                WHERE json_array_length(attachments_json) > 0
+                  AND btrim(coalesce(text, ''), E' \t\n\r\f\v') = ''
+            ) = 1
+            AND count(*) FILTER (
+                WHERE json_array_length(attachments_json) = 0
+                  AND btrim(coalesce(text, ''), E' \t\n\r\f\v') <> ''
+            ) = 1
+            AND bool_and(platform_message_id IS NOT NULL)
+            AND count(DISTINCT platform_message_id) = 2
+            AND max(received_at) - min(received_at) <= interval '5 seconds'
+        ) AS bounded_text_attachment_pair
     FROM window_responses
     WHERE success
       AND trigger_source_event_id IS NOT NULL
     GROUP BY trigger_source_event_id, instance_id
-    HAVING count(*) > 1
-) duplicates
+)
+SELECT 'duplicate_same_instance_successful_response' AS violation, count(*)
+FROM successful_response_groups response_group
+WHERE response_group.response_count > 1
+  AND NOT response_group.bounded_text_attachment_pair
 UNION ALL
 SELECT 'trigger_observation_mismatch', count(*)
 FROM window_responses r
@@ -640,12 +666,12 @@ WITH window_decisions AS (
 ), response_sets AS (
     SELECT
         wd.source_event_id,
-        array_agg(r.instance_id) FILTER (WHERE r.success) AS successful_instances,
-        array_agg(r.instance_id) FILTER (
+        array_agg(DISTINCT r.instance_id) FILTER (WHERE r.success) AS successful_instances,
+        array_agg(DISTINCT r.instance_id) FILTER (
             WHERE NOT r.success
               AND r.metadata_json->>'completion_status' = 'ambiguous'
         ) AS ambiguous_instances,
-        array_agg(r.instance_id) FILTER (
+        array_agg(DISTINCT r.instance_id) FILTER (
             WHERE NOT r.success
               AND coalesce(r.metadata_json->>'completion_status', '') NOT IN (
                   'ambiguous', 'suppressed'
@@ -715,12 +741,12 @@ WITH window_decisions AS (
 ), response_sets AS (
     SELECT
         wd.source_event_id,
-        array_agg(r.instance_id) FILTER (WHERE r.success) AS successful_instances,
-        array_agg(r.instance_id) FILTER (
+        array_agg(DISTINCT r.instance_id) FILTER (WHERE r.success) AS successful_instances,
+        array_agg(DISTINCT r.instance_id) FILTER (
             WHERE NOT r.success
               AND r.metadata_json->>'completion_status' = 'ambiguous'
         ) AS ambiguous_instances,
-        array_agg(r.instance_id) FILTER (
+        array_agg(DISTINCT r.instance_id) FILTER (
             WHERE NOT r.success
               AND coalesce(r.metadata_json->>'completion_status', '') NOT IN (
                   'ambiguous', 'suppressed'
@@ -849,13 +875,15 @@ WITH window_sources AS (
         '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "(url|uri|link|href|src|file|platform_id)$" flag "i")'
     ) item
 ), uri_strings AS (
-    SELECT scope, scalar #>> '{}' AS value
+    SELECT scope, item->>'value' AS value
     FROM documents
     CROSS JOIN LATERAL jsonb_path_query(
         document,
-        '$.** ? (@.type() == "string")'
-    ) scalar
-    WHERE scalar #>> '{}' ~* '^[a-z][a-z0-9+.-]*://'
+        '$.** ? (@.type() == "object").keyvalue()'
+    ) item
+    WHERE jsonb_typeof(item->'value') = 'string'
+      AND item->>'key' !~* '^(text|content|message|raw_message)$'
+      AND item->>'value' ~* '^[a-z][a-z0-9+.-]*://'
 ), file_or_platform_ids AS (
     SELECT scope, item
     FROM documents

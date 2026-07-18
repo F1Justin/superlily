@@ -141,9 +141,11 @@ must return zero rows.
 - A linked response has a same-instance observation on the same canonical
   platform/conversation/source. Lily's trigger attribution is `event_context`;
   Nekro's is `task_context`, bound to the actual scheduler task rather than one
-  mutable conversation slot. The current protocol has no multipart response
-  group, so more than one successful response from one instance for one trigger
-  is a violation requiring row-level review.
+  mutable conversation slot. Until Phase 4 adds an explicit multipart group,
+  the audit accepts only one bounded complementary pair: one attachment-only
+  and one text-only successful send from the same instance, with distinct
+  platform IDs no more than five seconds apart. Any other repeated success is
+  a violation requiring row-level review.
 
 Core/transport failures remain fail-open. Therefore claim rows are coordination
 evidence, while linked actual responses and bridge logs are the behavioral
@@ -176,11 +178,12 @@ authority.
 - Structured metadata/segments/attachments/reference raw contain no sensitive
   key whose value is not `[REDACTED]`, URL/URI userinfo, or query/fragment
   suffixes in `url`, `uri`, `link`, `href`, `src`, `file`, and `platform_id`
-  fields regardless of scheme. The audit also scans custom-scheme scalar URIs
-  and rejects retained local `file://` identifiers. A redacted sensitive key
-  name is evidence that the sanitizer ran, not a leak. User-authored/display
-  text is not searched as if it were structured configuration and is not
-  silently altered. U+0000 is the sole transport-safety exception and is
+  fields regardless of scheme. The audit also scans non-display scalar URI
+  fields and rejects retained local `file://` identifiers. A redacted sensitive
+  key name is evidence that the sanitizer ran, not a leak. User-authored/display
+  fields named `text`, `content`, `message`, or `raw_message` are not searched
+  as if they were structured configuration and are not silently altered.
+  U+0000 is the sole transport-safety exception and is
   replaced recursively with U+FFFD because PostgreSQL rejects NUL in text and
   JSON values.
 - Reporter drop/claim-failure counters, Core 4xx/5xx, bridge warnings, failed

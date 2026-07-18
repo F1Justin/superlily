@@ -205,11 +205,22 @@ class ResponseTriggerTracker:
     def _key(conv: dict[str, Any]) -> tuple[str, str]:
         return (str(conv.get("type", "unknown")), str(conv.get("id", "unknown")))
 
-    def _prune(self, now: float) -> None:
+    def _prune(
+        self,
+        now: float,
+        *,
+        preserve_key: tuple[str, str] | None = None,
+        preserve_task_token: Any | None = None,
+    ) -> None:
         expired = [
             key
             for key, state in self._states.items()
             if now - state.updated_at > self.ttl_seconds
+            and not (
+                key == preserve_key
+                and preserve_task_token is not None
+                and state.current_task_token == preserve_task_token
+            )
         ]
         for key in expired:
             self._states.pop(key, None)
@@ -220,9 +231,14 @@ class ResponseTriggerTracker:
         *,
         now: float,
         create: bool,
+        task_token: Any | None = None,
     ) -> _ResponseTriggerState | None:
-        self._prune(now)
         key = self._key(conv)
+        self._prune(
+            now,
+            preserve_key=key,
+            preserve_task_token=task_token,
+        )
         state = self._states.get(key)
         if state is not None:
             state.updated_at = now
@@ -270,7 +286,12 @@ class ResponseTriggerTracker:
         if not source:
             return
         current = time.monotonic() if now is None else now
-        state = self._state(conv, now=current, create=True)
+        state = self._state(
+            conv,
+            now=current,
+            create=True,
+            task_token=task_token,
+        )
         assert state is not None
 
         if task_token is None:
@@ -313,7 +334,12 @@ class ResponseTriggerTracker:
         """Observe a scheduler task transition and return its bound source."""
 
         current = time.monotonic() if now is None else now
-        state = self._state(conv, now=current, create=task_token is not None)
+        state = self._state(
+            conv,
+            now=current,
+            create=task_token is not None,
+            task_token=task_token,
+        )
         if state is None:
             return None
         if task_token is None:

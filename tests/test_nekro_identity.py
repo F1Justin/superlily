@@ -196,6 +196,34 @@ def test_response_trigger_tracker_is_bounded_and_expires() -> None:
     assert tracker.source_for_response(third, "task", now=13) is None
 
 
+def test_response_trigger_tracker_preserves_active_task_past_ttl() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker(ttl_seconds=10)
+    conv = {"type": "group", "id": "long-running"}
+
+    tracker.remember(conv, "event:first", None, now=0)
+    assert tracker.source_for_response(conv, "task-one", now=1) == "event:first"
+    tracker.remember(conv, "event:second", "task-one", now=2)
+
+    # A slow model/tool task remains authoritative even after the ordinary
+    # idle-state TTL. The pending message moves only when the scheduler token
+    # changes.
+    assert tracker.source_for_response(conv, "task-one", now=600) == "event:first"
+    assert tracker.source_for_response(conv, "task-two", now=601) == "event:second"
+
+
+def test_response_trigger_tracker_does_not_preserve_expired_stale_task() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker(ttl_seconds=10)
+    conv = {"type": "group", "id": "stale-task"}
+
+    tracker.remember(conv, "event:first", None, now=0)
+    assert tracker.source_for_response(conv, "task-one", now=1) == "event:first"
+
+    # A different task token after the TTL cannot inherit an expired source.
+    assert tracker.source_for_response(conv, "task-two", now=600) is None
+
+
 def test_claim_targets_requested_instance() -> None:
     identity = load_identity_module()
 

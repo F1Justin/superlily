@@ -159,7 +159,11 @@ Linked responses record `metadata.trigger_attribution`: Lily uses its native
 task and keeps a later pending source separate. `completion_status` is
 `succeeded`, `failed`, `suppressed`, or `ambiguous`. A send timeout is
 `success=false / ambiguous`; it is not confirmation that no platform message
-was emitted and must not be retried blindly.
+was emitted and must not be retried blindly. Until Phase 4 adds an explicit
+multipart delivery group, the audit accepts only one bounded complementary
+pair for a trigger/instance: exactly one attachment-only send and one text-only
+send, distinct platform message IDs, no more than five seconds apart. Any other
+repeated successful send remains exceptional.
 
 ## Read APIs
 

@@ -42,7 +42,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.3.2"
+BRIDGE_VERSION = "0.3.3"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
