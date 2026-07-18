@@ -109,14 +109,32 @@ def _same_descriptor_import(
     )
 
 
-def _same_provider_registration(record: ToolProvider, registration: ProviderRegistration) -> bool:
+def _same_provider_registration(
+    record: ToolProvider,
+    registration: ProviderRegistration,
+    *,
+    initial_lifecycle: str | None,
+) -> bool:
     return {
         "provider_id": record.id,
         "owner": record.owner,
-        "lifecycle": record.lifecycle,
+        "lifecycle": initial_lifecycle,
         "allowed_protocols": record.allowed_protocols_json,
         "tool_selectors": record.tool_selectors_json,
     } == registration.model_dump(mode="json")
+
+
+async def _initial_provider_lifecycle(
+    session: AsyncSession,
+    provider_id: str,
+) -> str | None:
+    return await session.scalar(
+        select(ToolProviderLifecycleEvent.lifecycle).where(
+            ToolProviderLifecycleEvent.provider_id == provider_id,
+            ToolProviderLifecycleEvent.sequence == 1,
+            ToolProviderLifecycleEvent.previous_lifecycle.is_(None),
+        )
+    )
 
 
 def _same_inventory(
@@ -260,7 +278,11 @@ async def register_tool_provider(
         raise _unprocessable("provider has no separately configured provider credential")
     existing = await session.get(ToolProvider, registration.provider_id)
     if existing is not None:
-        if _same_provider_registration(existing, registration):
+        if _same_provider_registration(
+            existing,
+            registration,
+            initial_lifecycle=await _initial_provider_lifecycle(session, existing.id),
+        ):
             return existing, True
         raise _conflict("provider_id already has a different stable registration")
 
@@ -296,7 +318,11 @@ async def register_tool_provider(
     except IntegrityError as exc:
         await session.rollback()
         duplicate = await session.get(ToolProvider, registration.provider_id)
-        if duplicate is not None and _same_provider_registration(duplicate, registration):
+        if duplicate is not None and _same_provider_registration(
+            duplicate,
+            registration,
+            initial_lifecycle=await _initial_provider_lifecycle(session, duplicate.id),
+        ):
             return duplicate, True
         raise _conflict("concurrent provider registration conflict") from exc
     await session.refresh(record)

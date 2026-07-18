@@ -542,6 +542,12 @@ class ToolProvider(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     owner: Mapped[str] = mapped_column(String(256), nullable=False)
     lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
     allowed_protocols_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     tool_selectors_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -1381,6 +1387,167 @@ event.listen(
     ToolDescriptorLifecycleEvent.__table__,
     "after_drop",
     _DESCRIPTOR_EVENT_POSTGRES_FUNCTION_DROP,
+)
+
+
+_PROVIDER_AUTHORITY_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_providers_authority_no_update
+    BEFORE UPDATE OF id, owner, allowed_protocols_json, tool_selectors_json, created_at
+    ON tool_providers
+    BEGIN
+        SELECT RAISE(ABORT, 'provider authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_PROVIDER_AUTHORITY_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_providers_no_delete
+    BEFORE DELETE ON tool_providers
+    BEGIN
+        SELECT RAISE(ABORT, 'provider authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_PROVIDER_LIFECYCLE_SQLITE_GUARD = DDL(
+    """
+    CREATE TRIGGER tool_providers_lifecycle_guard
+    BEFORE UPDATE OF lifecycle, resource_version ON tool_providers
+    WHEN NEW.lifecycle != OLD.lifecycle OR NEW.resource_version != OLD.resource_version
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'provider resource version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.lifecycle = 'active' AND NEW.lifecycle = 'quarantined') OR
+            (OLD.lifecycle = 'quarantined' AND NEW.lifecycle = 'active')
+        ) THEN RAISE(ABORT, 'provider lifecycle transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM tool_provider_lifecycle_events
+            WHERE provider_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_lifecycle = OLD.lifecycle
+              AND lifecycle = NEW.lifecycle
+        ) THEN RAISE(ABORT, 'provider lifecycle event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_PROVIDER_AUTHORITY_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_provider_authority_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'provider authority is immutable';
+        END IF;
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.owner IS DISTINCT FROM OLD.owner
+           OR NEW.allowed_protocols_json::text IS DISTINCT FROM OLD.allowed_protocols_json::text
+           OR NEW.tool_selectors_json::text IS DISTINCT FROM OLD.tool_selectors_json::text
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'provider authority is immutable';
+        END IF;
+        IF NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+           OR NEW.resource_version IS DISTINCT FROM OLD.resource_version THEN
+            IF NEW.resource_version != OLD.resource_version + 1 THEN
+                RAISE EXCEPTION 'provider resource version must increase by one';
+            END IF;
+            IF NOT (
+                (OLD.lifecycle = 'active' AND NEW.lifecycle = 'quarantined') OR
+                (OLD.lifecycle = 'quarantined' AND NEW.lifecycle = 'active')
+            ) THEN
+                RAISE EXCEPTION 'provider lifecycle transition is not allowed';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM tool_provider_lifecycle_events
+                WHERE provider_id = OLD.id
+                  AND sequence = NEW.resource_version
+                  AND previous_lifecycle = OLD.lifecycle
+                  AND lifecycle = NEW.lifecycle
+            ) THEN
+                RAISE EXCEPTION 'provider lifecycle event is required';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_PROVIDER_AUTHORITY_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_providers_authority_guard
+    BEFORE UPDATE OR DELETE ON tool_providers
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_provider_authority_mutation()
+    """
+).execute_if(dialect="postgresql")
+_PROVIDER_AUTHORITY_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_provider_authority_mutation()"
+).execute_if(dialect="postgresql")
+
+for _provider_guard in (
+    _PROVIDER_AUTHORITY_SQLITE_UPDATE_TRIGGER,
+    _PROVIDER_AUTHORITY_SQLITE_DELETE_TRIGGER,
+    _PROVIDER_LIFECYCLE_SQLITE_GUARD,
+    _PROVIDER_AUTHORITY_POSTGRES_FUNCTION,
+    _PROVIDER_AUTHORITY_POSTGRES_TRIGGER,
+):
+    event.listen(ToolProvider.__table__, "after_create", _provider_guard)
+event.listen(
+    ToolProvider.__table__,
+    "after_drop",
+    _PROVIDER_AUTHORITY_POSTGRES_FUNCTION_DROP,
+)
+
+
+_PROVIDER_EVENT_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_provider_lifecycle_events_no_update
+    BEFORE UPDATE ON tool_provider_lifecycle_events
+    BEGIN
+        SELECT RAISE(ABORT, 'provider lifecycle evidence is append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_PROVIDER_EVENT_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_provider_lifecycle_events_no_delete
+    BEFORE DELETE ON tool_provider_lifecycle_events
+    BEGIN
+        SELECT RAISE(ABORT, 'provider lifecycle evidence is append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_PROVIDER_EVENT_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_provider_lifecycle_evidence_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'provider lifecycle evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_PROVIDER_EVENT_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_provider_lifecycle_events_no_mutation
+    BEFORE UPDATE OR DELETE ON tool_provider_lifecycle_events
+    FOR EACH ROW EXECUTE FUNCTION reject_provider_lifecycle_evidence_mutation()
+    """
+).execute_if(dialect="postgresql")
+_PROVIDER_EVENT_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_provider_lifecycle_evidence_mutation()"
+).execute_if(dialect="postgresql")
+
+for _provider_event_guard in (
+    _PROVIDER_EVENT_SQLITE_UPDATE_TRIGGER,
+    _PROVIDER_EVENT_SQLITE_DELETE_TRIGGER,
+    _PROVIDER_EVENT_POSTGRES_FUNCTION,
+    _PROVIDER_EVENT_POSTGRES_TRIGGER,
+):
+    event.listen(ToolProviderLifecycleEvent.__table__, "after_create", _provider_event_guard)
+event.listen(
+    ToolProviderLifecycleEvent.__table__,
+    "after_drop",
+    _PROVIDER_EVENT_POSTGRES_FUNCTION_DROP,
 )
 
 

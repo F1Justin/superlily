@@ -23,7 +23,7 @@ def status_implementation_hash() -> str:
     """绑定本地工具、硬超时监督器与 Provider 协议编排的确切源码。"""
 
     digest = sha256()
-    for name in ("executor.py", "main.py", "status.py"):
+    for name in ("executor.py", "main.py", "status.py", "worker.py"):
         source = Path(__file__).with_name(name).read_bytes()
         digest.update(len(name).to_bytes(4, "big"))
         digest.update(name.encode("utf-8"))
@@ -45,6 +45,7 @@ class StatusInspector:
         if descriptor.tool_id != "status.inspect" or descriptor.version not in {
             "1.0.0",
             "1.0.1",
+            "1.0.2",
         }:
             raise ValueError("StatusInspector requires a reviewed status.inspect 1.0.x descriptor")
         if descriptor.source_plugin != "superlily_status_provider.status":

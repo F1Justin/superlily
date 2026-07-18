@@ -58,14 +58,16 @@ Phase 3a 的历史报告版本与 Phase 3b 的可执行候选应分别验证：
 .venv/bin/superlily-status-provider verify \
   --descriptor registry/descriptors/status.inspect/1.0.0.json
 .venv/bin/superlily-tool-registry verify-descriptor \
-  registry/descriptors/status.inspect/1.0.1.json
+  registry/descriptors/status.inspect/1.0.2.json
 .venv/bin/superlily-status-provider verify \
-  --descriptor registry/descriptors/status.inspect/1.0.1.json
+  --descriptor registry/descriptors/status.inspect/1.0.2.json
 .venv/bin/pytest -q tests/test_provider_sdk.py tests/test_status_provider.py
 ```
 
 `verify` 只运行本地、受 schema 约束的自检，不连接 Core，也不领取 lease。
-`1.0.0` 固定代表只报告实现；`1.0.1` 才是带硬 wall-time/输出字节监督的执行候选。
+`1.0.0` 固定代表只报告实现；`1.0.1` 保留为首个已部署的执行候选历史 authority；
+`1.0.2` 使用创建时不继承 secret 的独立 worker、硬 wall-time/输出字节监督和带裕量的
+内存预算，是当前 canary 候选。
 Provider execution SDK 的网络操作均为单次调用，不对不明确的状态变更响应盲目重试。
 
 Phase 3a Registry 与 Phase 3b 执行账本的重点回归可分别运行：

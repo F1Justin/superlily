@@ -316,13 +316,15 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 8.1 当前第三阶段状态（2026-07-19）
 
-五份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期和控制面认证边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
+十份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期、控制面认证、descriptor mutation 与 Provider quarantine 边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
 
 2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
 
 同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 各通过 313 项测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。生产已经完成 `ledger_only` 迁移、hard budget inventory、健康 heartbeat、认证 lease=204 与零 attempt 签署。descriptor 仍为 `reviewed`；ADR 0005 所要求的 mutation 治理门完成前，不得直接改库激活或打开 canary。
 
 最小控制面随后完成 M0 与 M1 两包。M0 的短会话、独立 operator authority、CSRF、精确 Host/Origin/JSON、数据库时间过期、再认证/退出 CAS、登录限速和只追加审计已默认禁用部署。M1 新增持久 canonical preview、descriptor 单调资源版本、reviewer 权限、新鲜再认证、apply CAS、幂等重放/冲突、runtime drift 重算和反向 suspension/restore；数据库直接拒绝 authority 改写、证据删改以及没有匹配 lifecycle event 的状态更新。SQLite 全量 334 项通过、1 项 PostgreSQL 专用测试跳过；PostgreSQL 17 分段全量 335 项通过。生产已经默认禁用迁移到 `0015b_descriptor_mutations`，5 张控制面表为零、两个 descriptor 仍为 `reviewed/resource_version=1`、工具仍是 `ledger_only` 且零 attempt。M2 Provider quarantine、M3 精确 rollout plan 和任何真实 canary 均未签署。
+
+M2 Provider quarantine 随后完成实现与双数据库全量回归。security_admin 通过持久 preview、新鲜再认证、CAS 和幂等证据执行 `active <-> quarantined`；恢复必须重新验证 credential、inventory、heartbeat、协议和 implementation hash。lease 与 quarantine 共用 Provider 行锁，因此接受 quarantine 后不能产生新 lease；quarantined Provider 仍能上报恢复证据。SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计 343 项通过。同期 canary 前审查把 `status.inspect` 升为不可变 `1.0.2`：创建 worker 时不继承父环境，传输有界，并将无裕量的 256 MiB 申报修正为 320 MiB。M2 与 `1.0.2` 尚未部署，M3 精确 rollout plan 和任何真实 canary 仍未签署。
 
 9. 第四阶段：统一 Renderer
 

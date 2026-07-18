@@ -28,6 +28,9 @@ from superlily_status_provider.status import StatusInspector, status_implementat
 
 
 AUTHORITY_PATH = (
+    Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.2.json"
+)
+PREVIOUS_AUTHORITY_PATH = (
     Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.1.json"
 )
 LEGACY_AUTHORITY_PATH = (
@@ -76,17 +79,25 @@ def test_status_provider_idle_poll_backoff_is_bounded_and_resets_after_work() ->
         )
 
 
-def test_status_1_0_1_changes_only_version_and_measured_memory_budget() -> None:
+def test_status_descriptor_versions_only_change_declared_version_and_memory_budget() -> None:
     legacy = load_tool_descriptor(LEGACY_AUTHORITY_PATH.read_bytes()).descriptor.model_dump(
+        mode="json"
+    )
+    previous = load_tool_descriptor(PREVIOUS_AUTHORITY_PATH.read_bytes()).descriptor.model_dump(
         mode="json"
     )
     current = load_tool_descriptor(AUTHORITY_PATH.read_bytes()).descriptor.model_dump(mode="json")
 
-    assert current["version"] == "1.0.1"
-    assert current["resource_budget"]["memory_bytes"] == 268_435_456
-    current["version"] = legacy["version"]
-    current["resource_budget"]["memory_bytes"] = legacy["resource_budget"]["memory_bytes"]
-    assert current == legacy
+    assert previous["version"] == "1.0.1"
+    assert previous["resource_budget"]["memory_bytes"] == 268_435_456
+    assert current["version"] == "1.0.2"
+    assert current["resource_budget"]["memory_bytes"] == 335_544_320
+    for candidate in (previous, current):
+        candidate["version"] = legacy["version"]
+        candidate["resource_budget"]["memory_bytes"] = legacy["resource_budget"][
+            "memory_bytes"
+        ]
+        assert candidate == legacy
 
 
 def test_status_inspector_returns_only_bounded_structured_data() -> None:
@@ -122,7 +133,11 @@ def test_status_inspector_rejects_scope_expansion_and_naive_time() -> None:
         StatusInspector(loaded, implementation_hash="not-a-hash")
 
 
-async def test_status_process_supervisor_returns_bounded_usage_and_output() -> None:
+async def test_status_process_supervisor_returns_bounded_usage_and_output(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SUPERLILY_STATUS_PROVIDER_TOKEN", "must-not-enter-worker")
+    monkeypatch.setenv("SUPERLILY_ADMIN_TOKEN", "must-not-enter-worker-either")
     descriptor_source = AUTHORITY_PATH.read_bytes()
     implementation_hash = status_implementation_hash()
     supervisor = StatusProcessSupervisor(

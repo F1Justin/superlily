@@ -25,6 +25,7 @@ from superlily_core.models import (
     ToolDescriptorRecord,
     ToolInvocation,
     ToolProvider,
+    ToolProviderLifecycleEvent,
 )
 from superlily_core.settings import ToolRolloutScope
 from superlily_core.tool_execution_service import reap_expired_attempts
@@ -38,7 +39,7 @@ DESCRIPTOR_PATH = (
     Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.0.json"
 )
 EXECUTABLE_DESCRIPTOR_PATH = (
-    Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.1.json"
+    Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.2.json"
 )
 PROVIDER_HEADERS = {"Authorization": "Bearer provider-status-secret"}
 
@@ -403,17 +404,105 @@ async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None
         )
         provider = await session.get(ToolProvider, "provider-status-primary")
         assert provider is not None
-        provider.lifecycle = "quarantined"
+        session.add(
+            ToolProviderLifecycleEvent(
+                provider_id=provider.id,
+                sequence=provider.resource_version + 1,
+                previous_lifecycle=provider.lifecycle,
+                lifecycle="quarantined",
+                actor="test-security-admin",
+                reason="test-only quarantine",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolProvider)
+            .where(ToolProvider.id == provider.id)
+            .values(
+                lifecycle="quarantined",
+                resource_version=provider.resource_version + 1,
+            )
+        )
         await session.commit()
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
     async with app.state.database.sessions() as session:
         provider = await session.get(ToolProvider, "provider-status-primary")
         assert provider is not None
-        provider.lifecycle = "active"
+        session.add(
+            ToolProviderLifecycleEvent(
+                provider_id=provider.id,
+                sequence=provider.resource_version + 1,
+                previous_lifecycle=provider.lifecycle,
+                lifecycle="active",
+                actor="test-security-admin",
+                reason="test-only restoration",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolProvider)
+            .where(ToolProvider.id == provider.id)
+            .values(
+                lifecycle="active",
+                resource_version=provider.resource_version + 1,
+            )
+        )
         await session.commit()
     lease = await pull_lease(client, snapshot_hash)
     assert lease.status_code == 200, lease.text
     assert lease.json()["invocation_id"] == invocation["invocation_id"]
+
+
+async def test_postgres_provider_lock_closes_quarantine_lease_race(client, app) -> None:
+    if app.state.database.engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL row-lock ordering is verified on the PostgreSQL path")
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    invocation = await create_queued(
+        client,
+        descriptor,
+        key="attempt-provider-quarantine-lock-1",
+    )
+
+    async with app.state.database.sessions() as holder:
+        provider = await holder.scalar(
+            select(ToolProvider)
+            .where(ToolProvider.id == "provider-status-primary")
+            .with_for_update()
+        )
+        assert provider is not None
+        pending_lease = asyncio.create_task(pull_lease(client, snapshot_hash))
+        await asyncio.sleep(0.05)
+        assert pending_lease.done() is False
+
+        next_version = provider.resource_version + 1
+        holder.add(
+            ToolProviderLifecycleEvent(
+                provider_id=provider.id,
+                sequence=next_version,
+                previous_lifecycle=provider.lifecycle,
+                lifecycle="quarantined",
+                actor="test-security-admin",
+                reason="concurrent quarantine row-lock test",
+            )
+        )
+        await holder.flush()
+        await holder.execute(
+            update(ToolProvider)
+            .where(
+                ToolProvider.id == provider.id,
+                ToolProvider.resource_version == provider.resource_version,
+            )
+            .values(lifecycle="quarantined", resource_version=next_version)
+        )
+        await holder.commit()
+
+    lease = await pending_lease
+    assert lease.status_code == 204
+    async with app.state.database.sessions() as session:
+        attempts = await session.scalar(select(func.count(ToolAttempt.id)))
+        stored = await session.get(ToolInvocation, invocation["invocation_id"])
+    assert attempts == 0
+    assert stored is not None and stored.state == "queued"
 
 
 async def test_reviewed_enforce_scope_uses_its_own_exact_allowlist(client, app) -> None:

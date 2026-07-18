@@ -22,12 +22,22 @@ from .descriptor_mutations import (
     apply_descriptor_lifecycle_mutation,
     create_descriptor_lifecycle_preview,
 )
+from .provider_mutations import (
+    ProviderLifecycleApplyIn,
+    ProviderLifecyclePreviewIn,
+    apply_provider_lifecycle_mutation,
+    create_provider_lifecycle_preview,
+)
 
 
 router = APIRouter(prefix="/v1/control/session", tags=["control-session"])
 descriptor_router = APIRouter(
     prefix="/v1/control/descriptors",
     tags=["control-descriptors"],
+)
+provider_router = APIRouter(
+    prefix="/v1/control/providers",
+    tags=["control-providers"],
 )
 Session = Annotated[AsyncSession, Depends(get_session)]
 ControlIdempotencyKey = Annotated[
@@ -136,6 +146,48 @@ async def descriptor_lifecycle_apply(
 ) -> dict:
     _no_store(response)
     result, status_code = await apply_descriptor_lifecycle_mutation(
+        session,
+        request,
+        payload,
+        idempotency_key,
+        request.app.state.settings,
+    )
+    response.status_code = status_code
+    return result
+
+
+@provider_router.post(
+    "/lifecycle/preview",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def provider_lifecycle_preview(
+    payload: ProviderLifecyclePreviewIn,
+    request: Request,
+    response: Response,
+    session: Session,
+) -> dict:
+    _no_store(response)
+    return await create_provider_lifecycle_preview(
+        session,
+        request,
+        payload,
+        request.app.state.settings,
+    )
+
+
+@provider_router.post(
+    "/lifecycle/apply",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def provider_lifecycle_apply(
+    payload: ProviderLifecycleApplyIn,
+    request: Request,
+    response: Response,
+    session: Session,
+    idempotency_key: ControlIdempotencyKey,
+) -> dict:
+    _no_store(response)
+    result, status_code = await apply_provider_lifecycle_mutation(
         session,
         request,
         payload,

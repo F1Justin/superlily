@@ -35,7 +35,7 @@ from .executor import StatusProcessSupervisor, SupervisedStatusResult
 from .status import PROVIDER_ID, StatusInspector, status_implementation_hash
 
 
-DEFAULT_DESCRIPTOR_PATH = Path("registry/descriptors/status.inspect/1.0.1.json")
+DEFAULT_DESCRIPTOR_PATH = Path("registry/descriptors/status.inspect/1.0.2.json")
 logger = logging.getLogger("superlily_status_provider")
 
 

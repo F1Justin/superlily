@@ -27,9 +27,10 @@ Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。exec
 
 `0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、attempt secret、
 数据库时间、恢复 reaper、四种模式和三个独立 stop 已实现，并在 SQLite 与
-PostgreSQL 17 各通过 313 项测试。可执行候选升级为不可变的
-`status.inspect@1.0.1`，其独立子进程执行器硬性限制 wall-time 和输出字节，且不接收
-Provider secret 或平台发送能力。详细边界见 `docs/PHASE3B_EXECUTION.md`。
+PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.0.1` 已在
+`ledger_only` 部署；canary 前审查又新增不可变 `1.0.2`，使用创建时不继承 secret 的
+独立 worker、硬 wall-time/输出边界和带裕量的 320 MiB 诚实预算。详细边界见
+`docs/PHASE3B_EXECUTION.md`。
 
 `0015` 与新 Provider 已在生产以 `ledger_only` 安全空转：迁移 head/no drift、
 Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot 心跳均已
@@ -44,9 +45,10 @@ Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot �
 M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，PostgreSQL 17 分段
 合计 335 项通过；迁移往返和 drift 均通过。生产已默认禁用迁移到
 `0015b_descriptor_mutations`，operator/Host/Origin/pepper 为空，5 张控制面表为零，
-`ledger_only` 且零 attempt。下一步实现 M2 Provider quarantine 与 M3 Git-bound
-精确 rollout plan；三包均签署后才评审一个 `admin_api` 精确 canary。自然语言工具
-循环仍属 Phase 5。
+`ledger_only` 且零 attempt。M2 Provider quarantine 已完成实现、审查与双数据库
+全量回归：SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计
+343 项通过；默认禁用生产签署尚待完成。随后实现 M3 Git-bound 精确 rollout plan；
+三包均签署后才评审一个 `admin_api` 精确 canary。自然语言工具循环仍属 Phase 5。
 
 ## Sequencing rules
 

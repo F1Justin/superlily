@@ -53,21 +53,39 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 
 当前 descriptor 的 CPU、内存等字段会参与资格、heartbeat 取消和完成校验；只有 Provider 明确报告为 `hard` 的必需预算才会让 runtime eligible。不能硬执行的预算不得冒充 `hard`。
 
-## `status.inspect@1.0.1` 的硬边界
+## `status.inspect@1.0.1` 的历史边界与 `1.0.2` 修正
 
 `status.inspect@1.0.1` 是第一份可执行候选。它与已审阅的 `1.0.0` 语义相同，只因实际 `spawn` 子进程的总峰值 RSS 将内存预算从 64 MiB 调整为 256 MiB；不可变 descriptor 因此必须升版本，不能就地改写 `1.0.0`。其 descriptor SHA-256 为 `398fb49dfff2cc76822e68afa305af2a8aee3aa4f4c50a375320f13175117911`。
 
-执行器采用父进程监督、每次调用 `spawn` 一个子进程的结构：
+`1.0.1` 在 `ledger_only` 生产签署后、真实 canary 前的全量回归中暴露出两个边界：
+完整测试进程下 worker 峰值稳定达到约 263 MiB，256 MiB 申报没有裕量；
+`multiprocessing spawn` 只能在进入 target 后清空环境，不能严格证明进程创建之初就
+没有 Provider/admin/bot secret。因此没有放宽断言或就地改写不可变 authority，而是
+新增 `status.inspect@1.0.2`。
 
-- 父进程持有 Provider token 和 lease secret；启动执行模式前会从自身环境删除 token；
-- 子进程只收到 descriptor 字节、实现哈希和结构化输入，启动后清空环境；
+`1.0.2` 仍与 `1.0.0/1.0.1` 保持相同输入、输出、权限和行为，只把申报内存预算调整
+为 320 MiB，并切换到独立 Python worker。descriptor SHA-256 为
+`0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd`；worker 源码也
+纳入 implementation hash，当前实现哈希为
+`156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`。
+
+修正后的执行器采用以下边界：
+
+- 父进程持有 Provider token 和 lease secret，但创建 worker 时显式构造只含安全
+  `PYTHONPATH` 的新环境，不继承父进程环境；
+- worker 只通过有界 stdin 收到 descriptor 字节、实现哈希和结构化输入；
 - 子进程不收到 Provider token、lease secret、bot token、平台发送接口或 Core 管理接口；
 - 父进程强制 wall-time，超时或取消时 terminate、必要时 kill，并等待回收；
-- 父进程校验子进程返回的精确整数 usage、输出 schema 和规范化输出字节数；
+- stdout 传输硬限 64 KiB，stderr 丢弃；父进程校验环境安全标记、精确整数 usage、
+  输出 schema 和规范化输出字节数；
 - Provider 当前串行执行，heartbeat 宣告最大并发为 1，即使 descriptor 上限更高也不会并行领取。
 - 无工作时轮询间隔从 0.25 秒指数退避到 5 秒；HTTPX 与 Core 只隐藏成功的空 lease 204 日志，真实 200 lease 和全部错误仍保留。
 
-这一边界足以承载当前固定的只读 `status.inspect` 实现，但它不是通用敌对代码沙箱。清空环境和不传能力在结构上隔离了秘密与平台发送；对未来会读取文件、联网、创建子进程或执行任意模型代码的工具，仍需独立的操作系统级 sandbox/cgroup/seccomp/网络策略。不能把这个 `multiprocessing` 监督器直接当作 Wolfram、TeX 或通用 Python runner 的安全证明。
+这一边界足以承载当前固定的只读 `status.inspect` 实现，但它不是通用敌对代码沙箱。
+创建时使用安全环境且不传能力，在结构上隔离了秘密与平台发送；对未来会读取文件、
+联网、创建子进程或执行任意模型代码的工具，仍需独立的操作系统级
+sandbox/cgroup/seccomp/网络策略。不能把这个独立进程监督器直接当作 Wolfram、TeX
+或通用 Python runner 的安全证明。
 
 ## 三个独立停止开关
 
@@ -84,7 +102,8 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 1. 在同版本 PostgreSQL 上做自定义格式备份，并完成 `pg_restore --list` 与隔离恢复。
 2. 保持 `SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`、两个 scope 均为 `[]`，构建并替换 Core。
 3. 验证 Alembic 为 `0015_tool_attempts` head、无 drift、lease 路由对 Provider 返回 204、attempt/event 表为零新增。
-4. 从精确 Git 对象导入 `status.inspect@1.0.1` 为 `reviewed`，不得自动激活。
+4. 从精确 Git 对象导入 `status.inspect@1.0.2` 为 `reviewed`，不得自动激活；
+   `1.0.0/1.0.1` 继续作为不可变历史 authority。
 5. 替换 status Provider 为 `serve` 模式；验证它只报告 hard wall-time/output-bytes、实现哈希和健康心跳，且不发布端口。
 6. 至少观察一个 inventory/heartbeat 周期；确认 `ledger_only` 下没有 lease、attempt 或旧命令行为变化。
 7. 另行评审 descriptor 激活、一个精确范围和一个无平台发送的 `admin_api` canary。未经这一步不得切换执行模式。

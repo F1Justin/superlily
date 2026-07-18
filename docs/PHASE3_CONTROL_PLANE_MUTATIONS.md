@@ -34,6 +34,14 @@ M1 已于 2026-07-19 04:04 CST 默认禁用部署。生产为
 `reviewed/resource_version=1`，工具继续为 `ledger_only`、1 条 `recorded_only`
 invocation、零 attempt。M2–M3 仍必须完成，才可能进入首个精确 canary。
 
+M2 Provider quarantine 也已完成实现、审查与发布前回归。新增
+`0015c_provider_quarantine`、Provider 单调资源版本、security_admin preview/apply、
+恢复时 inventory/heartbeat/implementation 重新验证，以及 Provider authority 与
+lifecycle event 的数据库不可变约束。lease 与 quarantine 使用同一 Provider 行锁，
+保证 quarantine 接受后不再创建新 lease；quarantined Provider 仍可上报新鲜 runtime
+作为恢复证据。SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL
+17 分段全量 343 项通过。M2 尚未部署，M3 也尚未实现。
+
 ## 分包顺序
 
 ### M0：会话与审计底座

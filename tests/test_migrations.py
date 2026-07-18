@@ -98,6 +98,16 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "AND tbl_name IN ('tool_descriptors', 'tool_descriptor_lifecycle_events')"
             ).fetchall()
         }
+        provider_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()
+        }
+        provider_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name IN ('tool_providers', 'tool_provider_lifecycle_events')"
+            ).fetchall()
+        }
         control_tables = {
             row[0]
             for row in connection.execute(
@@ -113,7 +123,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             ).fetchall()
         }
 
-    assert version == ("0015b_descriptor_mutations",)
+    assert version == ("0015c_provider_quarantine",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -180,6 +190,14 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "tool_descriptor_lifecycle_events_no_update",
         "tool_descriptor_lifecycle_events_no_delete",
     }
+    assert "resource_version" in provider_columns
+    assert provider_triggers == {
+        "tool_providers_authority_no_update",
+        "tool_providers_no_delete",
+        "tool_providers_lifecycle_guard",
+        "tool_provider_lifecycle_events_no_update",
+        "tool_provider_lifecycle_events_no_delete",
+    }
     assert control_tables == {
         "control_plane_sessions",
         "control_plane_login_attempts",
@@ -224,6 +242,31 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         capture_output=True,
         text=True,
     )
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "0015b_descriptor_mutations"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        provider_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()
+        }
+        provider_triggers = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+            "AND tbl_name IN ('tool_providers', 'tool_provider_lifecycle_events')"
+        ).fetchall()
+        descriptor_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()
+        }
+    assert version == ("0015b_descriptor_mutations",)
+    assert "resource_version" not in provider_columns
+    assert provider_triggers == []
+    assert "resource_version" in descriptor_columns
 
     subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "0015a_control_plane_auth"],
@@ -382,7 +425,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0015b_descriptor_mutations",)
+    assert version == ("0015c_provider_quarantine",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -423,6 +466,8 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
 
     async def snapshot() -> tuple[
         str | None,
+        set[str],
+        set[str],
         set[str],
         set[str],
         set[str],
@@ -485,6 +530,29 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
                         )
                     ).all()
                 )
+                provider_triggers = set(
+                    (
+                        await connection.scalars(
+                            text(
+                                "SELECT trigger_name FROM information_schema.triggers "
+                                "WHERE event_object_schema = current_schema() "
+                                "AND event_object_table IN "
+                                "('tool_providers', 'tool_provider_lifecycle_events')"
+                            )
+                        )
+                    ).all()
+                )
+                provider_columns = set(
+                    (
+                        await connection.scalars(
+                            text(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_schema = current_schema() "
+                                "AND table_name = 'tool_providers'"
+                            )
+                        )
+                    ).all()
+                )
                 functions = set(
                     (
                         await connection.scalars(
@@ -494,7 +562,9 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
                                 "WHERE n.nspname = current_schema() "
                                 "AND p.proname IN ('reject_control_plane_evidence_mutation', "
                                 "'reject_descriptor_lifecycle_evidence_mutation', "
-                                "'guard_tool_descriptor_authority_mutation')"
+                                "'guard_tool_descriptor_authority_mutation', "
+                                "'reject_provider_lifecycle_evidence_mutation', "
+                                "'guard_tool_provider_authority_mutation')"
                             )
                         )
                     ).all()
@@ -505,6 +575,8 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
                     triggers,
                     descriptor_triggers,
                     descriptor_columns,
+                    provider_triggers,
+                    provider_columns,
                     functions,
                 )
         finally:
@@ -513,10 +585,17 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
     alembic("downgrade", "base")
     try:
         alembic("upgrade", "head")
-        version, tables, triggers, descriptor_triggers, descriptor_columns, functions = (
-            asyncio.run(snapshot())
-        )
-        assert version == "0015b_descriptor_mutations"
+        (
+            version,
+            tables,
+            triggers,
+            descriptor_triggers,
+            descriptor_columns,
+            provider_triggers,
+            provider_columns,
+            functions,
+        ) = asyncio.run(snapshot())
+        assert version == "0015c_provider_quarantine"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -535,17 +614,52 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             "tool_descriptor_lifecycle_events_no_mutation",
         }
         assert "resource_version" in descriptor_columns
+        assert provider_triggers == {
+            "tool_providers_authority_guard",
+            "tool_provider_lifecycle_events_no_mutation",
+        }
+        assert "resource_version" in provider_columns
+        assert functions == {
+            "reject_control_plane_evidence_mutation",
+            "reject_descriptor_lifecycle_evidence_mutation",
+            "guard_tool_descriptor_authority_mutation",
+            "reject_provider_lifecycle_evidence_mutation",
+            "guard_tool_provider_authority_mutation",
+        }
+        alembic("check")
+
+        alembic("downgrade", "0015b_descriptor_mutations")
+        (
+            version,
+            tables,
+            triggers,
+            descriptor_triggers,
+            descriptor_columns,
+            provider_triggers,
+            provider_columns,
+            functions,
+        ) = asyncio.run(snapshot())
+        assert version == "0015b_descriptor_mutations"
+        assert provider_triggers == set()
+        assert "resource_version" not in provider_columns
+        assert "resource_version" in descriptor_columns
         assert functions == {
             "reject_control_plane_evidence_mutation",
             "reject_descriptor_lifecycle_evidence_mutation",
             "guard_tool_descriptor_authority_mutation",
         }
-        alembic("check")
 
         alembic("downgrade", "0015a_control_plane_auth")
-        version, tables, triggers, descriptor_triggers, descriptor_columns, functions = (
-            asyncio.run(snapshot())
-        )
+        (
+            version,
+            tables,
+            triggers,
+            descriptor_triggers,
+            descriptor_columns,
+            provider_triggers,
+            provider_columns,
+            functions,
+        ) = asyncio.run(snapshot())
         assert version == "0015a_control_plane_auth"
         assert tables == {
             "control_plane_sessions",
@@ -560,20 +674,31 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         }
         assert descriptor_triggers == set()
         assert "resource_version" not in descriptor_columns
+        assert provider_triggers == set()
+        assert "resource_version" not in provider_columns
         assert functions == {"reject_control_plane_evidence_mutation"}
 
         alembic("downgrade", "0015_tool_attempts")
-        version, tables, triggers, descriptor_triggers, descriptor_columns, functions = (
-            asyncio.run(snapshot())
-        )
+        (
+            version,
+            tables,
+            triggers,
+            descriptor_triggers,
+            descriptor_columns,
+            provider_triggers,
+            provider_columns,
+            functions,
+        ) = asyncio.run(snapshot())
         assert version == "0015_tool_attempts"
         assert tables == set()
         assert triggers == set()
         assert descriptor_triggers == set()
         assert "resource_version" not in descriptor_columns
+        assert provider_triggers == set()
+        assert "resource_version" not in provider_columns
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0015b_descriptor_mutations"
+        assert asyncio.run(snapshot())[0] == "0015c_provider_quarantine"
     finally:
         alembic("downgrade", "base", check=False)

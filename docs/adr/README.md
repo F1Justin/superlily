@@ -14,3 +14,4 @@
 - `0007-phase3-migration-allocation-after-c0d.md`
 - `0008-phase3-minimum-mutation-governance.md`
 - `0009-descriptor-mutation-evidence.md`
+- `0010-provider-quarantine-evidence.md`

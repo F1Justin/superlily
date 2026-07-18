@@ -247,6 +247,35 @@ descriptor 仍为 `reviewed/resource_version=1`，既有 invocation 仍为 1 条
 
 因此只签署 M1 默认禁用上线，不签署任何真实 descriptor mutation 或 canary。
 
+### Provider quarantine M2 发布前证据
+
+2026-07-19，ADR 0010 与 `0015c_provider_quarantine` 完成实现、审查和发布前回归。
+M2 为 Provider 增加单调资源版本、security_admin 服务端 preview、新鲜再认证、CAS、
+幂等与只追加证据。首包只允许 `active -> quarantined` 和
+`quarantined -> active`；quarantine 可在 runtime 不健康时降低 authority，恢复则必须
+重新证明 credential active、inventory/heartbeat 新鲜、heartbeat healthy、两者
+inventory hash 一致、协议允许且存在明确 implementation hash。
+
+Provider 稳定注册字段、Provider 行和 lifecycle event 受数据库 trigger 保护。lease
+路径与 quarantine apply 先锁同一 Provider 行；PostgreSQL 并发测试证明，等待中的
+lease 在 quarantine 提交后看到新状态并返回空，未创建 attempt。quarantined Provider
+仍可用独立 credential 上报 inventory/heartbeat；重复注册比较初始 lifecycle event，
+不会因当前处于 quarantine 而误报 authority 冲突。
+
+同轮审查修正了 `status.inspect@1.0.1` 的 canary 前边界：旧 256 MiB 预算在全量进程
+中稳定被约 263 MiB 峰值超过，且旧 spawn 只能在进入子进程后清空环境。新的不可变
+`status.inspect@1.0.2` 使用 320 MiB 诚实预算和创建时只含安全 `PYTHONPATH` 的独立
+worker；stdin/stdout 有界、父进程硬超时，worker 源码进入 implementation hash。
+descriptor/implementation SHA-256 分别为
+`0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd` 和
+`156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`。
+
+SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL 17 分段合计
+343 项通过。测试覆盖默认禁用、角色/CSRF/再认证、quarantine/restore、runtime
+漂移与恢复 blocker、幂等、并发 CAS、preview/mutation 限速、直接 SQL 拒绝、secret
+不落证据、quarantine 期间上报和 lease 行锁。两种数据库迁移往返与 drift 均通过。
+这些是发布前证据；M2 默认禁用生产签署与 M3 rollout plan 仍未完成。
+
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
   enforce uses its own exact allowlist.

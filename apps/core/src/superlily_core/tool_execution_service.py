@@ -31,6 +31,7 @@ from .models import (
     ToolAttempt,
     ToolAttemptEvent,
     ToolInvocation,
+    ToolProvider,
     ToolProviderCredential,
     new_id,
 )
@@ -256,6 +257,13 @@ async def lease_tool_execution(
     if settings.tool_execution_mode not in {"canary", "enforce"} or settings.tool_global_stop:
         return None
     now = await database_now(session)
+    provider = await session.scalar(
+        select(ToolProvider)
+        .where(ToolProvider.id == provider_id)
+        .with_for_update()
+    )
+    if provider is None or provider.lifecycle != "active":
+        return None
     candidates = list(
         (
             await session.scalars(
