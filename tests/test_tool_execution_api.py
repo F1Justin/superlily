@@ -381,6 +381,24 @@ async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None
     assert lease.json()["invocation_id"] == invocation["invocation_id"]
 
 
+async def test_reviewed_enforce_scope_uses_its_own_exact_allowlist(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    exact_scope = next(iter(app.state.settings.tool_canary_scopes))
+    app.state.settings = replace(
+        app.state.settings,
+        tool_execution_mode="enforce",
+        tool_canary_scopes=frozenset(),
+        tool_enforce_scopes=frozenset({exact_scope}),
+    )
+
+    invocation = await create_queued(client, descriptor, key="attempt-enforce-exact-1")
+    lease = await pull_lease(client, snapshot_hash)
+
+    assert invocation["execution_mode"] == "enforce"
+    assert lease.status_code == 200, lease.text
+    assert lease.json()["invocation_id"] == invocation["invocation_id"]
+
+
 async def test_sender_rate_limit_rejects_before_queueing_more_work(client, app) -> None:
     descriptor, _ = await prepare_canary(client, app)
     for index in range(10):
