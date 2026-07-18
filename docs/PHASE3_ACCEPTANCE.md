@@ -136,7 +136,7 @@ Core 心跳显示两个实例均为 `online`，普通 reporter 和 durable-spool
 
 2026-07-19，`0015_tool_attempts`、Provider execution SDK 和
 `status.inspect@1.0.1` 独立子进程执行器完成。SQLite 与 PostgreSQL 17 全量套件
-各 310 项通过；测试覆盖四种模式、canary/enforce 独立精确范围、三个 stop、
+各 311 项通过；测试覆盖四种模式、canary/enforce 独立精确范围、三个 stop、
 并发领取唯一 lease、单调 fence、secret/Provider 绑定、DB-time 续租与 reaper、
 取消竞态、迟到/重复完成、预算取消、非法输出、attempt 事件只追加，以及真实
 Provider SDK -> Core -> 子进程 -> Core 的成功路径。

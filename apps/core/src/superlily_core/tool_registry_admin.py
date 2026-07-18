@@ -74,7 +74,7 @@ async def _run(args: argparse.Namespace) -> dict:
                 return {
                     "descriptor_hash": record.descriptor_hash,
                     "duplicate": duplicate,
-                    "execution_mode": "off",
+                    "execution_mode": settings.tool_execution_mode,
                     "lifecycle": record.lifecycle,
                     "tool_id": record.tool_id,
                     "version": record.version,
@@ -89,7 +89,7 @@ async def _run(args: argparse.Namespace) -> dict:
             )
             return {
                 "duplicate": duplicate,
-                "execution_mode": "off",
+                "execution_mode": settings.tool_execution_mode,
                 "lifecycle": record.lifecycle,
                 "provider_id": record.id,
             }

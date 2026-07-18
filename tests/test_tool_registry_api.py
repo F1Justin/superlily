@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 import pytest
@@ -16,6 +17,8 @@ from superlily_contracts import (
     load_tool_descriptor,
     provider_inventory_snapshot_hash,
 )
+from superlily_core import tool_registry_admin
+from superlily_core.database import Database
 from superlily_core.models import (
     ToolDescriptorLifecycleEvent,
     ToolDescriptorRecord,
@@ -42,6 +45,39 @@ def _registration() -> ProviderRegistration:
         allowed_protocols=["superlily-provider-pull-v1"],
         tool_selectors=["status.inspect"],
     )
+
+
+async def test_registry_admin_reports_the_actual_safe_execution_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = _descriptor_source()
+    loaded = load_tool_descriptor(source)
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'registry-admin.db'}"
+    database = Database(database_url)
+    await database.create_schema()
+    await database.dispose()
+    monkeypatch.setenv("SUPERLILY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "ledger_only")
+    monkeypatch.setattr(
+        tool_registry_admin,
+        "_git_descriptor_source",
+        lambda *_args: source,
+    )
+
+    result = await tool_registry_admin._run(
+        SimpleNamespace(
+            command="import-descriptor",
+            repository=tmp_path,
+            source_commit="1" * 40,
+            path=Path("registry/status.inspect.json"),
+            bundle_hash=loaded.authority.sha256,
+            reviewer="registry-admin-mode-test",
+        )
+    )
+
+    assert result["execution_mode"] == "ledger_only"
+    assert result["lifecycle"] == "reviewed"
 
 
 async def _import_descriptor(app) -> ToolDescriptorRecord:
