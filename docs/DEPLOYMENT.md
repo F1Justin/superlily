@@ -223,6 +223,23 @@ attempt, lease, execution, or natural-language route. Follow
 described in `CONTROL_PLANE.md` remains read-only until its own authentication,
 authorization, preview, audit, and mutation gates pass.
 
+This reporting-only slice deployed on 2026-07-18 from commit
+`c48aaa18e35d99ab6468a683329311586c7f1518`. The imported descriptor hash is
+`65af3c28c09b250b3418269416841fa980fae9cfb8ffcb87c6df5305f6fbd62c`;
+its lifecycle is `reviewed`. The expected admin state is one fresh healthy
+Provider but zero active/eligible tools, with reasons `inactive_descriptor`,
+`budget_unenforceable`, and `execution_off`. Roll back the runtime by stopping
+only `status-provider` and removing its token mapping on the next Core recreate;
+the immutable reviewed descriptor/Provider audit rows may remain. No schema
+downgrade is involved.
+
+The pre-rollout backup is
+`/home/justin/backups/superlily/20260718-phase3a-status/superlily-pre-phase3a-status-c48aaa1.dump`
+(mode `0600`, SHA-256
+`763f2e33906040a3da3962406d62be6d7b7d448af8c7d09166a2f9e0909741b1`).
+Production migration head remains `0013_collection_reliability`; Phase 3b
+starts with `0014_tool_invocations`, not a renumbered `0013`.
+
 ## 7. C0-D durable ingress rollout and rollback
 
 C0-D1 through C0-D3 deployed on 2026-07-18 with bridge `0.4.0`; C0-D4 then

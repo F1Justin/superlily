@@ -130,6 +130,10 @@ Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`. Phase acceptance is in
 
 ### 3a. Authoritative tool descriptors
 
+Status: completed on 2026-07-18 with the real reviewed `status.inspect`
+authority and a reporting-only Provider. No descriptor is active and no
+invocation or lease surface exists.
+
 - Define versioned input/output JSON Schemas, side-effect class, permission,
   confirmation, timeout, rate, concurrency, resource, privacy, provider, and
   required-output-capability metadata.

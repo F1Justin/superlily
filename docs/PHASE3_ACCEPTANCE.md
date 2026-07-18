@@ -2,12 +2,12 @@
 
 ## Status and entrance gate
 
-Phase 3a contract implementation has started after its recorded Phase 2
-entrance prerequisite, and its zero-authority Registry schema/read surface is
-now deployed. The accepted ADRs and contract library are evidence for their
-narrow checked items only; production Provider/descriptor authority,
-invocation, artifact, and execution items remain unchecked until their own
-evidence exists.
+Phase 3a completed after its recorded Phase 2 entrance prerequisite. Its
+Registry schema/read surface, real reviewed `status.inspect` authority, shared
+Provider SDK, stable Provider identity, and reporting-only runtime are deployed.
+The accepted ADRs, tests, and production record are evidence for these narrow
+checked items only; invocation, lease, artifact, tool execution, and
+natural-language authority remain unchecked until their own evidence exists.
 
 - [x] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
   reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
@@ -18,7 +18,7 @@ evidence exists.
 
 ## 3a: authority and effective registry
 
-- [ ] Git-reviewed descriptor bundles are the only authority source; import
+- [x] Git-reviewed descriptor bundles are the only authority source; import
   stores immutable canonical bytes/hash, commit, lifecycle and reviewer audit.
 - [x] The restricted JSON Schema profile rejects duplicate keys, non-finite
   numbers, remote/dynamic refs, cycles, unknown/unsafe keywords and all size,
@@ -60,6 +60,52 @@ invocation/attempt/lease table or route exists, and `status.inspect` remains
 NapCat were not restarted; both bot instances remained online, their runtime
 command snapshot remained fresh, and legacy event/claim/heartbeat ingestion
 continued successfully immediately after the Core-only replacement.
+
+### Real authority and reporting-only Provider evidence
+
+On 2026-07-18 at 22:43 CST, commit
+`c48aaa18e35d99ab6468a683329311586c7f1518` deployed the first real authority:
+`status.inspect@1.0.0`, descriptor SHA-256
+`65af3c28c09b250b3418269416841fa980fae9cfb8ffcb87c6df5305f6fbd62c`.
+The Core image is
+`sha256:010209464fb4105c33bf430b07ee5a56ff19884a3b6f97cccb17ab83b985aed5`
+and the reporting-only Provider image is
+`sha256:e1650313c1708b07442867aefef905a6cfa7123154d852bec6f6e5f539636d3a`.
+Before mutation, PostgreSQL was backed up in custom format to
+`/home/justin/backups/superlily/20260718-phase3a-status/superlily-pre-phase3a-status-c48aaa1.dump`
+(147,741,882 bytes, mode `0600`, SHA-256
+`763f2e33906040a3da3962406d62be6d7b7d448af8c7d09166a2f9e0909741b1`);
+`pg_restore --list` read the archive successfully.
+
+The descriptor was loaded from that exact Git object, imported as `reviewed`
+and never activated. Provider `provider-status-primary` has an unrelated
+environment credential and an active stable registration. The container has a
+read-only root, drops all capabilities, publishes no port, receives no admin or
+bot token, and has no invocation/lease client. The installed implementation
+self-test and its output schema passed in that container. SQLite and PostgreSQL
+each passed all 254 tests; the focused descriptor/SDK/Core suite passed all 36.
+
+After five minutes the Provider had independently created two immutable
+inventory observations and eleven heartbeats, proving the 300-second inventory
+refresh is distinct from 30-second health. Neither authority bytes nor
+heartbeat metadata contains its bearer credential. The admin view reports one
+descriptor, zero active descriptors, zero eligible tools, one Provider, one
+fresh inventory and one healthy Provider. Runtime reasons are exactly
+`budget_unenforceable`; effective reasons are exactly `inactive_descriptor`,
+`budget_unenforceable`, and `execution_off`, because the later hard wall-time
+lease executor does not exist. `POST /v1/tool-invocations` remains 404,
+execution mode is `off`, and invocation endpoints, leases, and natural-language
+callers are all false.
+
+Production remains at `0013_collection_reliability`; `alembic check` reports no
+drift and no Phase 3b table was added. Only Core was recreated and the new
+Provider was started; PostgreSQL, Lily, Nekro, and NapCat were not restarted.
+Legacy claims/events continued across the Core replacement and Nekro remained
+healthy. Lily's process and message/event capture also continued, but its
+ordinary heartbeat and command snapshot had already stopped refreshing at
+22:14 CST, before the 22:42 Core replacement. The stale observer status is
+therefore not attributed to this rollout and must be diagnosed separately
+before a Phase 3b execution canary; it does not grant any tool authority.
 
 ## 3b: invocation and execution safety
 

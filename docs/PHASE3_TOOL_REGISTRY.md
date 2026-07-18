@@ -15,15 +15,15 @@ things that old command plugins commonly combine:
 The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
-**Status:** Phase 3a implementation is in progress. The signed policy-v6 Phase
+**Status:** Phase 3a is complete. The signed policy-v6 Phase
 2 gate is recorded in `PHASE2_FINAL_AUDIT.md`; contracts, migration
 `0012_tool_registry`, Git-bound local imports, provider reporting, and
-admin-only effective-state reads are deployed in zero-authority mode. The real
-`status.inspect` authority, shared Provider SDK, and a reporting-only status
-runtime are now the current rollout slice. Descriptors still import only as
-`reviewed`, the runtime has no invocation/lease consumer, and execution
-authority remains hard-off. `PHASE3_ACCEPTANCE.md` is the executable release
-checklist, the accepted ADRs under `docs/adr/` freeze the first implementation
+admin-only effective-state reads are deployed. The real `status.inspect`
+authority, shared Provider SDK, and reporting-only status runtime are also live
+with the descriptor still `reviewed`, honest `budget_unenforceable` reporting,
+no invocation/lease consumer, and execution hard-off. Phase 3b's
+`0014_tool_invocations` ledger is next. `PHASE3_ACCEPTANCE.md` is the executable
+release checklist, the accepted ADRs under `docs/adr/` freeze the implementation
 decisions, and this document defines the architecture.
 
 ## Non-goals
