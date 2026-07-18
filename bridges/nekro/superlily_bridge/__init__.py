@@ -42,7 +42,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.3.3"
+BRIDGE_VERSION = "0.3.4"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -97,12 +97,15 @@ reporter = BackgroundReporter(
 )
 heartbeat_task: asyncio.Task | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
+_TRIGGER_BINDERS_ATTR = "_superlily_response_trigger_binders_v1"
 _SUPPRESSION_TRACKER_ATTR = "_superlily_outbound_suppression_tracker_v1"
 _EVENT_SUPPRESSIONS_ATTR = "_superlily_event_suppressions_v1"
 _EVENT_SEND_ATTEMPTS_ATTR = "_superlily_event_send_attempts_v1"
 _ACTIVE_CLAIM_EVENTS_ATTR = "_superlily_active_claim_events_v1"
 api_started: dict[int, float] = {}
 blocked_api_calls: dict[int, ClaimSuppression] = {}
+TRIGGER_BIND_MAX_WAIT_SECONDS = 3600.0
+TRIGGER_BIND_POLL_SECONDS = 0.1
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -143,6 +146,14 @@ def _trigger_tracker() -> ResponseTriggerTracker:
         tracker = ResponseTriggerTracker()
         setattr(nonebot_message, _TRIGGER_TRACKER_ATTR, tracker)
     return tracker
+
+
+def _trigger_binders() -> dict[tuple[str, str], asyncio.Task]:
+    binders = getattr(nonebot_message, _TRIGGER_BINDERS_ATTR, None)
+    if binders is None:
+        binders = {}
+        setattr(nonebot_message, _TRIGGER_BINDERS_ATTR, binders)
+    return binders
 
 
 def _suppression_tracker() -> OutboundSuppressionTracker:
@@ -191,10 +202,59 @@ def _task_token(conv: dict[str, Any]) -> int | None:
         return None
 
 
-def _remember_trigger(conv: dict[str, Any], source_id: str, should_remember: bool) -> None:
+async def _bind_trigger_when_task_starts(
+    conv: dict[str, Any],
+    previous_task_token: int | None,
+) -> None:
+    key = (str(conv.get("type", "unknown")), str(conv.get("id", "unknown")))
+    current_task = asyncio.current_task()
+    deadline = time.monotonic() + TRIGGER_BIND_MAX_WAIT_SECONDS
+    try:
+        while time.monotonic() < deadline:
+            task_token = _task_token(conv)
+            if task_token is not None:
+                if previous_task_token is None or task_token != previous_task_token:
+                    _trigger_tracker().observe_task(conv, task_token)
+                    return
+                # A pending source may wait behind a long-running task. Keep
+                # the authoritative current token alive until the scheduler
+                # replaces it, so the pending source can transition exactly
+                # once to the next task.
+                _trigger_tracker().observe_task(conv, task_token)
+            await asyncio.sleep(TRIGGER_BIND_POLL_SECONDS)
+    finally:
+        if _trigger_binders().get(key) is current_task:
+            _trigger_binders().pop(key, None)
+
+
+def _schedule_trigger_binding(
+    conv: dict[str, Any],
+    previous_task_token: int | None,
+) -> None:
+    key = (str(conv.get("type", "unknown")), str(conv.get("id", "unknown")))
+    existing = _trigger_binders().pop(key, None)
+    if existing is not None:
+        existing.cancel()
+    task = asyncio.create_task(
+        _bind_trigger_when_task_starts(dict(conv), previous_task_token),
+        name=f"superlily-trigger-bind:{key[0]}:{key[1]}",
+    )
+    _trigger_binders()[key] = task
+
+
+def _remember_trigger(
+    conv: dict[str, Any],
+    source_id: str,
+    should_remember: bool,
+    *,
+    bind_task: bool = False,
+) -> None:
     if not should_remember:
         return
-    _trigger_tracker().remember(conv, source_id, _task_token(conv))
+    task_token = _task_token(conv)
+    _trigger_tracker().remember(conv, source_id, task_token)
+    if bind_task:
+        _schedule_trigger_binding(conv, task_token)
 
 
 def _current_task_trigger(conv: dict[str, Any]) -> str | None:
@@ -227,7 +287,12 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
         sender_id=sender_id,
         occurred_at=occurred_at,
     )
-    _remember_trigger(conv, source_id, bool(message.is_tome))
+    _remember_trigger(
+        conv,
+        source_id,
+        bool(message.is_tome),
+        bind_task=bool(message.is_tome),
+    )
     payload = {
         "schema_version": "1.0",
         "source_event_id": source_id,
@@ -263,7 +328,12 @@ async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
             if claim is None:
                 reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
             if claim_decision_targets_instance(claim, config.INSTANCE_ID):
-                _remember_trigger(payload["conversation"], payload["source_event_id"], True)
+                _remember_trigger(
+                    payload["conversation"],
+                    payload["source_event_id"],
+                    True,
+                    bind_task=True,
+                )
             if claim and claim.get("enforced") is True and claim.get("action") == "deny":
                 # Preserve the source in the task tracker: if another plugin's
                 # FORCE_TRIGGER overrides BLOCK_TRIGGER, any later agent send

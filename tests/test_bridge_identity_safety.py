@@ -56,6 +56,33 @@ def test_nekro_ack_follows_authoritative_outbound_guard_install() -> None:
     assert "return suppression, not prior_send_seen" in installer_source
 
 
+def test_nekro_response_trigger_binds_when_scheduler_task_starts() -> None:
+    bridge_path = ROOT / "bridges" / "nekro" / "superlily_bridge" / "__init__.py"
+    source = bridge_path.read_text(encoding="utf-8")
+    module = ast.parse(source)
+    binder = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_bind_trigger_when_task_starts"
+    )
+    remember = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_remember_trigger"
+    )
+    binder_source = ast.get_source_segment(source, binder)
+    remember_source = ast.get_source_segment(source, remember)
+
+    assert binder_source is not None
+    assert "_task_token(conv)" in binder_source
+    assert "_trigger_tracker().observe_task(conv, task_token)" in binder_source
+    assert "task_token != previous_task_token" in binder_source
+    assert remember_source is not None
+    assert "if bind_task" in remember_source
+    assert "_schedule_trigger_binding(conv, task_token)" in remember_source
+
+
 @pytest.fixture(params=["lily", "nekro"])
 def bridge_payloads(request):
     if request.param == "lily":

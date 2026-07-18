@@ -53,7 +53,9 @@ safely returns `abstain`, the bridge retains that decision only as a pending
 response-correlation hint. It does not convert the abstain into authorization;
 Nekro's existing matcher still decides whether a response is produced.
 
-Response-correlation state expires only while idle. A scheduler task that is
-still active retains its exact source binding past the ordinary cache TTL, so
-slow model retries and tool work do not turn a later successful response into
-an unlinked response. A different task token cannot revive an expired binding.
+Response-correlation state expires only while idle. A bounded bridge task binds
+the pending source as soon as Nekro exposes the scheduler task token; a task
+that is still active then retains its exact source binding past the ordinary
+cache TTL. Slow model retries and tool work therefore do not turn a later
+successful response into an unlinked response. A different task token cannot
+revive an expired idle binding.

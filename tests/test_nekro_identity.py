@@ -224,6 +224,18 @@ def test_response_trigger_tracker_does_not_preserve_expired_stale_task() -> None
     assert tracker.source_for_response(conv, "task-two", now=600) is None
 
 
+def test_response_trigger_tracker_does_not_bind_expired_idle_source() -> None:
+    identity = load_identity_module()
+    tracker = identity.ResponseTriggerTracker(ttl_seconds=10)
+    conv = {"type": "group", "id": "expired-idle"}
+
+    tracker.remember(conv, "event:first", None, now=0)
+
+    # A bridge-side task-start watcher may outlive this idle entry, but the
+    # tracker still refuses to attach an unrelated task after its TTL.
+    assert tracker.source_for_response(conv, "unrelated-task", now=600) is None
+
+
 def test_claim_targets_requested_instance() -> None:
     identity = load_identity_module()
 
