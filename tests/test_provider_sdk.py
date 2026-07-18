@@ -219,6 +219,7 @@ async def test_execution_sdk_is_single_shot_and_validates_the_lease() -> None:
         with pytest.raises(ProviderExecutionError) as failure:
             await executor.request_lease("a" * 64)
     assert len(requests) == 1
+    assert requests[0].headers["connection"] == "close"
     assert "execution-token-that-must-not-leak" not in str(failure.value)
 
     input_value = {"scope": "provider_runtime"}
@@ -248,14 +249,20 @@ async def test_execution_sdk_is_single_shot_and_validates_the_lease() -> None:
             "artifacts": [],
         },
     )
+    lease_requests: list[httpx.Request] = []
     responses = iter(
         [
             httpx.Response(204),
             httpx.Response(200, json=lease.model_dump(mode="json")),
         ]
     )
+
+    def lease_response(request: httpx.Request) -> httpx.Response:
+        lease_requests.append(request)
+        return next(responses)
+
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: next(responses))
+        transport=httpx.MockTransport(lease_response)
     ) as http_client:
         executor = ProviderExecutionClient(
             base_url="https://core.example.test",
@@ -266,11 +273,21 @@ async def test_execution_sdk_is_single_shot_and_validates_the_lease() -> None:
         assert await executor.request_lease("a" * 64) is None
         received = await executor.request_lease("a" * 64)
     assert received == lease
+    assert [request.headers["connection"] for request in lease_requests] == [
+        "close",
+        "close",
+    ]
 
 
 async def test_execution_sdk_rejects_empty_non_lease_receipt() -> None:
+    requests: list[httpx.Request] = []
+
+    def empty_response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(204)
+
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(204))
+        transport=httpx.MockTransport(empty_response)
     ) as http_client:
         executor = ProviderExecutionClient(
             base_url="https://core.example.test",
@@ -289,3 +306,4 @@ async def test_execution_sdk_rejects_empty_non_lease_receipt() -> None:
                     }
                 ),
             )
+    assert requests[0].headers["connection"] != "close"

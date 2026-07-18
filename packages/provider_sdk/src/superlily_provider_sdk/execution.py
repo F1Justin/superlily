@@ -74,6 +74,7 @@ class ProviderExecutionClient:
         response = await self._post(
             "/v1/tool-executions/lease",
             payload.model_dump(mode="json"),
+            close_connection=True,
         )
         if response is None:
             return None
@@ -128,13 +129,25 @@ class ProviderExecutionClient:
             raise ProviderExecutionError("Core returned an empty execution receipt")
         return result
 
-    async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    async def _post(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        *,
+        close_connection: bool = False,
+    ) -> dict[str, Any] | None:
         client = await self._ensure_client()
+        headers = {"Authorization": f"Bearer {self._token}"}
+        # 空 lease 会退避到 5 秒，恰好可能撞上常见 ASGI 服务的 5 秒
+        # keep-alive 回收边界。只关闭轮询连接，避免滚动重启或边界竞态
+        # 产生 ReadError；真实执行阶段的 start/heartbeat/complete 仍复用连接。
+        if close_connection:
+            headers["Connection"] = "close"
         try:
             response = await client.post(
                 f"{self.base_url}{endpoint}",
                 json=payload,
-                headers={"Authorization": f"Bearer {self._token}"},
+                headers=headers,
                 timeout=self.timeout_seconds,
             )
             if response.status_code == 204:
