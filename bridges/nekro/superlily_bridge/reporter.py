@@ -52,6 +52,12 @@ class BackgroundReporter:
         self._client: httpx.AsyncClient | None = None
         self._worker: asyncio.Task | None = None
         self._spool_worker: asyncio.Task | None = None
+        self._worker_restart_handle: asyncio.TimerHandle | None = None
+        self._spool_worker_restart_handle: asyncio.TimerHandle | None = None
+        self._stopping = False
+        self.worker_restarts = 0
+        self.spool_worker_restarts = 0
+        self.last_worker_error: str | None = None
         self._spool_wakeup = asyncio.Event()
         self._spool: DurableIngressSpool | None = (
             DurableIngressSpool(
@@ -71,23 +77,34 @@ class BackgroundReporter:
         return bool(self.base_url and self.token)
 
     async def start(self) -> None:
-        if not self.enabled or self._worker:
+        if not self.enabled:
             return
-        self._client = httpx.AsyncClient(timeout=self.report_timeout_seconds, trust_env=False)
-        self._worker = asyncio.create_task(self._run(), name="nekro-lily-core-reporter")
-        if self._spool is not None:
-            try:
-                self._spool.open()
-            except Exception as exc:
-                self._spool_start_error = f"{type(exc).__name__}: {exc}"[:4096]
-                logger.error(f"Lily Core durable spool failed to open: {self._spool_start_error}")
-            else:
-                self._spool_worker = asyncio.create_task(
-                    self._run_spool(), name="nekro-lily-core-durable-spool"
-                )
-                self._spool_wakeup.set()
+        self._stopping = False
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self.report_timeout_seconds,
+                trust_env=False,
+            )
+            if self._spool is not None:
+                try:
+                    self._spool.open()
+                except Exception as exc:
+                    self._spool_start_error = f"{type(exc).__name__}: {exc}"[:4096]
+                    logger.error(
+                        f"Lily Core durable spool failed to open: {self._spool_start_error}"
+                    )
+                else:
+                    self._spool_start_error = None
+                    self._spool_wakeup.set()
+        self._start_workers()
 
     async def stop(self) -> None:
+        self._stopping = True
+        for handle in (self._worker_restart_handle, self._spool_worker_restart_handle):
+            if handle:
+                handle.cancel()
+        self._worker_restart_handle = None
+        self._spool_worker_restart_handle = None
         for task in (self._worker, self._spool_worker):
             if task:
                 task.cancel()
@@ -104,6 +121,109 @@ class BackgroundReporter:
             self._client = None
         if self._spool is not None:
             self._spool.close()
+
+    def worker_status(self) -> dict[str, Any]:
+        return {
+            "schema_version": "1.0",
+            "reporter": self._worker_state(
+                self._worker,
+                self._worker_restart_handle,
+                available=self.enabled,
+            ),
+            "durable_spool": self._worker_state(
+                self._spool_worker,
+                self._spool_worker_restart_handle,
+                available=self._spool is not None and self._spool_start_error is None,
+            ),
+            "reporter_restarts": self.worker_restarts,
+            "durable_spool_restarts": self.spool_worker_restarts,
+            "last_error": self.last_worker_error,
+        }
+
+    def _worker_state(
+        self,
+        task: asyncio.Task | None,
+        restart_handle: asyncio.TimerHandle | None,
+        *,
+        available: bool,
+    ) -> str:
+        if not available:
+            return "disabled"
+        if self._stopping:
+            return "stopping"
+        if task is not None and not task.done():
+            return "running"
+        if restart_handle is not None:
+            return "restarting"
+        return "stopped"
+
+    def _start_workers(self) -> None:
+        if self._stopping or self._client is None:
+            return
+        if self._worker is None:
+            self._worker = asyncio.create_task(
+                self._run(),
+                name="nekro-lily-core-reporter",
+            )
+            self._worker.add_done_callback(self._reporter_done)
+        if (
+            self._spool is not None
+            and self._spool_start_error is None
+            and self._spool_worker is None
+        ):
+            self._spool_worker = asyncio.create_task(
+                self._run_spool(),
+                name="nekro-lily-core-durable-spool",
+            )
+            self._spool_worker.add_done_callback(self._spool_reporter_done)
+
+    def _reporter_done(self, task: asyncio.Task) -> None:
+        if task is not self._worker:
+            return
+        self._worker = None
+        if self._stopping:
+            return
+        self._record_worker_exit("reporter", task)
+        self._worker_restart_handle = asyncio.get_running_loop().call_later(
+            1.0,
+            self._restart_reporter,
+        )
+
+    def _spool_reporter_done(self, task: asyncio.Task) -> None:
+        if task is not self._spool_worker:
+            return
+        self._spool_worker = None
+        if self._stopping:
+            return
+        self._record_worker_exit("durable_spool", task)
+        self._spool_worker_restart_handle = asyncio.get_running_loop().call_later(
+            1.0,
+            self._restart_spool_reporter,
+        )
+
+    def _record_worker_exit(self, worker: str, task: asyncio.Task) -> None:
+        if task.cancelled():
+            reason = "CancelledError"
+        else:
+            exception = task.exception()
+            reason = type(exception).__name__ if exception is not None else "UnexpectedReturn"
+        if worker == "reporter":
+            self.worker_restarts += 1
+        else:
+            self.spool_worker_restarts += 1
+        self.last_worker_error = f"{worker}:{reason}"
+        logger.error(
+            "Lily Core background worker exited unexpectedly; "
+            f"worker={worker} reason={reason}"
+        )
+
+    def _restart_reporter(self) -> None:
+        self._worker_restart_handle = None
+        self._start_workers()
+
+    def _restart_spool_reporter(self) -> None:
+        self._spool_worker_restart_handle = None
+        self._start_workers()
 
     def enqueue(self, item: ReportItem) -> bool:
         if not self.enabled:

@@ -43,7 +43,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.5.0"
+BRIDGE_VERSION = "0.5.1"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -123,6 +123,8 @@ reporter = BackgroundReporter(
     config.SPOOL_MAX_RECORD_BYTES,
 )
 heartbeat_task: asyncio.Task | None = None
+heartbeat_failures = 0
+last_heartbeat_error: str | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
 _TRIGGER_BINDERS_ATTR = "_superlily_response_trigger_binders_v1"
 _SUPPRESSION_TRACKER_ATTR = "_superlily_outbound_suppression_tracker_v1"
@@ -750,32 +752,45 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v1", False):
 
 
 async def heartbeat_loop() -> None:
+    global heartbeat_failures, last_heartbeat_error
     while True:
-        bots = list(get_bots().values())
-        bot_id = str(bots[0].self_id) if bots else config.BOT_ID or "unknown"
-        reporter.enqueue(
-            ReportItem(
-                "/v1/heartbeats",
-                {
-                    "schema_version": "1.0",
-                    "instance": instance(bot_id),
-                    "process_status": "running",
-                    "connection_status": "connected" if bots else "disconnected",
-                    "occurred_at": utc_iso(),
-                    "capabilities": ONEBOT_QQ_CAPABILITIES,
-                    "ingress_spool": reporter.spool_status(),
-                    "metadata": {
-                        "connected_bots": len(bots),
-                        "queue_depth": reporter.queue.qsize(),
-                        "dropped": reporter.dropped,
-                        "claim_enabled": config.CLAIM_ENABLED,
-                        "claim_failures": reporter.claim_failures,
-                        "claim_ack_failures": reporter.claim_ack_failures,
-                        "bridge_version": BRIDGE_VERSION,
+        try:
+            bots = list(get_bots().values())
+            bot_id = str(bots[0].self_id) if bots else config.BOT_ID or "unknown"
+            reporter.enqueue(
+                ReportItem(
+                    "/v1/heartbeats",
+                    {
+                        "schema_version": "1.0",
+                        "instance": instance(bot_id),
+                        "process_status": "running",
+                        "connection_status": "connected" if bots else "disconnected",
+                        "occurred_at": utc_iso(),
+                        "capabilities": ONEBOT_QQ_CAPABILITIES,
+                        "ingress_spool": reporter.spool_status(),
+                        "metadata": {
+                            "connected_bots": len(bots),
+                            "queue_depth": reporter.queue.qsize(),
+                            "dropped": reporter.dropped,
+                            "claim_enabled": config.CLAIM_ENABLED,
+                            "claim_failures": reporter.claim_failures,
+                            "claim_ack_failures": reporter.claim_ack_failures,
+                            "heartbeat_failures": heartbeat_failures,
+                            "last_heartbeat_error": last_heartbeat_error,
+                            "reporter_workers": reporter.worker_status(),
+                            "bridge_version": BRIDGE_VERSION,
+                        },
                     },
-                },
+                )
             )
-        )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            heartbeat_failures += 1
+            last_heartbeat_error = type(exc).__name__
+            logger.exception(
+                "Lily Core heartbeat iteration failed; the loop will continue"
+            )
         await asyncio.sleep(config.HEARTBEAT_SECONDS)
 
 

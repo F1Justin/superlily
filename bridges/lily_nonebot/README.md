@@ -1,5 +1,9 @@
 # Lily NoneBot bridge
 
+## 0.5.1 后台任务自恢复
+
+从 0.5.1 起，普通上报 worker 与 durable spool worker 都会观察异常退出、记录不含异常正文的错误类型，并在一秒退避后自动重建。正常 shutdown 不计为故障。heartbeat 的单轮构造也有独立异常边界；累计失败数、最后异常类型、两个 worker 的运行状态和重启次数会进入后续 heartbeat 元数据。这样即使 bot 仍在收消息，也不会再让一个悄然退出的后台协程长期把实例显示成假离线。bridge 仍然 fail-open，不因 Core 或 reporter 故障阻断原有命令。
+
 This plugin observes OneBot events and completed send APIs. Telemetry never
 waits for Lily Core. Phase 2c optionally adds one short, fail-open claim request
 before matcher dispatch; it is disabled by default.

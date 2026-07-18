@@ -1,5 +1,9 @@
 # Nekro bridge
 
+## 0.5.1 后台任务自恢复
+
+从 0.5.1 起，普通上报 worker 与 durable spool worker 都会观察异常退出、记录不含异常正文的错误类型，并在一秒退避后自动重建。正常 shutdown 不计为故障。heartbeat 的单轮构造也有独立异常边界；累计失败数、最后异常类型、两个 worker 的运行状态和重启次数会进入后续 heartbeat 元数据。修复只提高采集链路的可观测性与自恢复能力，不改变 Nekro 的 matcher、claim、回复或 fail-open 行为。
+
 This is a Nekro 2.2.1 local plugin. It uses the public plugin callback for
 normalized human messages and the public NoneBot event hook for confirmed
 OneBot `message_sent` and supported platform-action events. Failed send API

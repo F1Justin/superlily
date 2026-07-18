@@ -29,7 +29,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.5.0"
+BRIDGE_VERSION = "0.5.1"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -87,6 +87,8 @@ event_contexts: dict[int, dict[str, Any]] = {}
 api_started: dict[int, float] = {}
 blocked_api_calls: set[int] = set()
 heartbeat_task: asyncio.Task | None = None
+heartbeat_failures = 0
+last_heartbeat_error: str | None = None
 last_runtime_snapshot_hash: str | None = None
 last_runtime_snapshot_sent_at = 0.0
 
@@ -307,59 +309,78 @@ async def observe_api_result(
 
 
 async def heartbeat_loop() -> None:
+    global heartbeat_failures, last_heartbeat_error
     global last_runtime_snapshot_hash, last_runtime_snapshot_sent_at
     while True:
-        bots = list(get_bots().values())
-        bot_id = str(bots[0].self_id) if bots else str(plugin_config.lily_core_bot_id or "unknown")
-        payload = {
-            "schema_version": "1.0",
-            "instance": instance(bot_id),
-            "process_status": "running",
-            "connection_status": "connected" if bots else "disconnected",
-            "occurred_at": utc_iso(),
-            "capabilities": ONEBOT_QQ_CAPABILITIES,
-            "ingress_spool": reporter.spool_status(),
-            "metadata": {
-                "connected_bots": len(bots),
-                "queue_depth": reporter.queue.qsize(),
-                "dropped": reporter.dropped,
-                "claim_enabled": plugin_config.lily_core_claim_enabled,
-                "claim_failures": reporter.claim_failures,
-                "claim_ack_failures": reporter.claim_ack_failures,
-                "bridge_version": BRIDGE_VERSION,
-            },
-        }
-        reporter.enqueue(ReportItem("/v1/heartbeats", payload))
         try:
-            runtime_snapshot = collect_runtime_registry()
-            now = time.monotonic()
-            if (
-                runtime_snapshot["snapshot_hash"] != last_runtime_snapshot_hash
-                or now - last_runtime_snapshot_sent_at >= 300
-            ):
-                snapshot_payload = {
-                    "schema_version": "1.0",
-                    "instance": instance(bot_id),
-                    "snapshot_hash": runtime_snapshot["snapshot_hash"],
-                    "observed_at": utc_iso(),
-                    "plugins": runtime_snapshot["plugins"],
-                    "candidates": runtime_snapshot["candidates"],
-                }
-                accepted = reporter.enqueue(
-                    ReportItem(
-                        "/v1/command-registry/snapshots",
-                        snapshot_payload,
-                        stable_key(
-                            plugin_config.lily_core_instance_id,
-                            f"command-registry:{runtime_snapshot['snapshot_hash']}",
-                        ),
+            bots = list(get_bots().values())
+            bot_id = (
+                str(bots[0].self_id)
+                if bots
+                else str(plugin_config.lily_core_bot_id or "unknown")
+            )
+            payload = {
+                "schema_version": "1.0",
+                "instance": instance(bot_id),
+                "process_status": "running",
+                "connection_status": "connected" if bots else "disconnected",
+                "occurred_at": utc_iso(),
+                "capabilities": ONEBOT_QQ_CAPABILITIES,
+                "ingress_spool": reporter.spool_status(),
+                "metadata": {
+                    "connected_bots": len(bots),
+                    "queue_depth": reporter.queue.qsize(),
+                    "dropped": reporter.dropped,
+                    "claim_enabled": plugin_config.lily_core_claim_enabled,
+                    "claim_failures": reporter.claim_failures,
+                    "claim_ack_failures": reporter.claim_ack_failures,
+                    "heartbeat_failures": heartbeat_failures,
+                    "last_heartbeat_error": last_heartbeat_error,
+                    "reporter_workers": reporter.worker_status(),
+                    "bridge_version": BRIDGE_VERSION,
+                },
+            }
+            reporter.enqueue(ReportItem("/v1/heartbeats", payload))
+            try:
+                runtime_snapshot = collect_runtime_registry()
+                now = time.monotonic()
+                if (
+                    runtime_snapshot["snapshot_hash"] != last_runtime_snapshot_hash
+                    or now - last_runtime_snapshot_sent_at >= 300
+                ):
+                    snapshot_payload = {
+                        "schema_version": "1.0",
+                        "instance": instance(bot_id),
+                        "snapshot_hash": runtime_snapshot["snapshot_hash"],
+                        "observed_at": utc_iso(),
+                        "plugins": runtime_snapshot["plugins"],
+                        "candidates": runtime_snapshot["candidates"],
+                    }
+                    accepted = reporter.enqueue(
+                        ReportItem(
+                            "/v1/command-registry/snapshots",
+                            snapshot_payload,
+                            stable_key(
+                                plugin_config.lily_core_instance_id,
+                                f"command-registry:{runtime_snapshot['snapshot_hash']}",
+                            ),
+                        )
                     )
+                    if accepted:
+                        last_runtime_snapshot_hash = runtime_snapshot["snapshot_hash"]
+                        last_runtime_snapshot_sent_at = now
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Lily Core runtime command snapshot failed open"
                 )
-                if accepted:
-                    last_runtime_snapshot_hash = runtime_snapshot["snapshot_hash"]
-                    last_runtime_snapshot_sent_at = now
-        except Exception:
-            logger.opt(exception=True).warning("Lily Core runtime command snapshot failed open")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            heartbeat_failures += 1
+            last_heartbeat_error = type(exc).__name__
+            logger.opt(exception=True).error(
+                "Lily Core heartbeat iteration failed; the loop will continue"
+            )
         await asyncio.sleep(plugin_config.lily_core_heartbeat_seconds)
 
 

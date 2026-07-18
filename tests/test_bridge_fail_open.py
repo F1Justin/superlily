@@ -167,6 +167,98 @@ async def test_background_reports_retry_transient_failures_with_same_idempotency
     assert reporter.dropped == 0
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("bridges/lily_nonebot/lily_core_bridge/reporter.py"),
+        Path("bridges/nekro/superlily_bridge/reporter.py"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_background_reporter_recovers_after_unexpected_worker_exit(
+    path: Path,
+) -> None:
+    module = load_reporter_module(path)
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "instance-token",
+        10,
+        claim_timeout_seconds=1.0,
+    )
+    invocations = 0
+    keep_running = asyncio.Event()
+
+    async def fail_once_then_run() -> None:
+        nonlocal invocations
+        invocations += 1
+        if invocations == 1:
+            raise RuntimeError("payload text must not enter heartbeat metadata")
+        await keep_running.wait()
+
+    reporter._run = fail_once_then_run
+    await reporter.start()
+    deadline = time.monotonic() + 2.5
+    while invocations < 2 and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+
+    status = reporter.worker_status()
+    assert invocations == 2
+    assert status["reporter"] == "running"
+    assert status["reporter_restarts"] == 1
+    assert status["last_error"] == "reporter:RuntimeError"
+    assert "payload text" not in str(status)
+
+    await reporter.stop()
+    assert reporter.worker_restarts == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("bridges/lily_nonebot/lily_core_bridge/reporter.py"),
+        Path("bridges/nekro/superlily_bridge/reporter.py"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_durable_spool_worker_recovers_after_unexpected_exit(
+    path: Path,
+    tmp_path: Path,
+) -> None:
+    module = load_reporter_module(path)
+    reporter = module.BackgroundReporter(
+        "http://127.0.0.1:8765",
+        "instance-token",
+        10,
+        claim_timeout_seconds=1.0,
+        spool_path=str(tmp_path / f"{path.parts[-3]}-supervision.sqlite3"),
+    )
+    invocations = 0
+    keep_running = asyncio.Event()
+
+    async def fail_once_then_run() -> None:
+        nonlocal invocations
+        invocations += 1
+        if invocations == 1:
+            raise RuntimeError("durable payload must not enter heartbeat metadata")
+        await keep_running.wait()
+
+    reporter._run_spool = fail_once_then_run
+    await reporter.start()
+    deadline = time.monotonic() + 2.5
+    while invocations < 2 and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+
+    status = reporter.worker_status()
+    assert invocations == 2
+    assert status["durable_spool"] == "running"
+    assert status["durable_spool_restarts"] == 1
+    assert status["last_error"] == "durable_spool:RuntimeError"
+    assert "durable payload" not in str(status)
+
+    await reporter.stop()
+    assert reporter.spool_worker_restarts == 1
+
+
 @pytest.mark.asyncio
 async def test_claim_and_suppression_ack_use_synchronous_control_plane_requests() -> None:
     module = load_reporter_module()
