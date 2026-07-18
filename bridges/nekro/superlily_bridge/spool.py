@@ -130,10 +130,22 @@ class DurableIngressSpool:
         if not self._spool_id:
             self._spool_id = f"spool-{uuid4().hex}"
             self._set_meta("spool_id", self._spool_id)
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+        self._tighten_permissions()
+
+    def _tighten_permissions(self) -> None:
+        # WAL and shared-memory sidecars may be created before the database
+        # file itself is chmodded. They contain the same event payloads.
+        for candidate in (
+            self.path,
+            Path(f"{self.path}-wal"),
+            Path(f"{self.path}-shm"),
+        ):
+            if not candidate.exists():
+                continue
+            try:
+                os.chmod(candidate, 0o600)
+            except OSError:
+                pass
 
     def _create_schema(self) -> None:
         connection = self._require_connection()

@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -89,6 +90,9 @@ def test_spool_survives_restart_and_rejects_identity_reuse(path: Path, tmp_path:
     database = tmp_path / "ingress.sqlite3"
     spool = module.DurableIngressSpool(str(database))
     spool.open()
+    assert os.stat(database).st_mode & 0o777 == 0o600
+    assert os.stat(Path(f"{database}-wal")).st_mode & 0o777 == 0o600
+    assert os.stat(Path(f"{database}-shm")).st_mode & 0o777 == 0o600
     payload = event_payload()
     record = spool.append_event(payload, "event-key-1")
     assert record.sequence == 1
