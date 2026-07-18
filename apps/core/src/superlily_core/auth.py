@@ -1,9 +1,17 @@
 import secrets
+from dataclasses import dataclass
+from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True, slots=True)
+class InvocationIdentity:
+    caller: Literal["command", "admin_api"]
+    subject: str
 
 
 def _unauthorized() -> HTTPException:
@@ -35,6 +43,22 @@ async def provider_identity(
     for provider_id, expected in request.app.state.settings.provider_tokens.items():
         if expected and secrets.compare_digest(credentials.credentials, expected):
             return provider_id
+    raise _unauthorized()
+
+
+async def invocation_identity(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> InvocationIdentity:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise _unauthorized()
+    supplied = credentials.credentials
+    expected_admin = request.app.state.settings.admin_token
+    if expected_admin and secrets.compare_digest(supplied, expected_admin):
+        return InvocationIdentity(caller="admin_api", subject="core-admin")
+    for instance_id, expected in request.app.state.settings.ingest_tokens.items():
+        if expected and secrets.compare_digest(supplied, expected):
+            return InvocationIdentity(caller="command", subject=instance_id)
     raise _unauthorized()
 
 

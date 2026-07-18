@@ -106,6 +106,7 @@ async def test_empty_registry_is_admin_only_and_has_no_execution_authority(clien
         "schema_version": "1.0",
         "execution": {
             "mode": "off",
+            "global_stop": False,
             "invocation_endpoints": False,
             "leases_enabled": False,
             "natural_language_callers": False,
@@ -121,7 +122,7 @@ async def test_empty_registry_is_admin_only_and_has_no_execution_authority(clien
         "tools": [],
         "providers": [],
     }
-    assert (await client.post("/v1/tool-invocations", json={})).status_code == 404
+    assert (await client.post("/v1/tool-invocations", json={})).status_code == 401
     assert (
         await client.get(
             "/v1/tools/status.inspect",

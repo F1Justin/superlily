@@ -10,6 +10,7 @@ from superlily_core.settings import Settings
         ("correlation_window_seconds", -1),
         ("raw_max_bytes", 1_023),
         ("claim_mode", "unsafe"),
+        ("tool_execution_mode", "canary"),
     ],
 )
 def test_settings_reject_unsafe_control_plane_values(field: str, value: object) -> None:
@@ -47,6 +48,23 @@ def test_provider_tokens_and_freshness_load_from_separate_environment(monkeypatc
     assert settings.provider_tokens == {"provider-status-primary": "provider-only-secret"}
     assert settings.provider_inventory_stale_seconds == 321
     assert settings.provider_heartbeat_stale_seconds == 45
+
+
+def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "ledger_only")
+    monkeypatch.setenv("SUPERLILY_TOOL_GLOBAL_STOP", "true")
+
+    settings = Settings.from_env()
+
+    assert settings.tool_execution_mode == "ledger_only"
+    assert settings.tool_global_stop is True
+
+
+def test_executable_tool_mode_is_rejected_before_attempt_migration(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "enforce")
+
+    with pytest.raises(ValueError, match="until the lease migration exists"):
+        Settings.from_env()
 
 
 def test_group_modes_are_explicit_and_private_messages_stay_full(monkeypatch) -> None:

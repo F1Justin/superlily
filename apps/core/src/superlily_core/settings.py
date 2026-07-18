@@ -82,6 +82,8 @@ class Settings:
     command_registry_snapshot_stale_seconds: int = 600
     provider_inventory_stale_seconds: int = 600
     provider_heartbeat_stale_seconds: int = 90
+    tool_execution_mode: str = "off"
+    tool_global_stop: bool = False
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
@@ -124,6 +126,10 @@ class Settings:
             raise ValueError("provider_inventory_stale_seconds must be between 1 and 86400")
         if not 1 <= self.provider_heartbeat_stale_seconds <= 86_400:
             raise ValueError("provider_heartbeat_stale_seconds must be between 1 and 86400")
+        if self.tool_execution_mode not in {"off", "ledger_only"}:
+            raise ValueError(
+                "tool_execution_mode must be off or ledger_only until the lease migration exists"
+            )
         valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
         if self.group_default_mode not in valid_group_modes:
             raise ValueError(
@@ -177,6 +183,11 @@ class Settings:
             provider_heartbeat_stale_seconds=int(
                 os.getenv("SUPERLILY_PROVIDER_HEARTBEAT_STALE_SECONDS", "90")
             ),
+            tool_execution_mode=os.getenv(
+                "SUPERLILY_TOOL_EXECUTION_MODE",
+                "off",
+            ).strip().lower(),
+            tool_global_stop=_as_bool(os.getenv("SUPERLILY_TOOL_GLOBAL_STOP")),
             group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
             group_modes=_group_modes(
                 os.getenv("SUPERLILY_GROUP_MODES_JSON"),

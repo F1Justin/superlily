@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    DDL,
     DateTime,
     ForeignKey,
     Index,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -681,3 +683,199 @@ class ToolProviderHeartbeat(Base):
         ),
         Index("ix_tool_provider_heartbeat_received", "provider_id", "received_at"),
     )
+
+
+class ToolInvocation(Base):
+    __tablename__ = "tool_invocations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    creator_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    creator_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_descriptors.id", ondelete="RESTRICT"), nullable=False
+    )
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    input_json: Mapped[Any] = mapped_column(JSON, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    principal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    capability_snapshot_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    transition_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "creator_type",
+            "creator_id",
+            "idempotency_key",
+            name="uq_tool_invocation_idempotency",
+        ),
+        CheckConstraint(
+            "creator_type IN ('command', 'admin_api')",
+            name="ck_tool_invocation_creator_type",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('off', 'ledger_only', 'canary', 'enforce')",
+            name="ck_tool_invocation_execution_mode",
+        ),
+        CheckConstraint(
+            "state IN ('proposed', 'rejected', 'recorded_only', "
+            "'awaiting_confirmation', 'queued', 'leased', 'running', 'succeeded', "
+            "'failed', 'timed_out', 'cancel_requested', 'cancelled', "
+            "'unknown_completion', 'expired', 'lease_expired')",
+            name="ck_tool_invocation_state",
+        ),
+        CheckConstraint("transition_sequence >= 1", name="ck_tool_invocation_sequence"),
+        CheckConstraint(
+            "((state IN ('rejected', 'recorded_only', 'succeeded', 'failed', 'timed_out', "
+            "'cancelled', 'unknown_completion', 'expired') AND terminal_at IS NOT NULL) OR "
+            "(state NOT IN ('rejected', 'recorded_only', 'succeeded', 'failed', 'timed_out', "
+            "'cancelled', 'unknown_completion', 'expired') AND terminal_at IS NULL))",
+            name="ck_tool_invocation_terminal_time",
+        ),
+        Index("ix_tool_invocations_tool", "tool_id", "descriptor_version"),
+        Index("ix_tool_invocations_state_deadline", "state", "deadline_at"),
+        Index("ix_tool_invocations_created", "created_at"),
+    )
+
+
+class ToolInvocationTransition(Base):
+    __tablename__ = "tool_invocation_transitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "invocation_id",
+            "sequence",
+            name="uq_tool_invocation_transition_sequence",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_tool_invocation_transition_sequence"),
+        CheckConstraint(
+            "event IN ('propose', 'reject', 'record_only', 'require_confirmation', "
+            "'confirm', 'confirmation_expire', 'queue', 'lease', 'start', "
+            "'complete_success', 'complete_failure', 'request_cancel', 'cancel', "
+            "'lease_expire', 'timeout', 'unknown_completion', 'requeue')",
+            name="ck_tool_invocation_transition_event",
+        ),
+        CheckConstraint(
+            "state IN ('proposed', 'rejected', 'recorded_only', "
+            "'awaiting_confirmation', 'queued', 'leased', 'running', 'succeeded', "
+            "'failed', 'timed_out', 'cancel_requested', 'cancelled', "
+            "'unknown_completion', 'expired', 'lease_expired')",
+            name="ck_tool_invocation_transition_state",
+        ),
+        CheckConstraint(
+            "actor_type IN ('command', 'admin_api', 'provider', 'reaper', 'system')",
+            name="ck_tool_invocation_transition_actor",
+        ),
+        CheckConstraint(
+            "((event = 'propose' AND previous_state IS NULL AND state = 'proposed') OR "
+            "(event <> 'propose' AND previous_state IS NOT NULL))",
+            name="ck_tool_invocation_transition_initial",
+        ),
+        Index(
+            "ix_tool_invocation_transitions_created",
+            "invocation_id",
+            "created_at",
+        ),
+    )
+
+
+_INVOCATION_TRANSITION_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_invocation_transitions_no_update
+    BEFORE UPDATE ON tool_invocation_transitions
+    BEGIN
+        SELECT RAISE(ABORT, 'tool invocation transitions are append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_INVOCATION_TRANSITION_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_invocation_transitions_no_delete
+    BEFORE DELETE ON tool_invocation_transitions
+    BEGIN
+        SELECT RAISE(ABORT, 'tool invocation transitions are append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_INVOCATION_TRANSITION_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_tool_invocation_transition_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'tool invocation transitions are append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_INVOCATION_TRANSITION_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_invocation_transitions_no_mutation
+    BEFORE UPDATE OR DELETE ON tool_invocation_transitions
+    FOR EACH ROW EXECUTE FUNCTION reject_tool_invocation_transition_mutation()
+    """
+).execute_if(dialect="postgresql")
+_INVOCATION_TRANSITION_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_tool_invocation_transition_mutation()"
+).execute_if(dialect="postgresql")
+
+event.listen(
+    ToolInvocationTransition.__table__,
+    "after_create",
+    _INVOCATION_TRANSITION_SQLITE_UPDATE_TRIGGER,
+)
+event.listen(
+    ToolInvocationTransition.__table__,
+    "after_create",
+    _INVOCATION_TRANSITION_SQLITE_DELETE_TRIGGER,
+)
+event.listen(
+    ToolInvocationTransition.__table__,
+    "after_create",
+    _INVOCATION_TRANSITION_POSTGRES_FUNCTION,
+)
+event.listen(
+    ToolInvocationTransition.__table__,
+    "after_create",
+    _INVOCATION_TRANSITION_POSTGRES_TRIGGER,
+)
+event.listen(
+    ToolInvocationTransition.__table__,
+    "after_drop",
+    _INVOCATION_TRANSITION_POSTGRES_FUNCTION_DROP,
+)

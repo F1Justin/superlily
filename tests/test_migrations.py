@@ -18,7 +18,7 @@ def test_revision_identifiers_fit_alembic_version_column() -> None:
     assert all(len(revision.revision) <= 32 for revision in revisions)
 
 
-def test_sqlite_alembic_upgrade_reaches_collection_reliability_head_and_round_trips(
+def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "migration.sqlite"
@@ -63,8 +63,18 @@ def test_sqlite_alembic_upgrade_reaches_collection_reliability_head_and_round_tr
                 "'ingress_receipts', 'collector_watermarks')"
             ).fetchall()
         }
+        invocation_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tool_invocations)").fetchall()
+        }
+        transition_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name = 'tool_invocation_transitions'"
+            ).fetchall()
+        }
 
-    assert version == ("0013_collection_reliability",)
+    assert version == ("0014_tool_invocations",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -79,9 +89,28 @@ def test_sqlite_alembic_upgrade_reaches_collection_reliability_head_and_round_tr
         "tool_provider_inventory_snapshots",
         "tool_provider_lifecycle_events",
         "tool_providers",
+        "tool_invocation_transitions",
+        "tool_invocations",
     }
     assert descriptor_count == (0,)
-    assert not any("invocation" in table or "attempt" in table or "lease" in table for table in tool_tables)
+    assert not any("attempt" in table or "lease" in table for table in tool_tables)
+    assert {
+        "request_hash",
+        "descriptor_snapshot_json",
+        "input_hash",
+        "principal_hash",
+        "capability_hash",
+        "policy_hash",
+        "execution_mode",
+        "state",
+        "transition_sequence",
+        "deadline_at",
+        "terminal_at",
+    }.issubset(invocation_columns)
+    assert transition_triggers == {
+        "tool_invocation_transitions_no_update",
+        "tool_invocation_transitions_no_delete",
+    }
     assert collection_tables == {
         "collector_watermarks",
         "conversation_capture_profiles",
@@ -100,6 +129,33 @@ def test_sqlite_alembic_upgrade_reaches_collection_reliability_head_and_round_tr
         "platform_extra_json",
         "capture_reason",
     }.issubset(observation_columns)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "0013_collection_reliability"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        tool_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'tool_%'"
+            ).fetchall()
+        }
+        collection_tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+            "('conversation_capture_profiles', 'platform_action_observations', "
+            "'ingress_receipts', 'collector_watermarks')"
+        ).fetchall()
+    assert version == ("0013_collection_reliability",)
+    assert len(tool_tables) == 8
+    assert "tool_invocations" not in tool_tables
+    assert "tool_invocation_transitions" not in tool_tables
+    assert len(collection_tables) == 4
 
     subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "0012_tool_registry"],
@@ -154,7 +210,7 @@ def test_sqlite_alembic_upgrade_reaches_collection_reliability_head_and_round_tr
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0013_collection_reliability",)
+    assert version == ("0014_tool_invocations",)
     assert descriptor_count == (0,)
 
     subprocess.run(

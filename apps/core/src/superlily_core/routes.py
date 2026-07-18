@@ -13,10 +13,18 @@ from superlily_contracts import (
     ProviderHeartbeatIn,
     ProviderInventorySnapshotIn,
     ResponseIn,
+    ToolInvocationCancelIn,
+    ToolInvocationCreateIn,
 )
 
 from .audit import classify_decision_outcome
-from .auth import ingest_identity, provider_identity, require_admin
+from .auth import (
+    InvocationIdentity,
+    ingest_identity,
+    invocation_identity,
+    provider_identity,
+    require_admin,
+)
 from .command_registry import (
     load_command_registry,
     runtime_candidate_trigger_reviewed,
@@ -53,11 +61,18 @@ from .tool_registry_service import (
     ingest_provider_inventory,
     tool_registry_view,
 )
+from .tool_invocation_service import (
+    cancel_tool_invocation,
+    create_tool_invocation,
+    get_tool_invocation,
+    invocation_view,
+)
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
 Identity = Annotated[str, Depends(ingest_identity)]
 ProviderIdentity = Annotated[str, Depends(provider_identity)]
+ToolInvocationIdentity = Annotated[InvocationIdentity, Depends(invocation_identity)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=256)]
 
 
@@ -1090,3 +1105,51 @@ async def tool_detail(tool_id: str, request: Request, session: Session) -> dict:
         "tool_id": tool_id,
         "versions": result["tools"],
     }
+
+
+@router.post("/v1/tool-invocations", status_code=status.HTTP_201_CREATED)
+async def post_tool_invocation(
+    payload: ToolInvocationCreateIn,
+    response: Response,
+    session: Session,
+    authenticated_caller: ToolInvocationIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    invocation, duplicate = await create_tool_invocation(
+        session,
+        payload,
+        authenticated_caller,
+        idempotency_key,
+        session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await invocation_view(session, invocation)
+    result["duplicate"] = duplicate
+    return result
+
+
+@router.get("/v1/tool-invocations/{invocation_id}")
+async def get_tool_invocation_view(
+    invocation_id: str,
+    session: Session,
+    authenticated_caller: ToolInvocationIdentity,
+) -> dict:
+    invocation = await get_tool_invocation(session, invocation_id, authenticated_caller)
+    return await invocation_view(session, invocation)
+
+
+@router.post("/v1/tool-invocations/{invocation_id}/cancel")
+async def post_tool_invocation_cancel(
+    invocation_id: str,
+    payload: ToolInvocationCancelIn,
+    session: Session,
+    authenticated_caller: ToolInvocationIdentity,
+) -> dict:
+    invocation = await cancel_tool_invocation(
+        session,
+        invocation_id,
+        authenticated_caller,
+        payload.reason,
+    )
+    return await invocation_view(session, invocation)

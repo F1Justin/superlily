@@ -104,11 +104,12 @@ async def test_sdk_publishes_exact_authority_and_honest_runtime_capabilities(app
     }
     assert body["execution"] == {
         "mode": "off",
+        "global_stop": False,
         "invocation_endpoints": False,
         "leases_enabled": False,
         "natural_language_callers": False,
     }
-    assert (await client.post("/v1/tool-invocations", json={})).status_code == 404
+    assert (await client.post("/v1/tool-invocations", json={})).status_code == 401
 
 
 async def test_sdk_retries_same_inventory_request_without_leaking_secret() -> None:

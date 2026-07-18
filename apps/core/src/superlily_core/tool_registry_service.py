@@ -507,7 +507,7 @@ async def tool_registry_view(
     *,
     tool_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return desired, reported, and effective registry state with execution off."""
+    """返回 desired、reported 与当前只记账执行模式下的 effective 状态。"""
 
     descriptor_statement = select(ToolDescriptorRecord).order_by(
         ToolDescriptorRecord.tool_id, ToolDescriptorRecord.version
@@ -691,7 +691,11 @@ async def tool_registry_view(
                 reasons.update(provider_reasons)
         elif not provider_reason_sets:
             reasons.add("provider_missing")
-        reasons.add("execution_off")
+        if settings.tool_execution_mode == "off":
+            reasons.add("execution_off")
+        if settings.tool_global_stop:
+            reasons.add("global_stop")
+        effective_eligible = not reasons
         tool_payloads.append(
             {
                 "tool_id": record.tool_id,
@@ -713,8 +717,8 @@ async def tool_registry_view(
                 },
                 "reported": runtime,
                 "effective": {
-                    "eligible": False,
-                    "execution_mode": "off",
+                    "eligible": effective_eligible,
+                    "execution_mode": settings.tool_execution_mode,
                     "reasons": _ordered_reasons(reasons),
                 },
             }
@@ -723,8 +727,9 @@ async def tool_registry_view(
     return {
         "schema_version": "1.0",
         "execution": {
-            "mode": "off",
-            "invocation_endpoints": False,
+            "mode": settings.tool_execution_mode,
+            "global_stop": settings.tool_global_stop,
+            "invocation_endpoints": settings.tool_execution_mode == "ledger_only",
             "leases_enabled": False,
             "natural_language_callers": False,
         },
@@ -733,7 +738,9 @@ async def tool_registry_view(
             "active_descriptors": sum(
                 1 for item in tool_payloads if item["desired"]["lifecycle"] == "active"
             ),
-            "eligible_tools": 0,
+            "eligible_tools": sum(
+                1 for item in tool_payloads if item["effective"]["eligible"]
+            ),
             "providers": len(provider_payloads),
             "fresh_inventories": sum(
                 1
