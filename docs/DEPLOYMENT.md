@@ -423,3 +423,40 @@ active attempt 均为 0。切换后 Lily/Nekro 均为 online，心跳年龄 17/1
 确认应用必须回到旧 schema、控制面四表仍为空且已经另做新备份时，才可将 Core 与
 数据库一起 downgrade 到 `0015_tool_attempts`。一旦 M1 以后产生 mutation/audit，
 不得用 downgrade 删除证据，必须使用新的反向 mutation 作为回滚。
+
+## 11. Descriptor lifecycle M1 默认禁用上线记录
+
+2026-07-19 04:04 CST，提交 `2700929160d0eb7e123167697fec7d76b1dd885b` 只重建
+并替换 Core，生产迁移从 `0015a_control_plane_auth` 线性升级到
+`0015b_descriptor_mutations`。Core 镜像为
+`sha256:2d5b9db4769d97d1c442ef8cfd153a0c324004c91ff55779359ac249dafa7d5a`，
+镜像内 `pip check` 通过；容器配置环境单向哈希为
+`bd5ff0c09ef5fca00f112635f40b3a0391337acdbd08537872a43bcda938ec0a`。
+PostgreSQL、status Provider、Nekro 与 NapCat 的启动时间均未改变。
+
+上线前自定义格式备份位于
+`/home/justin/backups/superlily/20260719-phase3-control-m1/superlily-pre-control-m1-2700929.dump`，
+大小 150,237,499 字节、root 所有、权限 `0600`、SHA-256
+`ee98a1fb52b5eb03af7fc18866bfdc889dbe72704b8e59bfb7ae3ab33bf224c9`；
+目录权限为 `0700`。`pg_restore --list` 通过，并在独立 PostgreSQL 17 临时容器
+实际恢复出 `0015a_control_plane_auth`、386,273 条 source event、2 个 descriptor、
+1 个 invocation、0 attempt，以及全零的 session/mutation/audit 表。临时恢复容器和
+容器内 dump 已删除，主机备份保留。
+
+生产启动日志记录 `0015a_control_plane_auth -> 0015b_descriptor_mutations`；
+`alembic current` 为 head，`alembic check` 无 drift。`control_plane_previews` 与
+descriptor `resource_version` 已存在，login/mutation/audit/preview、lifecycle event
+和 descriptor authority 共 6 个 PostgreSQL trigger 存在。5 张控制面表均为 0；
+两个 descriptor 仍为 `reviewed/resource_version=1`。
+
+生产 operator、Host、Origin 与 audit pepper 均为空；preview=60 秒、mutation
+限额=10/60 秒。M1 preview 路由返回带 `no-store`、`nosniff`、`no-referrer` 和 CSP
+的 503。工具执行保持 `ledger_only`、global stop=false；既有 invocation 仍只有
+1 条 `recorded_only`，attempt 与 attempt event 均为 0。替换后 Lily/Nekro 均为
+online，Provider 为 healthy、0/1 并发。
+
+第一回滚手段是保持 operator 配置为空并回退应用镜像；工具热路径不受 M1 路由影响。
+只有确认 M1 五张控制面表均为空、descriptor 资源版本仍为 1、已经另做新备份并同步
+回退应用时，才可 downgrade 到 `0015a_control_plane_auth`。一旦产生任何 preview、
+mutation、audit 或 lifecycle event，不得以 downgrade 删除证据；必须使用新的反向
+mutation 降低 authority。

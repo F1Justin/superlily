@@ -42,11 +42,11 @@ Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot �
 改写、证据删改和无匹配 lifecycle event 的状态更新。
 
 M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，PostgreSQL 17 分段
-合计 335 项通过；迁移往返和 drift 均通过。生产仍是
-`0015a_control_plane_auth`、operator/Host/Origin/pepper 为空、`ledger_only` 且零
-attempt。下一步先把 M1 以默认禁用方式迁移并核验零 mutation，再实现 M2 Provider
-quarantine 与 M3 Git-bound 精确 rollout plan；三包均签署后才评审一个
-`admin_api` 精确 canary。自然语言工具循环仍属 Phase 5。
+合计 335 项通过；迁移往返和 drift 均通过。生产已默认禁用迁移到
+`0015b_descriptor_mutations`，operator/Host/Origin/pepper 为空，5 张控制面表为零，
+`ledger_only` 且零 attempt。下一步实现 M2 Provider quarantine 与 M3 Git-bound
+精确 rollout plan；三包均签署后才评审一个 `admin_api` 精确 canary。自然语言工具
+循环仍属 Phase 5。
 
 ## Sequencing rules
 
@@ -149,9 +149,8 @@ covered on SQLite and PostgreSQL.
 
 状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
 `status.inspect@1.0.1` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
-安全空转、零 attempt。M0 控制面底座已默认禁用部署，M1 descriptor lifecycle 已
-完成发布前回归；descriptor 仍为 `reviewed`，M2/M3 与生产 canary 尚未签署。实施与
-回滚细节见
+安全空转、零 attempt。M0 控制面底座与 M1 descriptor lifecycle 已默认禁用部署；
+descriptor 仍为 `reviewed`，M2/M3 与生产 canary 尚未签署。实施与回滚细节见
 `docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,

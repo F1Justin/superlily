@@ -26,9 +26,13 @@ preview、apply 新鲜再认证、CAS、幂等重放/冲突、运行时重新计
 SQLite 全量为 334 项通过、1 项 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段
 全量 335 项通过。两种数据库均完成 fresh upgrade、downgrade/re-upgrade、
 `alembic check`、并发单一 CAS 胜者、角色/CSRF/再认证、preview 过期/漂移、幂等、
-限速、secret 扫描和只追加证据验证。M1 尚未部署；生产 operator 配置仍为空，M0 的
-4 张表也仍为空，因此当前生产不会激活 descriptor、隔离 Provider 或创建 canary。
-M2–M3 及 M1 默认禁用生产签署仍必须完成，才可能进入首个精确 canary。
+限速、secret 扫描和只追加证据验证。
+
+M1 已于 2026-07-19 04:04 CST 默认禁用部署。生产为
+`0015b_descriptor_mutations` head 且无 drift；operator/Host/Origin/pepper 仍为空，
+5 张控制面表均为 0，preview 路由带安全响应头返回 503。两个 descriptor 仍为
+`reviewed/resource_version=1`，工具继续为 `ledger_only`、1 条 `recorded_only`
+invocation、零 attempt。M2–M3 仍必须完成，才可能进入首个精确 canary。
 
 ## 分包顺序
 

@@ -216,10 +216,36 @@ Provider 漂移、preview 与 mutation 独立限速、幂等、并发单一 CAS 
 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段合计 335 项通过。两种数据库的迁移
 往返与 drift 检查均通过。
 
-这只签署 M1 发布前实现，不签署生产启用。当前生产仍为
-`0015a_control_plane_auth`、operator 配置为空、`ledger_only` 且零 attempt；M1
-默认禁用部署、M2 Provider quarantine、M3 reviewed rollout plan 和精确 canary
-仍是后续门禁。
+这只签署 M1 发布前实现，不单独签署生产启用。M1 默认禁用上线证据见下一节；M2
+Provider quarantine、M3 reviewed rollout plan 和精确 canary 仍是后续门禁。
+
+### Descriptor lifecycle M1 生产默认禁用证据
+
+2026-07-19 04:04 CST，提交 `2700929160d0eb7e123167697fec7d76b1dd885b` 只重建
+并替换 Core。新镜像为
+`sha256:2d5b9db4769d97d1c442ef8cfd153a0c324004c91ff55779359ac249dafa7d5a`，
+配置环境单向哈希为
+`bd5ff0c09ef5fca00f112635f40b3a0391337acdbd08537872a43bcda938ec0a`。
+PostgreSQL、Provider、Nekro 与 NapCat 的容器启动时间均未改变；Lily/Nekro 随后
+继续上报 online 心跳。
+
+上线前备份为
+`/home/justin/backups/superlily/20260719-phase3-control-m1/superlily-pre-control-m1-2700929.dump`，
+大小 150,237,499 字节、权限 `0600`、SHA-256
+`ee98a1fb52b5eb03af7fc18866bfdc889dbe72704b8e59bfb7ae3ab33bf224c9`。
+`pg_restore --list` 通过，并在独立 PostgreSQL 17 临时容器实际恢复出
+`0015a_control_plane_auth`、386,273 条 source event、2 个 descriptor、1 个
+invocation、0 attempt 和全零 M0 控制面表；临时容器已删除，主机备份保留。
+
+生产启动日志明确记录 `0015a_control_plane_auth -> 0015b_descriptor_mutations`；
+`alembic current` 为 head，`alembic check` 无 drift。5 张控制面表均为 0，6 个
+只追加/authority 触发器存在。operator、Host、Origin 和 audit pepper 仍为空，M1
+preview 路由返回带 `no-store`、`nosniff`、`no-referrer` 与 CSP 的 503。两个
+descriptor 仍为 `reviewed/resource_version=1`，既有 invocation 仍为 1 条
+`recorded_only`，attempt/event 均为 0。验收时 Lily/Nekro 为 online、心跳年龄
+28/29 秒；Provider 为 healthy、0/1 并发、心跳年龄 20 秒。
+
+因此只签署 M1 默认禁用上线，不签署任何真实 descriptor mutation 或 canary。
 
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
