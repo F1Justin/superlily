@@ -30,12 +30,14 @@ from superlily_contracts import (
 from .models import (
     ToolAttempt,
     ToolAttemptEvent,
+    ToolDescriptorRecord,
     ToolInvocation,
     ToolProvider,
     ToolProviderCredential,
     new_id,
 )
-from .settings import Settings, ToolRolloutScope
+from .rollout_service import locked_rollout_for_lease
+from .settings import Settings
 from .tool_invocation_service import append_invocation_transition, database_now
 from .tool_registry_service import tool_registry_view
 
@@ -254,7 +256,7 @@ async def lease_tool_execution(
 ) -> ToolLeaseOut | None:
     """拉取一个最早的精确匹配调用；无工作时返回 None。"""
 
-    if settings.tool_execution_mode not in {"canary", "enforce"} or settings.tool_global_stop:
+    if settings.tool_execution_mode != "canary" or settings.tool_global_stop:
         return None
     now = await database_now(session)
     provider = await session.scalar(
@@ -281,15 +283,38 @@ async def lease_tool_execution(
     )
     for invocation in candidates:
         policy = invocation.policy_snapshot_json
-        expected_scope = ToolRolloutScope(
-            tool_id=invocation.tool_id,
-            descriptor_version=invocation.descriptor_version,
-            descriptor_hash=invocation.descriptor_hash,
-            canonical_conversation=policy.get("canonical_conversation", ""),
-            caller=invocation.creator_type,
-            provider_id=provider_id,
+        if invocation.rollout_plan_id is None or invocation.rollout_plan_item_id is None:
+            continue
+        rollout = await locked_rollout_for_lease(
+            session,
+            plan_record_id=invocation.rollout_plan_id,
+            plan_item_id=invocation.rollout_plan_item_id,
+            database_time=now,
         )
-        if expected_scope not in settings.active_tool_rollout_scopes():
+        if rollout is None:
+            continue
+        plan, plan_item = rollout
+        plan_snapshot = policy.get("rollout_plan") or {}
+        if (
+            invocation.execution_mode != "canary"
+            or plan_snapshot.get("plan_hash") != plan.plan_hash
+            or plan_snapshot.get("resource_version") != plan.resource_version
+            or plan_item.tool_id != invocation.tool_id
+            or plan_item.descriptor_version != invocation.descriptor_version
+            or plan_item.descriptor_hash != invocation.descriptor_hash
+            or plan_item.canonical_conversation != policy.get("canonical_conversation")
+            or plan_item.caller != invocation.creator_type
+            or plan_item.provider_id != provider_id
+            or provider.resource_version != plan_item.expected_provider_resource_version
+        ):
+            continue
+        descriptor_authority = await session.get(ToolDescriptorRecord, invocation.descriptor_id)
+        if (
+            descriptor_authority is None
+            or descriptor_authority.lifecycle != "active"
+            or descriptor_authority.resource_version
+            != plan_item.expected_descriptor_resource_version
+        ):
             continue
         credential = await session.get(ToolProviderCredential, provider_id)
         if credential is None or credential.lifecycle != "active":

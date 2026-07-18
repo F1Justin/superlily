@@ -15,14 +15,13 @@ things that old command plugins commonly combine:
 The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
-**当前状态：** Phase 3a 已签署完成，真实
-`status.inspect@1.0.0` authority、共享 Provider SDK 和只报告的
-Provider 已上线，描述符仍为 `reviewed`。Phase 3b 的第一个切片
-`0014_tool_invocations` 也已于 2026-07-19 以 `ledger_only` 部署：生产可以
-记录严格校验后的调用提案，但仍没有 attempt、lease、fence、工具执行
-或自然语言 caller。下一个 authority 提升点是 `0015_tool_attempts` 和硬预算
-Provider 执行器。`PHASE3_ACCEPTANCE.md` 是可执行的发布清单，`docs/adr/`
-中的 accepted ADR 冻结实现决策，本文定义总体架构。
+**当前状态：** Phase 3a、`0014_tool_invocations`、`0015_tool_attempts` 与最小控制面
+M0–M2 已默认禁用部署。真实 `status.inspect@1.0.2` authority 和 Provider runtime
+已经精确对齐，但 descriptor 仍为 `reviewed`、执行仍为 `ledger_only`、零 attempt。
+M3 Git-bound 精确 rollout plan 已实现；它关闭环境 scope 旁路，首包不开放
+`enforce`。真实 plan、descriptor activation、自然语言 caller 和生产 canary 尚未签署。
+`PHASE3_ACCEPTANCE.md` 是可执行发布清单，`docs/adr/` 中的 accepted ADR 冻结实现
+决策，本文定义总体架构。
 
 ## Non-goals
 
@@ -219,13 +218,17 @@ policy, and an explicit rollout mode:
 - `off`: invocation creation is rejected and no lease can exist;
 - `ledger_only`: a validated proposal/decision is recorded, but no executable
   queue row or lease is produced;
-- `canary`: execution requires an exact allowlisted tuple of tool ID, descriptor
-  version/hash, canonical conversation, caller, and provider; and
-- `enforce`: execution is permitted only inside the separately reviewed
-  production policy scope. It is never shorthand for “all active tools”.
+- `canary`: execution requires an active, Git-reviewed database rollout plan
+  with an exact tuple of tool ID, descriptor version/hash, canonical
+  conversation, caller, provider, expected resource versions, time window,
+  and invocation limit.
 
-Three stops are independent and monotonic toward less authority: a global
-execution stop, per-tool/version suspension, and provider quarantine. Any one
+`enforce` is deliberately closed in the first M3 package. Environment scope
+variables are not authority; `SUPERLILY_TOOL_EXECUTION_MODE` is only a ceiling.
+
+Four stops are independent and monotonic toward less authority: a global
+execution stop, per-tool/version suspension, provider quarantine, and exact
+rollout-plan pause. Any one
 prevents new leases immediately. Revocation may additionally cancel safe
 queued work; running/ambiguous side effects follow their recorded recovery
 policy rather than being falsely marked cancelled. The effective mode and all

@@ -8,7 +8,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .database import Database
-from .control_routes import descriptor_router, provider_router, router as control_router
+from .control_routes import (
+    descriptor_router,
+    provider_router,
+    rollout_router,
+    router as control_router,
+)
 from .routes import router
 from .settings import Settings
 from .tool_execution_service import reap_expired_attempts
@@ -41,7 +46,7 @@ async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
     while True:
         settings: Settings = app.state.settings
         try:
-            if settings.tool_execution_mode in {"canary", "enforce"}:
+            if settings.tool_execution_mode == "canary":
                 async with database.sessions() as session:
                     await reap_expired_attempts(session)
                     await reap_expired_invocations(session)
@@ -102,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(control_router)
     app.include_router(descriptor_router)
     app.include_router(provider_router)
+    app.include_router(rollout_router)
     return app
 
 

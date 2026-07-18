@@ -65,14 +65,24 @@ def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> No
     assert settings.tool_global_stop is True
 
 
-def test_executable_tool_mode_requires_exact_reviewed_scope(monkeypatch) -> None:
+def test_enforce_mode_remains_closed_until_reviewed_plan_support(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "enforce")
 
-    with pytest.raises(ValueError, match="explicit reviewed scope"):
+    with pytest.raises(ValueError, match="enforce is not open"):
         Settings.from_env()
 
 
-def test_exact_canary_scope_loads_without_implicit_wildcards(monkeypatch) -> None:
+def test_canary_ceiling_loads_without_environment_scope(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
+    monkeypatch.setenv("SUPERLILY_TOOL_LEASE_SECONDS", "12")
+
+    settings = Settings.from_env()
+
+    assert settings.tool_execution_mode == "canary"
+    assert settings.tool_lease_seconds == 12
+
+
+def test_environment_rollout_scope_cannot_create_authority(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
     monkeypatch.setenv(
         "SUPERLILY_TOOL_CANARY_SCOPES_JSON",
@@ -81,16 +91,11 @@ def test_exact_canary_scope_loads_without_implicit_wildcards(monkeypatch) -> Non
         '"canonical_conversation":"qq:group:1080353942","caller":"admin_api",'
         '"provider_id":"provider-status-primary"}]',
     )
-    monkeypatch.setenv("SUPERLILY_TOOL_LEASE_SECONDS", "12")
-
-    settings = Settings.from_env()
-
-    assert settings.tool_execution_mode == "canary"
-    assert settings.tool_lease_seconds == 12
-    assert len(settings.tool_canary_scopes) == 1
+    with pytest.raises(ValueError, match="is obsolete"):
+        Settings.from_env()
 
 
-def test_rollout_scope_rejects_noncanonical_conversation(monkeypatch) -> None:
+def test_obsolete_rollout_scope_rejects_even_noncanonical_legacy_content(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
     monkeypatch.setenv(
         "SUPERLILY_TOOL_CANARY_SCOPES_JSON",
@@ -99,7 +104,7 @@ def test_rollout_scope_rejects_noncanonical_conversation(monkeypatch) -> None:
         '"canonical_conversation":"1080353942","caller":"admin_api",'
         '"provider_id":"provider-status-primary"}]',
     )
-    with pytest.raises(ValueError, match="platform:type:id"):
+    with pytest.raises(ValueError, match="is obsolete"):
         Settings.from_env()
 
 

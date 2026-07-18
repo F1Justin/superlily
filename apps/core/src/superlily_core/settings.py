@@ -9,16 +9,6 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://superlily:superlily@127.0.0.1:5432/
 
 
 @dataclass(frozen=True, slots=True)
-class ToolRolloutScope:
-    tool_id: str
-    descriptor_version: str
-    descriptor_hash: str
-    canonical_conversation: str
-    caller: str
-    provider_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class ControlOperator:
     operator_id: str
     role: str
@@ -26,13 +16,6 @@ class ControlOperator:
     enabled: bool = True
 
 
-_TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
-_SEMVER_RE = re.compile(
-    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z.-]+)?$"
-)
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_OPAQUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$")
 _CONTROL_OPERATOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
 _SCRYPT_HASH_RE = re.compile(
     r"^scrypt\$16384\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$"
@@ -145,72 +128,19 @@ def _control_operators(value: str | None, *, variable: str) -> dict[str, Control
     return operators
 
 
-def _tool_rollout_scopes(
-    value: str | None,
-    *,
-    variable: str,
-) -> frozenset[ToolRolloutScope]:
-    if not value:
-        return frozenset()
+def _reject_obsolete_tool_rollout_scope(value: str | None, *, variable: str) -> None:
+    if value is None or not value.strip():
+        return
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{variable} must be a JSON array") from exc
-    if not isinstance(parsed, list):
-        raise ValueError(f"{variable} must be a JSON array")
-    expected = {
-        "tool_id",
-        "descriptor_version",
-        "descriptor_hash",
-        "canonical_conversation",
-        "caller",
-        "provider_id",
-    }
-    scopes: list[ToolRolloutScope] = []
-    for item in parsed:
-        if not isinstance(item, dict) or set(item) != expected:
-            raise ValueError(f"{variable} entries must contain the exact rollout scope fields")
-        if not all(isinstance(item[name], str) for name in expected):
-            raise ValueError(f"{variable} rollout scope fields must be strings")
-        scope = ToolRolloutScope(**item)
-        if not _TOOL_ID_RE.fullmatch(scope.tool_id):
-            raise ValueError(f"{variable} contains an invalid tool_id")
-        if not _SEMVER_RE.fullmatch(scope.descriptor_version):
-            raise ValueError(f"{variable} contains an invalid descriptor_version")
-        if not _SHA256_RE.fullmatch(scope.descriptor_hash):
-            raise ValueError(f"{variable} contains an invalid descriptor_hash")
-        if scope.caller not in {"command", "admin_api"}:
-            raise ValueError(f"{variable} caller must be command or admin_api")
-        if not _OPAQUE_RE.fullmatch(scope.provider_id):
-            raise ValueError(f"{variable} contains an invalid provider_id")
-        conversation_parts = scope.canonical_conversation.split(":", 2)
-        if (
-            len(conversation_parts) != 3
-            or not re.fullmatch(r"[a-z][a-z0-9_]*", conversation_parts[0])
-            or conversation_parts[1] not in {"group", "private", "channel", "system"}
-            or not conversation_parts[2]
-        ):
-            raise ValueError(
-                f"{variable} canonical_conversation must use platform:type:id format"
-            )
-        scopes.append(scope)
-    if len(scopes) != len(set(scopes)):
-        raise ValueError(f"{variable} must not contain duplicate scopes")
-    execution_targets = {
-        (
-            scope.tool_id,
-            scope.descriptor_version,
-            scope.descriptor_hash,
-            scope.canonical_conversation,
-            scope.caller,
+        raise ValueError(
+            f"{variable} is obsolete; import a reviewed database rollout plan"
+        ) from exc
+    if parsed != []:
+        raise ValueError(
+            f"{variable} is obsolete; import a reviewed database rollout plan"
         )
-        for scope in scopes
-    }
-    if len(execution_targets) != len(scopes):
-        raise ValueError(f"{variable} must select exactly one provider per execution target")
-    if len(scopes) > 1_000:
-        raise ValueError(f"{variable} must contain at most 1000 scopes")
-    return frozenset(scopes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,8 +159,6 @@ class Settings:
     provider_heartbeat_stale_seconds: int = 90
     tool_execution_mode: str = "off"
     tool_global_stop: bool = False
-    tool_canary_scopes: frozenset[ToolRolloutScope] = field(default_factory=frozenset)
-    tool_enforce_scopes: frozenset[ToolRolloutScope] = field(default_factory=frozenset)
     tool_lease_seconds: int = 15
     tool_reaper_interval_seconds: int = 1
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
@@ -286,12 +214,10 @@ class Settings:
             raise ValueError("provider_inventory_stale_seconds must be between 1 and 86400")
         if not 1 <= self.provider_heartbeat_stale_seconds <= 86_400:
             raise ValueError("provider_heartbeat_stale_seconds must be between 1 and 86400")
-        if self.tool_execution_mode not in {"off", "ledger_only", "canary", "enforce"}:
-            raise ValueError("tool_execution_mode must be off, ledger_only, canary, or enforce")
-        if self.tool_execution_mode == "canary" and not self.tool_canary_scopes:
-            raise ValueError("canary tool execution requires at least one exact canary scope")
-        if self.tool_execution_mode == "enforce" and not self.tool_enforce_scopes:
-            raise ValueError("enforce tool execution requires an explicit reviewed scope")
+        if self.tool_execution_mode not in {"off", "ledger_only", "canary"}:
+            raise ValueError(
+                "tool_execution_mode must be off, ledger_only, or canary; enforce is not open"
+            )
         if not 1 <= self.tool_lease_seconds <= 300:
             raise ValueError("tool_lease_seconds must be between 1 and 300")
         if not 1 <= self.tool_reaper_interval_seconds <= 60:
@@ -350,13 +276,6 @@ class Settings:
         key = f"{platform}:{conversation_type}:{canonical_conversation_id}"
         return self.group_modes.get(key, self.group_default_mode)
 
-    def active_tool_rollout_scopes(self) -> frozenset[ToolRolloutScope]:
-        if self.tool_execution_mode == "canary":
-            return self.tool_canary_scopes
-        if self.tool_execution_mode == "enforce":
-            return self.tool_enforce_scopes
-        return frozenset()
-
     @classmethod
     def from_env(cls) -> "Settings":
         tokens = _token_map(
@@ -370,6 +289,14 @@ class Settings:
         claim_mode = os.getenv("SUPERLILY_CLAIM_MODE", "off").strip().lower()
         if claim_mode not in {"off", "shadow", "canary", "enforce"}:
             raise ValueError("SUPERLILY_CLAIM_MODE must be off, shadow, canary, or enforce")
+        _reject_obsolete_tool_rollout_scope(
+            os.getenv("SUPERLILY_TOOL_CANARY_SCOPES_JSON"),
+            variable="SUPERLILY_TOOL_CANARY_SCOPES_JSON",
+        )
+        _reject_obsolete_tool_rollout_scope(
+            os.getenv("SUPERLILY_TOOL_ENFORCE_SCOPES_JSON"),
+            variable="SUPERLILY_TOOL_ENFORCE_SCOPES_JSON",
+        )
         return cls(
             database_url=os.getenv("SUPERLILY_DATABASE_URL", DEFAULT_DATABASE_URL),
             admin_token=os.getenv("SUPERLILY_ADMIN_TOKEN", ""),
@@ -394,14 +321,6 @@ class Settings:
                 "off",
             ).strip().lower(),
             tool_global_stop=_as_bool(os.getenv("SUPERLILY_TOOL_GLOBAL_STOP")),
-            tool_canary_scopes=_tool_rollout_scopes(
-                os.getenv("SUPERLILY_TOOL_CANARY_SCOPES_JSON", "[]"),
-                variable="SUPERLILY_TOOL_CANARY_SCOPES_JSON",
-            ),
-            tool_enforce_scopes=_tool_rollout_scopes(
-                os.getenv("SUPERLILY_TOOL_ENFORCE_SCOPES_JSON", "[]"),
-                variable="SUPERLILY_TOOL_ENFORCE_SCOPES_JSON",
-            ),
             tool_lease_seconds=int(os.getenv("SUPERLILY_TOOL_LEASE_SECONDS", "15")),
             tool_reaper_interval_seconds=int(
                 os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from superlily_contracts import ProviderRegistration, strict_json_loads
 
 from .database import Database
+from .rollout_service import import_tool_rollout_plan
 from .settings import Settings
 from .tool_registry_service import import_tool_descriptor, register_tool_provider
 
@@ -29,6 +30,15 @@ def _parser() -> argparse.ArgumentParser:
     descriptor.add_argument("--source-commit", required=True)
     descriptor.add_argument("--bundle-hash", required=True)
     descriptor.add_argument("--reviewer", required=True)
+    rollout = subparsers.add_parser(
+        "import-rollout-plan",
+        help="import one Git-bound reviewed rollout plan without activating it",
+    )
+    rollout.add_argument("path", type=Path)
+    rollout.add_argument("--repository", type=Path, default=Path.cwd())
+    rollout.add_argument("--source-commit", required=True)
+    rollout.add_argument("--bundle-hash", required=True)
+    rollout.add_argument("--reviewer", required=True)
     provider = subparsers.add_parser(
         "register-provider", help="register one provider bound to an environment credential"
     )
@@ -37,9 +47,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _git_descriptor_source(repository: Path, source_commit: str, path: Path) -> bytes:
+def _git_authority_source(repository: Path, source_commit: str, path: Path) -> bytes:
     if path.is_absolute() or ".." in path.parts or not path.parts:
-        raise ValueError("descriptor path must be a repository-relative path without '..'")
+        raise ValueError("authority path must be repository-relative and must not contain '..'")
     repository = repository.resolve()
     verified = subprocess.run(
         ["git", "rev-parse", "--verify", f"{source_commit}^{{commit}}"],
@@ -56,6 +66,12 @@ def _git_descriptor_source(repository: Path, source_commit: str, path: Path) -> 
         check=True,
         capture_output=True,
     ).stdout
+
+
+def _git_descriptor_source(repository: Path, source_commit: str, path: Path) -> bytes:
+    """兼容旧测试/调用者；新代码统一使用 authority source。"""
+
+    return _git_authority_source(repository, source_commit, path)
 
 
 async def _run(args: argparse.Namespace) -> dict:
@@ -77,6 +93,22 @@ async def _run(args: argparse.Namespace) -> dict:
                     "execution_mode": settings.tool_execution_mode,
                     "lifecycle": record.lifecycle,
                     "tool_id": record.tool_id,
+                    "version": record.version,
+                }
+            if args.command == "import-rollout-plan":
+                record, duplicate = await import_tool_rollout_plan(
+                    session,
+                    _git_authority_source(args.repository, args.source_commit, args.path),
+                    source_commit=args.source_commit,
+                    bundle_hash=args.bundle_hash,
+                    reviewer=args.reviewer,
+                )
+                return {
+                    "duplicate": duplicate,
+                    "execution_ceiling": settings.tool_execution_mode,
+                    "lifecycle": record.lifecycle,
+                    "plan_hash": record.plan_hash,
+                    "plan_id": record.plan_id,
                     "version": record.version,
                 }
             source = strict_json_loads(args.path.read_bytes())

@@ -28,6 +28,12 @@ from .provider_mutations import (
     apply_provider_lifecycle_mutation,
     create_provider_lifecycle_preview,
 )
+from .rollout_mutations import (
+    RolloutPlanLifecycleApplyIn,
+    RolloutPlanLifecyclePreviewIn,
+    apply_rollout_plan_lifecycle_mutation,
+    create_rollout_plan_lifecycle_preview,
+)
 
 
 router = APIRouter(prefix="/v1/control/session", tags=["control-session"])
@@ -38,6 +44,10 @@ descriptor_router = APIRouter(
 provider_router = APIRouter(
     prefix="/v1/control/providers",
     tags=["control-providers"],
+)
+rollout_router = APIRouter(
+    prefix="/v1/control/rollout-plans",
+    tags=["control-rollout-plans"],
 )
 Session = Annotated[AsyncSession, Depends(get_session)]
 ControlIdempotencyKey = Annotated[
@@ -188,6 +198,48 @@ async def provider_lifecycle_apply(
 ) -> dict:
     _no_store(response)
     result, status_code = await apply_provider_lifecycle_mutation(
+        session,
+        request,
+        payload,
+        idempotency_key,
+        request.app.state.settings,
+    )
+    response.status_code = status_code
+    return result
+
+
+@rollout_router.post(
+    "/lifecycle/preview",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def rollout_plan_lifecycle_preview(
+    payload: RolloutPlanLifecyclePreviewIn,
+    request: Request,
+    response: Response,
+    session: Session,
+) -> dict:
+    _no_store(response)
+    return await create_rollout_plan_lifecycle_preview(
+        session,
+        request,
+        payload,
+        request.app.state.settings,
+    )
+
+
+@rollout_router.post(
+    "/lifecycle/apply",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def rollout_plan_lifecycle_apply(
+    payload: RolloutPlanLifecycleApplyIn,
+    request: Request,
+    response: Response,
+    session: Session,
+    idempotency_key: ControlIdempotencyKey,
+) -> dict:
+    _no_store(response)
+    result, status_code = await apply_rollout_plan_lifecycle_mutation(
         session,
         request,
         payload,

@@ -325,6 +325,7 @@ async def test_eligible_ledger_only_proposal_still_creates_no_queue_or_lease(cli
         "lease_endpoint": True,
         "leases_enabled": False,
         "natural_language_callers": False,
+        "active_rollout_plan": None,
     }
     assert registry.json()["summary"]["eligible_tools"] == 1
 
@@ -340,6 +341,41 @@ async def test_eligible_ledger_only_proposal_still_creates_no_queue_or_lease(cli
     assert stopped.json()["policy"]["effective_reasons"] == ["global_stop"]
     assert stopped.json()["policy"]["queue_created"] is False
     assert stopped.json()["policy"]["lease_created"] is False
+
+
+async def test_canary_ceiling_without_active_plan_falls_back_to_ledger_only(
+    client,
+    app,
+) -> None:
+    app.state.settings = replace(app.state.settings, tool_execution_mode="canary")
+    descriptor = await import_descriptor(app)
+    await make_descriptor_and_provider_eligible(client, app, descriptor)
+
+    response = await client.post(
+        "/v1/tool-invocations",
+        json=invocation_payload(descriptor.descriptor_hash),
+        headers=admin_headers("canary-without-plan-status-1"),
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["state"] == "recorded_only"
+    assert body["execution_mode"] == "ledger_only"
+    assert body["reason_code"] == "rollout_fallback_ledger_only"
+    assert body["selected_provider_id"] is None
+    assert body["policy"]["execution_ceiling"] == "canary"
+    assert body["policy"]["rollout_plan"] is None
+    assert body["policy"]["rollout_scope"] is None
+    assert body["policy"]["rollout_fallback_reasons"] == [
+        "reviewed_rollout_plan_unavailable"
+    ]
+    registry = await client.get(
+        "/v1/tools",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert registry.status_code == 200
+    assert registry.json()["execution"]["leases_enabled"] is False
+    assert registry.json()["execution"]["active_rollout_plan"] is None
 
 
 async def test_command_invocation_is_scoped_to_its_authenticated_instance(client, app) -> None:

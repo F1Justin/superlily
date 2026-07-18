@@ -16,6 +16,7 @@ from superlily_contracts import (
     ToolUsage,
     canonicalize_json_value,
     load_tool_descriptor,
+    load_tool_rollout_plan,
     provider_inventory_snapshot_hash,
 )
 from superlily_core.models import (
@@ -26,8 +27,10 @@ from superlily_core.models import (
     ToolInvocation,
     ToolProvider,
     ToolProviderLifecycleEvent,
+    ToolRolloutPlanLifecycleEvent,
+    ToolRolloutPlanRecord,
 )
-from superlily_core.settings import ToolRolloutScope
+from superlily_core.rollout_service import import_tool_rollout_plan
 from superlily_core.tool_execution_service import reap_expired_attempts
 from superlily_core.tool_registry_service import import_tool_descriptor, register_tool_provider
 from superlily_provider_sdk import ProviderExecutionClient
@@ -161,20 +164,68 @@ async def prepare_canary(
         headers=PROVIDER_HEADERS,
     )
     assert heartbeat.status_code == 200, heartbeat.text
-    scope = ToolRolloutScope(
-        tool_id="status.inspect",
-        descriptor_version=descriptor.version,
-        descriptor_hash=descriptor.descriptor_hash,
-        canonical_conversation="qq:group:1080353942",
-        caller="admin_api",
-        provider_id="provider-status-primary",
-    )
     app.state.settings = replace(
         app.state.settings,
         tool_execution_mode="canary",
-        tool_canary_scopes=frozenset({scope}),
         tool_lease_seconds=10,
     )
+    plan_now = datetime.now(timezone.utc)
+    plan_source = json.dumps(
+        {
+            "schema_version": "1.0",
+            "plan_id": "status-inspect-test-canary",
+            "version": "1.0.0",
+            "mode": "canary",
+            "starts_at": (plan_now - timedelta(minutes=1)).isoformat(),
+            "expires_at": (plan_now + timedelta(hours=1)).isoformat(),
+            "max_invocations": 1000,
+            "rollback_mode": "ledger_only",
+            "reason": "Bounded test-only execution canary",
+            "items": [
+                {
+                    "item_id": "status-inspect-admin",
+                    "tool_id": "status.inspect",
+                    "descriptor_version": descriptor.version,
+                    "descriptor_hash": descriptor.descriptor_hash,
+                    "canonical_conversation": "qq:group:1080353942",
+                    "caller": "admin_api",
+                    "provider_id": "provider-status-primary",
+                    "expected_descriptor_resource_version": 2,
+                    "expected_provider_resource_version": 1,
+                }
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    plan_hash = load_tool_rollout_plan(plan_source).authority.sha256
+    async with app.state.database.sessions() as session:
+        plan, duplicate = await import_tool_rollout_plan(
+            session,
+            plan_source,
+            source_commit="3" * 40,
+            bundle_hash=plan_hash,
+            reviewer="phase3-rollout-reviewer",
+        )
+        assert duplicate is False
+        session.add(
+            ToolRolloutPlanLifecycleEvent(
+                plan_record_id=plan.id,
+                sequence=2,
+                previous_lifecycle="reviewed",
+                lifecycle="active",
+                actor="test-operator",
+                reason="test-only reviewed rollout activation",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolRolloutPlanRecord)
+            .where(ToolRolloutPlanRecord.id == plan.id)
+            .values(lifecycle="active", resource_version=2, updated_at=plan_now)
+        )
+        await session.commit()
     return descriptor, snapshot_hash
 
 
@@ -342,25 +393,49 @@ async def test_exact_canary_lease_start_heartbeat_and_complete(client, app) -> N
         )
 
 
-async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None:
+async def test_rollout_pause_prevents_a_new_lease(client, app) -> None:
     descriptor, snapshot_hash = await prepare_canary(client, app)
-    invocation = await create_queued(client, descriptor, key="attempt-stops-1")
-
-    scopes = app.state.settings.tool_canary_scopes
-    unrelated_scope = replace(
-        next(iter(scopes)),
-        canonical_conversation="qq:group:708309706",
-    )
-    app.state.settings = replace(
-        app.state.settings,
-        tool_canary_scopes=frozenset({unrelated_scope}),
-    )
+    await create_queued(client, descriptor, key="attempt-rollout-pause-1")
+    async with app.state.database.sessions() as session:
+        plan = await session.scalar(
+            select(ToolRolloutPlanRecord).where(ToolRolloutPlanRecord.lifecycle == "active")
+        )
+        assert plan is not None
+        session.add(
+            ToolRolloutPlanLifecycleEvent(
+                plan_record_id=plan.id,
+                sequence=plan.resource_version + 1,
+                previous_lifecycle=plan.lifecycle,
+                lifecycle="paused",
+                actor="test-operator",
+                reason="test-only rollout pause",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolRolloutPlanRecord)
+            .where(ToolRolloutPlanRecord.id == plan.id)
+            .values(
+                lifecycle="paused",
+                resource_version=plan.resource_version + 1,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
-    app.state.settings = replace(app.state.settings, tool_canary_scopes=scopes)
+
+
+async def test_global_stop_prevents_a_new_lease(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    await create_queued(client, descriptor, key="attempt-global-stop-1")
 
     app.state.settings = replace(app.state.settings, tool_global_stop=True)
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
-    app.state.settings = replace(app.state.settings, tool_global_stop=False)
+
+
+async def test_descriptor_suspension_prevents_a_new_lease(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    await create_queued(client, descriptor, key="attempt-descriptor-stop-1")
 
     async with app.state.database.sessions() as session:
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
@@ -383,25 +458,12 @@ async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None
         )
         await session.commit()
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
+
+
+async def test_provider_quarantine_prevents_a_new_lease(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    await create_queued(client, descriptor, key="attempt-provider-stop-1")
     async with app.state.database.sessions() as session:
-        stored = await session.get(ToolDescriptorRecord, descriptor.id)
-        assert stored is not None
-        session.add(
-            ToolDescriptorLifecycleEvent(
-                descriptor_id=stored.id,
-                sequence=stored.resource_version + 1,
-                previous_lifecycle=stored.lifecycle,
-                lifecycle="active",
-                actor="test-reviewer",
-                reason="test-only restoration",
-            )
-        )
-        await session.flush()
-        await session.execute(
-            update(ToolDescriptorRecord)
-            .where(ToolDescriptorRecord.id == stored.id)
-            .values(lifecycle="active", resource_version=stored.resource_version + 1)
-        )
         provider = await session.get(ToolProvider, "provider-status-primary")
         assert provider is not None
         session.add(
@@ -425,32 +487,6 @@ async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None
         )
         await session.commit()
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
-    async with app.state.database.sessions() as session:
-        provider = await session.get(ToolProvider, "provider-status-primary")
-        assert provider is not None
-        session.add(
-            ToolProviderLifecycleEvent(
-                provider_id=provider.id,
-                sequence=provider.resource_version + 1,
-                previous_lifecycle=provider.lifecycle,
-                lifecycle="active",
-                actor="test-security-admin",
-                reason="test-only restoration",
-            )
-        )
-        await session.flush()
-        await session.execute(
-            update(ToolProvider)
-            .where(ToolProvider.id == provider.id)
-            .values(
-                lifecycle="active",
-                resource_version=provider.resource_version + 1,
-            )
-        )
-        await session.commit()
-    lease = await pull_lease(client, snapshot_hash)
-    assert lease.status_code == 200, lease.text
-    assert lease.json()["invocation_id"] == invocation["invocation_id"]
 
 
 async def test_postgres_provider_lock_closes_quarantine_lease_race(client, app) -> None:
@@ -505,22 +541,10 @@ async def test_postgres_provider_lock_closes_quarantine_lease_race(client, app) 
     assert stored is not None and stored.state == "queued"
 
 
-async def test_reviewed_enforce_scope_uses_its_own_exact_allowlist(client, app) -> None:
-    descriptor, snapshot_hash = await prepare_canary(client, app)
-    exact_scope = next(iter(app.state.settings.tool_canary_scopes))
-    app.state.settings = replace(
-        app.state.settings,
-        tool_execution_mode="enforce",
-        tool_canary_scopes=frozenset(),
-        tool_enforce_scopes=frozenset({exact_scope}),
-    )
-
-    invocation = await create_queued(client, descriptor, key="attempt-enforce-exact-1")
-    lease = await pull_lease(client, snapshot_hash)
-
-    assert invocation["execution_mode"] == "enforce"
-    assert lease.status_code == 200, lease.text
-    assert lease.json()["invocation_id"] == invocation["invocation_id"]
+async def test_enforce_mode_cannot_bypass_reviewed_database_plan(client, app) -> None:
+    await prepare_canary(client, app)
+    with pytest.raises(ValueError, match="enforce is not open"):
+        replace(app.state.settings, tool_execution_mode="enforce")
 
 
 async def test_sender_rate_limit_rejects_before_queueing_more_work(client, app) -> None:

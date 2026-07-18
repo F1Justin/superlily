@@ -26,7 +26,7 @@ Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。exec
 心跳和两个 reporter worker 增加监督与自恢复，两个实例生产心跳已恢复新鲜。
 
 `0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、attempt secret、
-数据库时间、恢复 reaper、四种模式和三个独立 stop 已实现，并在 SQLite 与
+数据库时间、恢复 reaper 和三个历史执行模式已实现，并在 SQLite 与
 PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.0.1` 已在
 `ledger_only` 部署；canary 前审查又新增不可变 `1.0.2`，使用创建时不继承 secret 的
 独立 worker、硬 wall-time/输出边界和带裕量的 320 MiB 诚实预算。详细边界见
@@ -50,9 +50,12 @@ M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，Postg
 `ledger_only` 且零 attempt。M2 Provider quarantine 已完成实现、审查与双数据库
 全量回归：SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计
 343 项通过，并已默认禁用部署到 `0015c_provider_quarantine`：Provider 仍为
-`active/resource_version=1`，控制面五表为零，preview 返回 503。随后实现 M3
-Git-bound 精确 rollout plan；
-三包均签署后才评审一个 `admin_api` 精确 canary。自然语言工具循环仍属 Phase 5。
+`active/resource_version=1`，控制面五表为零，preview 返回 503。M3 Git-bound 精确
+rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废止，执行模式只作为
+`off/ledger_only/canary` 上限；reviewed plan 精确绑定工具、会话、caller、Provider、
+资源版本、24 小时内窗口和调用上限，调用创建与 lease 都会重验并支持可审计 pause。
+默认禁用生产迁移、真实停止演练和首个 `admin_api` 精确 canary 仍待签署。自然语言
+工具循环仍属 Phase 5。
 
 ## Sequencing rules
 
@@ -156,7 +159,8 @@ covered on SQLite and PostgreSQL.
 状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
 `status.inspect@1.0.2` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
 安全空转、零 attempt。M0 控制面底座、M1 descriptor lifecycle 与 M2 Provider
-quarantine 已默认禁用部署；descriptor 仍为 `reviewed`，M3 与生产 canary 尚未签署。实施与回滚细节见
+quarantine 已默认禁用部署；descriptor 仍为 `reviewed`。M3 Git-bound rollout plan
+已完成实现和关键回归，但默认禁用生产迁移与生产 canary 尚未签署。实施与回滚细节见
 `docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,
@@ -168,8 +172,9 @@ quarantine 已默认禁用部署；descriptor 仍为 `reviewed`，M3 与生产 c
   descriptor, principal, policy, capability, and budget snapshots used.
 - Apply idempotency per source event/tool/request and never retry an ambiguous
   state-changing completion automatically.
-- Ship `off`, `ledger_only`, exact canary, and enforced modes plus independent
-  global stop, tool suspension, and provider quarantine before a real lease.
+- Ship `off`, `ledger_only`, and Git-bound exact canary ceilings plus independent
+  global stop, tool suspension, provider quarantine, and rollout-plan pause
+  before a real lease. `enforce` remains closed in the first M3 package.
   Canary scope binds exact tool/version, conversation, caller, and provider.
 - Use database time for leases/deadlines. Specify cancellation, reaping, late
   completion, invalid output, clock skew, unknown completion, and starvation

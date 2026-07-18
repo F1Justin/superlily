@@ -32,7 +32,7 @@ M1 已于 2026-07-19 04:04 CST 默认禁用部署。生产为
 `0015b_descriptor_mutations` head 且无 drift；operator/Host/Origin/pepper 仍为空，
 5 张控制面表均为 0，preview 路由带安全响应头返回 503。两个 descriptor 仍为
 `reviewed/resource_version=1`，工具继续为 `ledger_only`、1 条 `recorded_only`
-invocation、零 attempt。M2–M3 仍必须完成，才可能进入首个精确 canary。
+invocation、零 attempt。
 
 M2 Provider quarantine 也已完成实现、审查与发布前回归。新增
 `0015c_provider_quarantine`、Provider 单调资源版本、security_admin preview/apply、
@@ -44,7 +44,21 @@ lifecycle event 的数据库不可变约束。lease 与 quarantine 使用同一 
 `0015c_provider_quarantine` head 且无 drift，三版 descriptor 均为
 `reviewed/resource_version=1`，Provider 为 `active/resource_version=1`，控制面五表
 全零，工具仍为 `ledger_only` 且零 attempt。`status.inspect@1.0.2` 已按完整 Git commit
-导入并由 Provider 精确报告，但没有激活。M3 尚未实现。
+导入并由 Provider 精确报告，但没有激活。
+
+M3 Git-bound 精确 rollout plan 已完成实现与双数据库关键回归。新增
+`0015d_rollout_plans`、严格 plan/item 合同、Git-bound reviewed 导入、operator
+preview/apply/pause、break-glass pause-only、单活动计划、原子调用上限和数据库
+不可变约束。环境 scope 不再是 authority，`SUPERLILY_TOOL_EXECUTION_MODE` 只是
+`off/ledger_only/canary` 权限上限，首包明确拒绝 `enforce`。调用创建和 lease 都会
+重新验证同一个 active plan；无计划、暂停、过期、漂移或额度耗尽均安全降级成
+`recorded_only`。真实生产 plan、descriptor 激活和 canary 仍未签署。
+
+最终发布前全量回归为：SQLite 370 项通过、4 项 PostgreSQL 专用场景跳过；
+PostgreSQL 17 为 374 项全部通过。它包含 fresh upgrade、downgrade/re-upgrade、
+`alembic check`、严格合同、Git-bound 导入、operator/break-glass 角色矩阵、preview
+漂移、CAS/幂等、无计划安全降级、资源版本阻断、调用上限唯一胜者、pause/lease
+行锁、不可变 trigger 和旧功能全量回归。编译检查与 `git diff --check` 也通过。
 
 ## 分包顺序
 
@@ -122,8 +136,10 @@ mutation 的唯一键是 `(operator_id, operation, Idempotency-Key)`。相同 re
 重放返回原 outcome；不同 request hash 返回 `409` 并追加拒绝审计。资源更新使用
 `WHERE current_version = expected_version` 或等价行锁/CAS；并发只有一个接受者。
 
-preview 本身不保留可执行 secret。apply 时 Core 重新计算 preview，任何 authority、
-runtime、heartbeat、plan expiry 或 global stop 变化都会使旧 preview 失效。
+preview 本身不保留可执行 secret。apply 时 Core 重新计算 preview。增权操作中任何
+authority、runtime、heartbeat、plan expiry 或 global stop 变化都会使旧 preview
+失效；plan pause 是降权，只要精确 plan 和 resource version 未变，运行中计数变化
+不能阻止暂停，审计会同时保存原 preview 和重算 hash。
 
 审计 evidence 只保存有界结构和 canonical hash。接受记录按顺序包含 request、before、
 preview、after；拒绝记录包含稳定拒绝原因和当时资源版本。rollback 是一条方向相反的
@@ -137,7 +153,7 @@ preview、after；拒绝记录包含稳定拒绝原因和当时资源版本。ro
 4. 备份并实际恢复生产 PostgreSQL；
 5. 先部署会话/read/preview，mutation 仍禁用；
 6. 依次演练 descriptor suspension、Provider quarantine、scope pause 和 global stop；
-7. 只激活 `status.inspect@1.0.1` 与一个 reviewed rollout plan；
+7. 只激活 `status.inspect@1.0.2` 与一个 reviewed rollout plan；
 8. 用 `admin_api` 创建一次无平台发送调用，验证完整 attempt 证据后立即 pause；
 9. 解释所有拒绝、异常和 `unknown_completion`，再决定是否进入稳定窗口。
 

@@ -28,6 +28,8 @@ from .models import (
     ToolProviderInventoryEntry,
     ToolProviderInventorySnapshot,
     ToolProviderLifecycleEvent,
+    ToolRolloutPlanCounter,
+    ToolRolloutPlanRecord,
     utc_now,
 )
 from .settings import Settings
@@ -600,6 +602,31 @@ async def tool_registry_view(
     provider_by_id = {item.id: item for item in providers}
     database_now = await session.scalar(select(func.current_timestamp()))
     now = _aware(database_now) if isinstance(database_now, datetime) else datetime.now(timezone.utc)
+    rollout_plans = list(
+        (
+            await session.scalars(
+                select(ToolRolloutPlanRecord).order_by(
+                    ToolRolloutPlanRecord.plan_id,
+                    ToolRolloutPlanRecord.version,
+                )
+            )
+        ).all()
+    )
+    rollout_counters = {
+        item.plan_record_id: item
+        for item in (await session.scalars(select(ToolRolloutPlanCounter))).all()
+    }
+    active_rollout = next(
+        (
+            item
+            for item in rollout_plans
+            if item.lifecycle == "active"
+            and _aware(item.starts_at) <= now < _aware(item.expires_at)
+            and rollout_counters.get(item.id) is not None
+            and rollout_counters[item.id].consumed_invocations < item.max_invocations
+        ),
+        None,
+    )
 
     provider_payloads = []
     for provider in providers:
@@ -773,9 +800,26 @@ async def tool_registry_view(
             "global_stop": settings.tool_global_stop,
             "invocation_endpoints": settings.tool_execution_mode != "off",
             "lease_endpoint": True,
-            "leases_enabled": settings.tool_execution_mode in {"canary", "enforce"}
-            and not settings.tool_global_stop,
+            "leases_enabled": settings.tool_execution_mode == "canary"
+            and not settings.tool_global_stop
+            and active_rollout is not None,
             "natural_language_callers": False,
+            "active_rollout_plan": (
+                None
+                if active_rollout is None
+                else {
+                    "plan_id": active_rollout.plan_id,
+                    "version": active_rollout.version,
+                    "plan_hash": active_rollout.plan_hash,
+                    "resource_version": active_rollout.resource_version,
+                    "starts_at": active_rollout.starts_at,
+                    "expires_at": active_rollout.expires_at,
+                    "max_invocations": active_rollout.max_invocations,
+                    "consumed_invocations": rollout_counters[
+                        active_rollout.id
+                    ].consumed_invocations,
+                }
+            ),
         },
         "summary": {
             "descriptors": len(tool_payloads),
@@ -798,6 +842,10 @@ async def tool_registry_view(
                 if item["reported"]["heartbeat"] is not None
                 and item["reported"]["heartbeat"]["fresh"]
                 and item["reported"]["heartbeat"]["health"] == "healthy"
+            ),
+            "rollout_plans": len(rollout_plans),
+            "active_rollout_plans": sum(
+                1 for item in rollout_plans if item.lifecycle == "active"
             ),
         },
         "tools": tool_payloads,

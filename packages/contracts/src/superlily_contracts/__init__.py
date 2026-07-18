@@ -90,6 +90,13 @@ from .tool_execution import (
     ToolUsage,
     lease_secret_hash,
 )
+from .tool_rollout import (
+    TOOL_ROLLOUT_SCHEMA_VERSION,
+    LoadedToolRolloutPlan,
+    ToolRolloutPlan,
+    ToolRolloutPlanItem,
+    load_tool_rollout_plan,
+)
 
 __all__ = [
     "API_SCHEMA_VERSION",
@@ -145,6 +152,7 @@ __all__ = [
     "TOOL_REGISTRY_SCHEMA_VERSION",
     "TOOL_EXECUTION_SCHEMA_VERSION",
     "TOOL_INVOCATION_SCHEMA_VERSION",
+    "TOOL_ROLLOUT_SCHEMA_VERSION",
     "TERMINAL_INVOCATION_STATES",
     "TOOL_SCHEMA_PROFILE",
     "ToolDescriptor",
@@ -156,6 +164,9 @@ __all__ = [
     "ToolFailureCode",
     "ToolInvocationCancelIn",
     "ToolInvocationCreateIn",
+    "ToolRolloutPlan",
+    "ToolRolloutPlanItem",
+    "LoadedToolRolloutPlan",
     "ToolLeaseOut",
     "ToolLeaseRequestIn",
     "ToolUsage",
@@ -163,6 +174,7 @@ __all__ = [
     "canonicalize_json",
     "canonicalize_json_value",
     "load_tool_descriptor",
+    "load_tool_rollout_plan",
     "invocation_request_hash",
     "legal_invocation_transitions",
     "lease_secret_hash",

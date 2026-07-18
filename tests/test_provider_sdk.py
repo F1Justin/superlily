@@ -122,6 +122,7 @@ async def test_sdk_publishes_exact_authority_and_honest_runtime_capabilities(app
         "lease_endpoint": True,
         "leases_enabled": False,
         "natural_language_callers": False,
+        "active_rollout_plan": None,
     }
     assert (await client.post("/v1/tool-invocations", json={})).status_code == 401
 

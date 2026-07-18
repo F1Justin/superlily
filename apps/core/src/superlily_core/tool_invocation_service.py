@@ -28,9 +28,13 @@ from .models import (
     ToolDescriptorRecord,
     ToolInvocation,
     ToolInvocationTransition,
+    ToolProvider,
+    ToolRolloutPlanItemRecord,
+    ToolRolloutPlanRecord,
     new_id,
 )
-from .settings import Settings, ToolRolloutScope
+from .rollout_service import consume_rollout_invocation, matching_active_rollout
+from .settings import Settings
 from .tool_registry_service import tool_registry_view
 
 
@@ -66,37 +70,11 @@ def canonical_invocation_conversation(payload: ToolInvocationCreateIn) -> str:
     return f"{payload.principal.platform}:{payload.principal.conversation_id}"
 
 
-def _matching_rollout_scope(
-    settings: Settings,
-    payload: ToolInvocationCreateIn,
-    identity: InvocationIdentity,
-) -> ToolRolloutScope | None:
-    if settings.tool_execution_mode == "canary":
-        scopes = settings.tool_canary_scopes
-    elif settings.tool_execution_mode == "enforce":
-        scopes = settings.tool_enforce_scopes
-    else:
-        return None
-    conversation = canonical_invocation_conversation(payload)
-    return next(
-        (
-            scope
-            for scope in scopes
-            if scope.tool_id == payload.tool_id
-            and scope.descriptor_version == payload.descriptor_version
-            and scope.descriptor_hash == payload.descriptor_hash
-            and scope.canonical_conversation == conversation
-            and scope.caller == identity.caller
-        ),
-        None,
-    )
-
-
 async def _rate_limit_exceeded(
     session: AsyncSession,
     descriptor: ToolDescriptor,
     payload: ToolInvocationCreateIn,
-    selected_scope: ToolRolloutScope,
+    selected_scope: ToolRolloutPlanItemRecord,
     database_time: datetime,
 ) -> bool:
     rate = descriptor.rate_limit
@@ -226,13 +204,40 @@ async def create_tool_invocation(
 
     effective_reasons = list(registry_version["effective"]["reasons"])
     database_time = await database_now(session)
-    selected_scope = _matching_rollout_scope(settings, payload, identity)
+    selected_rollout: tuple[ToolRolloutPlanRecord, ToolRolloutPlanItemRecord] | None = None
+    if settings.tool_execution_mode == "canary":
+        selected_rollout = await matching_active_rollout(
+            session,
+            database_time=database_time,
+            tool_id=payload.tool_id,
+            descriptor_version=payload.descriptor_version,
+            descriptor_hash=payload.descriptor_hash,
+            canonical_conversation=canonical_invocation_conversation(payload),
+            caller=identity.caller,
+        )
+    selected_plan = None if selected_rollout is None else selected_rollout[0]
+    selected_scope = None if selected_rollout is None else selected_rollout[1]
     selected_runtime: dict[str, Any] | None = None
     execution_reasons: list[str] = []
-    if settings.tool_execution_mode in {"canary", "enforce"}:
+    rollout_fallback_reasons: list[str] = []
+    effective_execution_mode = settings.tool_execution_mode
+    if settings.tool_execution_mode == "canary":
         if selected_scope is None:
-            execution_reasons.append("rollout_scope_mismatch")
+            rollout_fallback_reasons.append("reviewed_rollout_plan_unavailable")
         else:
+            provider_record = await session.get(ToolProvider, selected_scope.provider_id)
+            if descriptor_record.resource_version != selected_scope.expected_descriptor_resource_version:
+                rollout_fallback_reasons.append("descriptor_resource_version_mismatch")
+            if (
+                provider_record is None
+                or provider_record.lifecycle != "active"
+                or provider_record.resource_version
+                != selected_scope.expected_provider_resource_version
+            ):
+                rollout_fallback_reasons.append("provider_resource_version_mismatch")
+        if settings.tool_global_stop:
+            rollout_fallback_reasons.append("global_stop")
+        if not rollout_fallback_reasons and selected_scope is not None:
             selected_runtime = next(
                 (
                     item
@@ -244,8 +249,8 @@ async def create_tool_invocation(
             )
             if selected_runtime is None:
                 execution_reasons.extend(effective_reasons or ["provider_ineligible"])
-        if descriptor.confirmation != "never":
-            execution_reasons.append("confirmation_unavailable")
+            if descriptor.confirmation != "never":
+                execution_reasons.append("confirmation_unavailable")
         if (
             selected_scope is not None
             and selected_runtime is not None
@@ -258,20 +263,52 @@ async def create_tool_invocation(
             )
         ):
             execution_reasons.append("rate_limited")
-        execution_reasons.extend(effective_reasons)
+        if not rollout_fallback_reasons:
+            execution_reasons.extend(effective_reasons)
 
-    reasons = list(dict.fromkeys([*effective_reasons, *hard_reasons, *execution_reasons]))
+    if (
+        settings.tool_execution_mode == "canary"
+        and selected_plan is not None
+        and selected_scope is not None
+        and not hard_reasons
+        and not execution_reasons
+        and not rollout_fallback_reasons
+        and not await consume_rollout_invocation(
+            session,
+            selected_plan,
+            database_time=database_time,
+        )
+    ):
+        rollout_fallback_reasons.append("rollout_invocation_limit_exhausted")
+
+    if rollout_fallback_reasons:
+        effective_execution_mode = "ledger_only"
+
+    reasons = list(
+        dict.fromkeys(
+            [
+                *effective_reasons,
+                *hard_reasons,
+                *execution_reasons,
+                *rollout_fallback_reasons,
+            ]
+        )
+    )
     if hard_reasons or execution_reasons:
         decision = "rejected"
         reason_code = (hard_reasons or execution_reasons)[0]
         event: InvocationTransitionEvent = "reject"
-    elif settings.tool_execution_mode == "ledger_only":
+    elif effective_execution_mode == "ledger_only":
         decision = "recorded_only"
-        reason_code = "ledger_only"
+        reason_code = (
+            "ledger_only"
+            if not rollout_fallback_reasons
+            else "rollout_fallback_ledger_only"
+        )
         event = "record_only"
     else:
         decision = "queued"
-        reason_code = f"{settings.tool_execution_mode}_queued"
+        reason_code = f"{effective_execution_mode}_queued"
         event = "queue"
     descriptor_snapshot, _ = _snapshot(descriptor.model_dump(mode="json"))
     principal_snapshot, principal_hash = _snapshot(
@@ -284,15 +321,17 @@ async def create_tool_invocation(
     capabilities, capability_hash = _snapshot(sorted(payload.capabilities))
     policy_snapshot, policy_hash = _snapshot(
         {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "evaluated_at": database_time.isoformat(),
-            "execution_mode": settings.tool_execution_mode,
+            "execution_mode": effective_execution_mode,
+            "execution_ceiling": settings.tool_execution_mode,
             "global_stop": settings.tool_global_stop,
             "decision": decision,
             "eligible_if_execution_enabled": not reasons,
             "queue_created": decision == "queued",
             "lease_created": False,
             "effective_reasons": reasons,
+            "rollout_fallback_reasons": rollout_fallback_reasons,
             "missing_capabilities": missing_capabilities,
             "descriptor_lifecycle": descriptor_record.lifecycle,
             "review_status": descriptor_record.review_status,
@@ -306,6 +345,21 @@ async def create_tool_invocation(
             "selected_provider_id": (
                 None if selected_scope is None else selected_scope.provider_id
             ),
+            "rollout_plan": (
+                None
+                if selected_plan is None
+                else {
+                    "record_id": selected_plan.id,
+                    "plan_id": selected_plan.plan_id,
+                    "version": selected_plan.version,
+                    "plan_hash": selected_plan.plan_hash,
+                    "resource_version": selected_plan.resource_version,
+                    "starts_at": _aware(selected_plan.starts_at).isoformat(),
+                    "expires_at": _aware(selected_plan.expires_at).isoformat(),
+                    "max_invocations": selected_plan.max_invocations,
+                    "rollback_mode": selected_plan.rollback_mode,
+                }
+            ),
             "rollout_scope": (
                 None
                 if selected_scope is None
@@ -316,6 +370,13 @@ async def create_tool_invocation(
                     "canonical_conversation": selected_scope.canonical_conversation,
                     "caller": selected_scope.caller,
                     "provider_id": selected_scope.provider_id,
+                    "item_id": selected_scope.item_id,
+                    "expected_descriptor_resource_version": (
+                        selected_scope.expected_descriptor_resource_version
+                    ),
+                    "expected_provider_resource_version": (
+                        selected_scope.expected_provider_resource_version
+                    ),
                 }
             ),
             "rate_limit": descriptor.rate_limit.model_dump(mode="json"),
@@ -349,8 +410,10 @@ async def create_tool_invocation(
         capability_hash=capability_hash,
         policy_snapshot_json=policy_snapshot,
         policy_hash=policy_hash,
+        rollout_plan_id=(None if selected_plan is None else selected_plan.id),
+        rollout_plan_item_id=(None if selected_scope is None else selected_scope.id),
         selected_provider_id=(None if selected_scope is None else selected_scope.provider_id),
-        execution_mode=settings.tool_execution_mode,
+        execution_mode=effective_execution_mode,
         state=decision,
         transition_sequence=2,
         reason_code=reason_code,
@@ -367,7 +430,8 @@ async def create_tool_invocation(
             "input_hash": input_hash,
             "principal_hash": principal_hash,
             "capability_hash": capability_hash,
-            "execution_mode": settings.tool_execution_mode,
+            "execution_mode": effective_execution_mode,
+            "execution_ceiling": settings.tool_execution_mode,
         }
     )
     decision_evidence, decision_evidence_hash = _snapshot(

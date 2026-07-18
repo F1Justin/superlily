@@ -147,6 +147,7 @@ async def test_empty_registry_is_admin_only_and_has_no_execution_authority(clien
                 "lease_endpoint": True,
                 "leases_enabled": False,
             "natural_language_callers": False,
+            "active_rollout_plan": None,
         },
         "summary": {
             "descriptors": 0,
@@ -155,6 +156,8 @@ async def test_empty_registry_is_admin_only_and_has_no_execution_authority(clien
             "providers": 0,
             "fresh_inventories": 0,
             "healthy_providers": 0,
+            "rollout_plans": 0,
+            "active_rollout_plans": 0,
         },
         "tools": [],
         "providers": [],
@@ -344,6 +347,8 @@ async def test_provider_auth_inventory_heartbeat_and_effective_state(client, app
         "providers": 1,
         "fresh_inventories": 1,
         "healthy_providers": 1,
+        "rollout_plans": 0,
+        "active_rollout_plans": 0,
     }
     tool = payload["tools"][0]
     assert tool["reported"] == [

@@ -692,6 +692,157 @@ class ToolProviderHeartbeat(Base):
     )
 
 
+class ToolRolloutPlanRecord(Base):
+    __tablename__ = "tool_rollout_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    rollback_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    review_status: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
+    lifecycle: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    max_invocations: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(256), nullable=False)
+    canonical_json: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    import_outcome: Mapped[str] = mapped_column(String(32), default="accepted", nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "version", name="uq_tool_rollout_plan_identity"),
+        UniqueConstraint("plan_hash", name="uq_tool_rollout_plan_hash"),
+        CheckConstraint("mode IN ('canary')", name="ck_tool_rollout_plan_mode"),
+        CheckConstraint(
+            "rollback_mode IN ('ledger_only')",
+            name="ck_tool_rollout_plan_rollback_mode",
+        ),
+        CheckConstraint("review_status IN ('reviewed')", name="ck_tool_rollout_plan_review"),
+        CheckConstraint(
+            "lifecycle IN ('reviewed', 'active', 'paused')",
+            name="ck_tool_rollout_plan_lifecycle",
+        ),
+        CheckConstraint("resource_version >= 1", name="ck_tool_rollout_plan_version"),
+        CheckConstraint(
+            "max_invocations >= 1 AND max_invocations <= 1000",
+            name="ck_tool_rollout_plan_max_invocations",
+        ),
+        CheckConstraint("expires_at > starts_at", name="ck_tool_rollout_plan_window"),
+        CheckConstraint("import_outcome IN ('accepted')", name="ck_tool_rollout_plan_import"),
+        Index("ix_tool_rollout_plans_lifecycle", "lifecycle"),
+        Index("ix_tool_rollout_plans_window", "starts_at", "expires_at"),
+        Index(
+            "uq_tool_rollout_single_active",
+            "lifecycle",
+            unique=True,
+            sqlite_where=sql_text("lifecycle = 'active'"),
+            postgresql_where=sql_text("lifecycle = 'active'"),
+        ),
+    )
+
+
+class ToolRolloutPlanItemRecord(Base):
+    __tablename__ = "tool_rollout_plan_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_record_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    canonical_conversation: Mapped[str] = mapped_column(String(512), nullable=False)
+    caller: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    expected_descriptor_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_provider_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("plan_record_id", "item_id", name="uq_tool_rollout_plan_item_id"),
+        UniqueConstraint(
+            "plan_record_id",
+            "tool_id",
+            "descriptor_version",
+            "descriptor_hash",
+            "canonical_conversation",
+            "caller",
+            name="uq_tool_rollout_plan_execution_target",
+        ),
+        CheckConstraint("caller IN ('command', 'admin_api')", name="ck_rollout_item_caller"),
+        CheckConstraint(
+            "expected_descriptor_resource_version >= 1",
+            name="ck_rollout_item_descriptor_version",
+        ),
+        CheckConstraint(
+            "expected_provider_resource_version >= 1",
+            name="ck_rollout_item_provider_version",
+        ),
+        Index("ix_tool_rollout_items_tool", "tool_id", "descriptor_version"),
+        Index("ix_tool_rollout_items_provider", "provider_id"),
+    )
+
+
+class ToolRolloutPlanLifecycleEvent(Base):
+    __tablename__ = "tool_rollout_plan_lifecycle_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_record_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
+    lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_record_id", "sequence", name="uq_tool_rollout_plan_lifecycle_sequence"
+        ),
+        CheckConstraint(
+            "lifecycle IN ('reviewed', 'active', 'paused')",
+            name="ck_tool_rollout_plan_event_lifecycle",
+        ),
+        Index("ix_tool_rollout_plan_events_created", "plan_record_id", "created_at"),
+    )
+
+
+class ToolRolloutPlanCounter(Base):
+    __tablename__ = "tool_rollout_plan_counters"
+
+    plan_record_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), primary_key=True
+    )
+    consumed_invocations: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    last_consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "consumed_invocations >= 0",
+            name="ck_tool_rollout_plan_counter_nonnegative",
+        ),
+    )
+
+
 class ToolInvocation(Base):
     __tablename__ = "tool_invocations"
 
@@ -715,6 +866,12 @@ class ToolInvocation(Base):
     capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rollout_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_rollout_plans.id", ondelete="RESTRICT")
+    )
+    rollout_plan_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_rollout_plan_items.id", ondelete="RESTRICT")
+    )
     selected_provider_id: Mapped[str | None] = mapped_column(String(128))
     execution_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -767,6 +924,7 @@ class ToolInvocation(Base):
             "created_at",
         ),
         Index("ix_tool_invocations_state_deadline", "state", "deadline_at"),
+        Index("ix_tool_invocations_rollout_plan", "rollout_plan_id", "created_at"),
         Index("ix_tool_invocations_created", "created_at"),
     )
 
@@ -1548,6 +1706,282 @@ event.listen(
     ToolProviderLifecycleEvent.__table__,
     "after_drop",
     _PROVIDER_EVENT_POSTGRES_FUNCTION_DROP,
+)
+
+
+_ROLLOUT_PLAN_SQLITE_AUTHORITY_UPDATE = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plans_authority_no_update
+    BEFORE UPDATE OF plan_id, version, plan_hash, schema_version, mode, rollback_mode,
+        review_status, starts_at, expires_at, max_invocations, reason, source_commit,
+        bundle_hash, reviewer, canonical_json, plan_json, import_outcome, imported_at
+    ON tool_rollout_plans
+    BEGIN
+        SELECT RAISE(ABORT, 'rollout plan authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ROLLOUT_PLAN_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plans_no_delete
+    BEFORE DELETE ON tool_rollout_plans
+    BEGIN
+        SELECT RAISE(ABORT, 'rollout plan authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ROLLOUT_PLAN_SQLITE_LIFECYCLE_GUARD = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plans_lifecycle_guard
+    BEFORE UPDATE OF lifecycle, resource_version, updated_at ON tool_rollout_plans
+    WHEN NEW.lifecycle != OLD.lifecycle
+      OR NEW.resource_version != OLD.resource_version
+      OR NEW.updated_at != OLD.updated_at
+    BEGIN
+        SELECT CASE WHEN NEW.lifecycle = OLD.lifecycle
+            THEN RAISE(ABORT, 'rollout plan lifecycle change is required') END;
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'rollout plan resource version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.lifecycle = 'reviewed' AND NEW.lifecycle = 'active') OR
+            (OLD.lifecycle = 'active' AND NEW.lifecycle = 'paused') OR
+            (OLD.lifecycle = 'paused' AND NEW.lifecycle = 'active')
+        ) THEN RAISE(ABORT, 'rollout plan lifecycle transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM tool_rollout_plan_lifecycle_events
+            WHERE plan_record_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_lifecycle = OLD.lifecycle
+              AND lifecycle = NEW.lifecycle
+        ) THEN RAISE(ABORT, 'rollout plan lifecycle event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_ROLLOUT_PLAN_POSTGRES_AUTHORITY_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_rollout_plan_authority_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'rollout plan authority is immutable';
+        END IF;
+        IF NEW.plan_id IS DISTINCT FROM OLD.plan_id
+           OR NEW.version IS DISTINCT FROM OLD.version
+           OR NEW.plan_hash IS DISTINCT FROM OLD.plan_hash
+           OR NEW.schema_version IS DISTINCT FROM OLD.schema_version
+           OR NEW.mode IS DISTINCT FROM OLD.mode
+           OR NEW.rollback_mode IS DISTINCT FROM OLD.rollback_mode
+           OR NEW.review_status IS DISTINCT FROM OLD.review_status
+           OR NEW.starts_at IS DISTINCT FROM OLD.starts_at
+           OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+           OR NEW.max_invocations IS DISTINCT FROM OLD.max_invocations
+           OR NEW.reason IS DISTINCT FROM OLD.reason
+           OR NEW.source_commit IS DISTINCT FROM OLD.source_commit
+           OR NEW.bundle_hash IS DISTINCT FROM OLD.bundle_hash
+           OR NEW.reviewer IS DISTINCT FROM OLD.reviewer
+           OR NEW.canonical_json IS DISTINCT FROM OLD.canonical_json
+           OR NEW.plan_json::text IS DISTINCT FROM OLD.plan_json::text
+           OR NEW.import_outcome IS DISTINCT FROM OLD.import_outcome
+           OR NEW.imported_at IS DISTINCT FROM OLD.imported_at THEN
+            RAISE EXCEPTION 'rollout plan authority is immutable';
+        END IF;
+        IF NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+           OR NEW.resource_version IS DISTINCT FROM OLD.resource_version
+           OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
+            IF NEW.lifecycle IS NOT DISTINCT FROM OLD.lifecycle THEN
+                RAISE EXCEPTION 'rollout plan lifecycle change is required';
+            END IF;
+            IF NEW.resource_version != OLD.resource_version + 1 THEN
+                RAISE EXCEPTION 'rollout plan resource version must increase by one';
+            END IF;
+            IF NOT (
+                (OLD.lifecycle = 'reviewed' AND NEW.lifecycle = 'active') OR
+                (OLD.lifecycle = 'active' AND NEW.lifecycle = 'paused') OR
+                (OLD.lifecycle = 'paused' AND NEW.lifecycle = 'active')
+            ) THEN
+                RAISE EXCEPTION 'rollout plan lifecycle transition is not allowed';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM tool_rollout_plan_lifecycle_events
+                WHERE plan_record_id = OLD.id
+                  AND sequence = NEW.resource_version
+                  AND previous_lifecycle = OLD.lifecycle
+                  AND lifecycle = NEW.lifecycle
+            ) THEN
+                RAISE EXCEPTION 'rollout plan lifecycle event is required';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_ROLLOUT_PLAN_POSTGRES_AUTHORITY_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plans_authority_guard
+    BEFORE UPDATE OR DELETE ON tool_rollout_plans
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_rollout_plan_authority_mutation()
+    """
+).execute_if(dialect="postgresql")
+_ROLLOUT_PLAN_POSTGRES_AUTHORITY_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_rollout_plan_authority_mutation()"
+).execute_if(dialect="postgresql")
+
+for _rollout_plan_guard in (
+    _ROLLOUT_PLAN_SQLITE_AUTHORITY_UPDATE,
+    _ROLLOUT_PLAN_SQLITE_DELETE,
+    _ROLLOUT_PLAN_SQLITE_LIFECYCLE_GUARD,
+    _ROLLOUT_PLAN_POSTGRES_AUTHORITY_FUNCTION,
+    _ROLLOUT_PLAN_POSTGRES_AUTHORITY_TRIGGER,
+):
+    event.listen(ToolRolloutPlanRecord.__table__, "after_create", _rollout_plan_guard)
+event.listen(
+    ToolRolloutPlanRecord.__table__,
+    "after_drop",
+    _ROLLOUT_PLAN_POSTGRES_AUTHORITY_DROP,
+)
+
+
+_ROLLOUT_EVIDENCE_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_rollout_plan_evidence_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'rollout plan evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_ROLLOUT_EVIDENCE_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_rollout_plan_evidence_mutation()"
+).execute_if(dialect="postgresql")
+
+
+def _install_rollout_append_only_triggers(table) -> None:
+    name = table.name
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_update
+            BEFORE UPDATE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'rollout plan evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_delete
+            BEFORE DELETE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'rollout plan evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_mutation
+            BEFORE UPDATE OR DELETE ON {name}
+            FOR EACH ROW EXECUTE FUNCTION reject_rollout_plan_evidence_mutation()
+            """
+        ).execute_if(dialect="postgresql"),
+    )
+
+
+event.listen(
+    ToolRolloutPlanItemRecord.__table__,
+    "after_create",
+    _ROLLOUT_EVIDENCE_POSTGRES_FUNCTION,
+)
+for _rollout_evidence_table in (
+    ToolRolloutPlanItemRecord.__table__,
+    ToolRolloutPlanLifecycleEvent.__table__,
+):
+    _install_rollout_append_only_triggers(_rollout_evidence_table)
+event.listen(
+    ToolRolloutPlanRecord.__table__,
+    "after_drop",
+    _ROLLOUT_EVIDENCE_POSTGRES_DROP,
+)
+
+
+_ROLLOUT_COUNTER_SQLITE_UPDATE = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plan_counters_update_guard
+    BEFORE UPDATE ON tool_rollout_plan_counters
+    BEGIN
+        SELECT CASE WHEN NEW.plan_record_id != OLD.plan_record_id
+            THEN RAISE(ABORT, 'rollout plan counter identity is immutable') END;
+        SELECT CASE WHEN NEW.consumed_invocations != OLD.consumed_invocations + 1
+            THEN RAISE(ABORT, 'rollout plan counter must increase by one') END;
+        SELECT CASE WHEN NEW.last_consumed_at IS NULL
+            THEN RAISE(ABORT, 'rollout plan consumption time is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_ROLLOUT_COUNTER_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plan_counters_no_delete
+    BEFORE DELETE ON tool_rollout_plan_counters
+    BEGIN
+        SELECT RAISE(ABORT, 'rollout plan counter cannot be deleted');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ROLLOUT_COUNTER_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_rollout_plan_counter_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'rollout plan counter cannot be deleted';
+        END IF;
+        IF NEW.plan_record_id IS DISTINCT FROM OLD.plan_record_id THEN
+            RAISE EXCEPTION 'rollout plan counter identity is immutable';
+        END IF;
+        IF NEW.consumed_invocations != OLD.consumed_invocations + 1 THEN
+            RAISE EXCEPTION 'rollout plan counter must increase by one';
+        END IF;
+        IF NEW.last_consumed_at IS NULL THEN
+            RAISE EXCEPTION 'rollout plan consumption time is required';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_ROLLOUT_COUNTER_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_rollout_plan_counters_guard
+    BEFORE UPDATE OR DELETE ON tool_rollout_plan_counters
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_rollout_plan_counter_mutation()
+    """
+).execute_if(dialect="postgresql")
+_ROLLOUT_COUNTER_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_rollout_plan_counter_mutation()"
+).execute_if(dialect="postgresql")
+
+for _rollout_counter_guard in (
+    _ROLLOUT_COUNTER_SQLITE_UPDATE,
+    _ROLLOUT_COUNTER_SQLITE_DELETE,
+    _ROLLOUT_COUNTER_POSTGRES_FUNCTION,
+    _ROLLOUT_COUNTER_POSTGRES_TRIGGER,
+):
+    event.listen(ToolRolloutPlanCounter.__table__, "after_create", _rollout_counter_guard)
+event.listen(
+    ToolRolloutPlanCounter.__table__,
+    "after_drop",
+    _ROLLOUT_COUNTER_POSTGRES_DROP,
 )
 
 

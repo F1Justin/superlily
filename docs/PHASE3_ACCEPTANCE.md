@@ -301,12 +301,32 @@ implementation hash、hard budgets、healthy 和 0/1 并发。
 1 条既有 invocation、0 attempt/event。因此只签署 M2 默认禁用上线，不签署真实
 Provider mutation、descriptor activation 或 canary；M3 仍是下一 authority 门。
 
-- [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
-  tested. Canary binds tool/version/hash, conversation, caller and provider;
-  enforce uses its own exact allowlist.
-- [x] Global stop, per-tool/version suspension and provider quarantine each
-  independently prevent new leases in contract/API tests; production drills
-  remain part of the unchecked operations gate below.
+### Git-bound rollout plan M3 发布前证据
+
+2026-07-19，ADR 0011 与 `0015d_rollout_plans` 完成实现和审查。Git-bound CLI 只能
+从精确完整 commit 导入最长 24 小时、带调用上限、回退到 `ledger_only` 的 canary
+plan 为 `reviewed`；环境 scope 被废止，`enforce` 明确关闭。operator 通过服务端
+preview、新鲜再认证、CAS、幂等与只追加证据激活/暂停；break-glass 只能暂停。
+调用创建原子消费额度，lease 再次锁定并验证 plan/item/资源版本/runtime。无计划、
+不匹配、暂停、过期、global stop、资源漂移或额度耗尽都不会排队。
+
+SQLite 全量 370 项通过、4 项 PostgreSQL 专用场景跳过；PostgreSQL 17 全量 374 项
+通过。两种数据库的 fresh migration、downgrade/re-upgrade 和 `alembic check` 均在
+套件内通过。PostgreSQL 专项证明并发调用在上限 1 时只有一个 queue 胜者，以及
+pause/lease 共用行锁后暂停接受不会产生新 attempt。另有回归证明激活对 runtime
+漂移 fail closed，而暂停不会被调用计数等运行态漂移阻塞。编译检查和
+`git diff --check` 通过。
+
+这些只签署 M3 发布前实现。生产仍保持 `0015c`、`ledger_only`、零 rollout plan 和
+零 attempt；默认禁用生产迁移证据在部署后另行追加，真实 descriptor activation、
+operator authority 和 canary 不由本节授权。
+
+- [x] `off`、`ledger_only` 与 Git-bound exact `canary` 权限上限已测试；canary
+  精确绑定 tool/version/hash、conversation、caller、provider、资源版本、时间窗口和
+  调用上限，`enforce` 在 M3 首包中明确关闭。
+- [x] Global stop、精确 descriptor suspension、Provider quarantine 和 rollout
+  plan pause 都已在合同/API 测试中独立阻止新 lease；生产演练仍属于下方未勾选的
+  运维门。
 - [x] Migration `0014_tool_invocations` and every legal/illegal transition,
   idempotent create, cancellation, deadline and append-only invariant pass both
   databases. `ledger_only` creates no executable lease.
@@ -352,8 +372,9 @@ Provider mutation、descriptor activation 或 canary；M3 仍是下一 authority
   数据库 authority trigger 与默认禁用生产部署均已签署。
 - [ ] 只读面板的 desired/reported/effective/actual 数量和 reason code 与直接 API/SQL
   证据一致；第三阶段不在线编辑 descriptor 内容。
-- [ ] M3 的 operator/break-glass 权限矩阵、Git-bound rollout plan、敏感读取审计和
-  有界导出测试在任何 canary authority 启用前通过。
+- [x] M3 的 operator/break-glass 权限矩阵、Git-bound rollout plan、服务端 preview、
+  CAS/幂等、调用上限、数据库不可变约束和 pause/lease 并发已在两种数据库通过；
+  生产 authority 仍保持关闭。
 - [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
   Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
 - [ ] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、

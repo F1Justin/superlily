@@ -6,14 +6,19 @@
 
 生产上线 `0015` 时先继续保持 `ledger_only`。此时 schema 和路由存在，但 lease 接口只返回无工作，`tool_attempts` 必须保持零新增。只有生产迁移、Provider 报告和三个独立 stop 的证据都成立后，才允许单独评审一个精确 canary。
 
-## 四种执行模式
+## 三档执行权限上限
 
 - `off`：拒绝新的调用账本；既有幂等请求仍可读取原记录。
 - `ledger_only`：校验并冻结调用证据，但只落成 `recorded_only` 或 `rejected`，绝不排队和发 lease。
-- `canary`：只有命中 `tool_id + descriptor_version + descriptor_hash + platform:type:id + caller + provider_id` 全部字段的请求才能排队。
-- `enforce`：使用独立的、同样精确且另行审阅的 allowlist；不会复用 canary 范围，也不支持通配符。
+- `canary`：它只允许 Core 查询数据库中的 active Git-bound rollout plan；只有命中
+  `tool_id + descriptor_version + descriptor_hash + platform:type:id + caller + provider_id`
+  全部字段、资源版本和硬上限的请求才能排队。
 
-`canary` 或 `enforce` 没有非空精确范围时，Core 启动即失败。相同执行目标不能同时指向两个 Provider。当前认证面只允许 `command` 和 `admin_api`；`natural_language` 仍无入口。
+`SUPERLILY_TOOL_EXECUTION_MODE` 只是上限，环境变量不再承载精确 scope。非空旧
+canary/enforce scope 会使 Core 启动失败；`enforce` 在 M3 首包中也明确拒绝。没有
+active plan 时，`canary` 请求只会安全落成 `recorded_only`，不会排队。相同执行目标
+不能同时指向两个 Provider。当前认证面只允许 `command` 和 `admin_api`；
+`natural_language` 仍无入口。
 
 ## 调用、attempt 与 lease
 
@@ -32,7 +37,7 @@ Provider 上报时间只作诊断，lease、续租和 deadline 一律使用数�
 
 ## 状态恢复与不确定性
 
-Core 后台 reaper 只在 `canary` 或 `enforce` 中工作；单轮异常只记日志，不拖垮 API。过期 attempt 的处理按副作用和 deadline 保守决定：
+Core 后台 reaper 只在 `canary` 中工作；单轮异常只记日志，不拖垮 API。过期 attempt 的处理按副作用和 deadline 保守决定：
 
 | 情况 | 处理 |
 |---|---|
@@ -87,34 +92,40 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 sandbox/cgroup/seccomp/网络策略。不能把这个独立进程监督器直接当作 Wolfram、TeX
 或通用 Python runner 的安全证明。
 
-## 三个独立停止开关
+## 四个独立停止开关
 
 任何一个开关都必须独立阻止新 lease：
 
 1. `SUPERLILY_TOOL_GLOBAL_STOP=true`；
 2. 将精确 descriptor version 置为 `suspended`；
-3. 将指定 Provider 置为 `quarantined`。
+3. 将指定 Provider 置为 `quarantined`；
+4. 将精确 active rollout plan 置为 `paused`。
 
-收窄或删除精确 canary/enforce scope 也会阻止后续领取。急停不删除账本；已经执行到外部世界的状态不能靠删行回滚，因此在故障时先停止新 authority，再调查 active attempt 与 `unknown_completion`。
+四者任一都独立阻止后续领取。plan pause 与 lease 使用同一 plan 行锁，暂停接受后
+不会创建新 attempt；暂停前已经执行到外部世界的状态不能靠删行回滚，因此在故障时
+先停止新 authority，再调查 active attempt 与 `unknown_completion`。
 
 ## 上线顺序
 
 1. 在同版本 PostgreSQL 上做自定义格式备份，并完成 `pg_restore --list` 与隔离恢复。
-2. 保持 `SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`、两个 scope 均为 `[]`，构建并替换 Core。
+2. 保持 `SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`，不配置旧环境 scope，构建并替换 Core。
 3. 验证 Alembic 为 `0015_tool_attempts` head、无 drift、lease 路由对 Provider 返回 204、attempt/event 表为零新增。
 4. 从精确 Git 对象导入 `status.inspect@1.0.2` 为 `reviewed`，不得自动激活；
    `1.0.0/1.0.1` 继续作为不可变历史 authority。
 5. 替换 status Provider 为 `serve` 模式；验证它只报告 hard wall-time/output-bytes、实现哈希和健康心跳，且不发布端口。
 6. 至少观察一个 inventory/heartbeat 周期；确认 `ledger_only` 下没有 lease、attempt 或旧命令行为变化。
-7. 另行评审 descriptor 激活、一个精确范围和一个无平台发送的 `admin_api` canary。未经这一步不得切换执行模式。
+7. 另行评审 descriptor 激活、一份最长 24 小时且带调用上限的 Git-bound plan，以及
+   一个无平台发送的 `admin_api` canary。未经这一步不得切换执行上限。
 
-首个 canary 前还需在生产边界演练：global stop、descriptor suspension、Provider quarantine、scope withdrawal、Core/Provider 中断、过期 lease 与恢复。单元测试证明状态机正确，不替代真实容器和真实 PostgreSQL 的操作证据。
+首个 canary 前还需在生产边界演练：global stop、descriptor suspension、Provider
+quarantine、rollout plan pause、Core/Provider 中断、过期 lease 与恢复。单元测试证明
+状态机正确，不替代真实容器和真实 PostgreSQL 的操作证据。
 
 ## 回滚
 
 回滚按权限从小到大进行：
 
-1. 删除精确 scope 或开启 global stop，阻止新 lease；
+1. pause 精确 rollout plan 或开启 global stop，阻止新 lease；
 2. suspension 精确 descriptor 或 quarantine Provider；
 3. 将模式退回 `ledger_only` 或 `off` 并只重建 Core；
 4. 停止 status Provider；
@@ -124,7 +135,10 @@ sandbox/cgroup/seccomp/网络策略。不能把这个独立进程监督器直接
 
 ## 实现期验证证据
 
-截至 2026-07-19，SQLite 与 PostgreSQL 17 全量套件各 313 项通过。覆盖范围包括四种模式、精确 canary/enforce、三个 stop、并发领取、单活动 lease、单调 fence、secret/Provider 绑定、迟到与重放、取消竞态、预算取消、非法输出、append-only trigger、reaper、管理 CLI 的真实模式回报、空闲轮询退避/日志保真与真实 `status.inspect` 子进程端到端路径。
+M3 前的 `0015` 切片曾在 SQLite 与 PostgreSQL 17 全量套件各通过 313 项，覆盖当时
+四种模式原型、精确环境 scope 和三个 stop。M3 已用 Git-bound plan 替代环境 scope、
+关闭 `enforce`，并增加 plan pause、原子调用上限与 pause/lease 并发回归；当前最终
+全量数量以 `PHASE3_ACCEPTANCE.md` 的 M3 证据为准。
 
 这些结果授权部署“仍为 `ledger_only` 的 0015 底座”，不等于已经签署生产 canary，也不等于 Phase 3b/3c 整体完成。
 
