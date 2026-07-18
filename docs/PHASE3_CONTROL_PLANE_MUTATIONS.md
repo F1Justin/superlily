@@ -52,7 +52,7 @@ preview/apply/pause、break-glass pause-only、单活动计划、原子调用上
 不可变约束。环境 scope 不再是 authority，`SUPERLILY_TOOL_EXECUTION_MODE` 只是
 `off/ledger_only/canary` 权限上限，首包明确拒绝 `enforce`。调用创建和 lease 都会
 重新验证同一个 active plan；无计划、暂停、过期、漂移或额度耗尽均安全降级成
-`recorded_only`。真实生产 plan、descriptor 激活和 canary 仍未签署。
+`recorded_only`。
 
 最终发布前全量回归为：SQLite 370 项通过、4 项 PostgreSQL 专用场景跳过；
 PostgreSQL 17 为 374 项全部通过。它包含 fresh upgrade、downgrade/re-upgrade、
@@ -65,6 +65,15 @@ M3 已于 2026-07-19 06:01–06:04 CST 默认禁用部署到生产 `0015d`。备
 通过。四张 rollout 表全零、数据库 guard 完整，operator/Host/Origin/pepper 仍空；
 Registry 显示无 active plan/lease，preview=503，真实 Provider lease=204，探测后
 仍为 1 条 `recorded_only`、零 attempt/event 和零控制面记录。真实 authority 未开放。
+
+06:14–06:43 CST，这些治理端点已在五份 Git-reviewed 单次计划上首次实际
+使用。reviewer 完成 descriptor activation/suspension/restore，security_admin 完成
+Provider quarantine/restore，operator 激活计划，break-glass 暂停计划。生产
+直接证明四个 stop 独立阻止 lease，并完成一次无平台发送的只读
+canary。现有五份计划均为 `paused/rv3`、消费 1/1，Core 已恢复
+`ledger_only`、无 active plan/lease；descriptor 为 `active/rv4`，Provider 为
+`active/rv3`。控制面临时配置已清空，无未过期且未撤销会话。详细
+证据见 `PHASE3_ACCEPTANCE.md` 和 `DEPLOYMENT.md` 第 14 节。
 
 ## 分包顺序
 

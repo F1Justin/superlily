@@ -557,3 +557,113 @@ rollout plan，不激活 descriptor，也不签署 canary。
 才可先用当前镜像 downgrade 到 `0015c`，再替换旧 Core。一旦导入过 plan 或产生 M3
 治理证据，就不得用 downgrade 抹除；应保持兼容应用并通过 plan pause/global stop
 降低 authority。
+
+## 14. 首批 Git-bound 计划与单次 `status.inspect` 生产 canary
+
+2026-07-19 06:14 CST，提交
+`cb9a0c920727265e941804228d41fac17462802d` 中的四份计划通过 Git-bound
+CLI 导入生产为 `reviewed/resource_version=1`。导入后四张 rollout 表分别为
+4 个 plan、4 个 item、4 个初始 lifecycle event 和 4 个 counter；四个 counter
+均为 0，没有 active plan。每份计划最多调用 1 次，精确绑定
+`status.inspect@1.0.2`、`admin_api`、`qq:group:1080353942`、
+`provider-status-primary` 和预期资源版本。
+
+开放任何短时 authority 前，又取了一份包含这四份计划的新备份：
+
+- 路径：
+  `/home/justin/backups/superlily/20260719-phase3-first-canary/superlily-pre-first-canary-cb9a0c9.dump`；
+- 大小：150,554,824 字节；权限 `0600`；
+- SHA-256：`b5fe18892f7da8741b7db590547c6f9b4fb2347bb197fafbf6ee8d99a65b917c`。
+
+`pg_restore --list` 通过后，备份在一个独立 PostgreSQL 17 磁盘卷中以
+`--exit-on-error` 零错误完整恢复。恢复库为 `0015d_rollout_plans`，包含
+386,759 条 source event、418,532 条 observation、6,923 条 receipt、3 个 descriptor、
+1 个 Provider、1 条 invocation、0 attempt/event、4 个 plan/item/event/counter。四份计划
+恢复后仍为 `reviewed/rv1`、消费 0；`1.0.2` descriptor 为 `reviewed/rv1`，
+Provider 为 `active/rv1`。源库在备份后多出的 4 条持续采集记录不属于恢复
+丢失。临时容器、卷和生产容器内的 dump 副本已删除，主机备份保留。
+
+06:25–06:26 CST 的临时控制面使用四个相互独立的随机口令角色：
+reviewer、security_admin、operator 和 break_glass。明文口令只存在于演练进程
+内存和本机回环 HTTP body；配置中只传递 scrypt verifier 和随机 audit pepper，
+未写入 `.env`、Git 或文档。控制面证据包含 4 次成功登录、13 次成功重认证、
+13 份 preview 和 13 笔接受 mutation；没有被拒绝的登录或 mutation。
+
+生产操作顺序与结果为：
+
+1. reviewer 将 `status.inspect@1.0.2` 从 `reviewed/rv1` 激活到
+   `active/rv2`；
+2. global-stop plan 激活后排入 1 条调用，Core 以
+   `SUPERLILY_TOOL_GLOBAL_STOP=true` 短时重建；在 deadline 前手工 lease
+   返回 204，attempt=0，计划随后暂停；
+3. descriptor-stop plan 排入 1 条调用，reviewer 将 descriptor 置为
+   `suspended/rv3`；deadline 前 lease=204/attempt=0，然后恢复
+   `active/rv4` 并暂停计划；
+4. provider-stop plan 排入 1 条调用，security_admin 将 Provider 置为
+   `quarantined/rv2`；deadline 前 lease=204/attempt=0，Provider 在 quarantine 中
+   重新上报健康证据后恢复 `active/rv3`，计划暂停；
+5. success plan 排入 1 条调用并重启 Provider，产生唯一 attempt/fence=1，
+   完成 `lease -> start -> complete`；结果为 `provider_runtime/status=ok`，
+   wall 371 ms、CPU 351 ms、峰值内存 51,187,712 bytes、输入 28 bytes、
+   输出 299 bytes、artifact 0 bytes，随后计划暂停。
+
+三条被 stop 保护的调用之后均由 reaper 按契约终止为
+`queued -> timed_out/deadline_expired`，始终没有 attempt。演练脚本的最后验收
+曾错把此终态写为 `expired`，因此在主体成功后以非零码退出；这是
+演练断言偏差，不是生产状态机偏差。`finally` 仍然完成 Core 默认配置恢复和
+Provider 启动。
+
+验收后四份计划均为 `paused/resource_version=3`、消费 1/1，无 active
+plan。Registry 为 `mode=ledger_only`、`global_stop=false`、
+`active_rollout_plan=null`、`leases_enabled=false`；descriptor 为 `active/rv4`，Provider 为
+`active/rv3`、healthy。Core 临时 operator/Host/Origin/pepper 全部清空，登录路由再次
+返回带 `no-store`、`no-referrer`、`nosniff` 和 CSP 的 503。演练窗口中
+`responses` 表零新增，也没有 `qq:admin_api:*` 关联 response；两个 bot 仍为
+online、心跳新鲜。首轮脚本因上述终态断言偏差没有执行到 logout；
+这四个会话在控制面保持默认关闭期间于 06:40:11 CST 全部过期，且在
+下一次使用不同 operator ID 的控制面配置前已验证无未过期旧会话。
+
+### rollout plan pause 独立生产证明
+
+为避免把“单测和间接空转”写成 plan pause 的直接生产证据，提交
+`26d5cee3d30d4829ad04273de3b359abc489eb60` 又增加了第五份单次计划。
+计划哈希为
+`f040be10438d0aa2c3b8c244dd82ea749bf345f6079586e0efdbd83484ca4a27`，
+精确绑定当时的 descriptor rv4 和 Provider rv3，导入只得到
+`reviewed/rv1`、消费 0。
+
+该计划激活前再次创建了包含首轮全部不可变证据的备份：
+
+- 路径：
+  `/home/justin/backups/superlily/20260719-phase3-rollout-pause/superlily-pre-rollout-pause-26d5cee.dump`；
+- 大小：150,643,090 字节；权限 `0600`；
+- SHA-256：`65f10a778c8208e6437122b8e469dbac429b09bd578dac9e69ce494d212b4e02`。
+
+它在独立 PostgreSQL 17 磁盘卷中以 `--exit-on-error` 完整恢复为
+`0015d_rollout_plans`，包含 386,862 条 source event、418,635 条 observation、
+7,026 条 receipt、3 个 descriptor、1 个 Provider、5 条 invocation、1 个 succeeded
+attempt、3 个 attempt event、5 份 plan/item/counter、13 个 plan lifecycle event、
+4 个 session、13 笔 mutation 和 43 条 control audit。前四份计划仍为
+`paused/rv3`、消费 1，第五份仍为 `reviewed/rv1`、消费 0；调用终态为
+1 条 recorded_only、3 条 timed_out 和 1 条 succeeded。临时容器/卷与容器内副本
+已删除，主机备份保留。
+
+06:43 CST，两个新的 operator/break-glass ID 登录后，operator 将第五份计划
+激活为 rv2。Provider 先停止以避免抢跑；Core 排队一条 deadline=5 秒的调用后，
+break-glass 立即将计划暂停为 rv3。在 deadline 前使用真实 Provider 凭据手工
+lease，结果为 204、invocation 仍为 queued、attempt=0。Provider 重启后也没有
+领取，调用由 reaper 终止为 `timed_out/deadline_expired`。脚本以零码结束，
+两个新会话均显式 logout/revoked，Core 随后回到默认配置。
+
+最终控制面累计 6 次接受登录、15 次接受重认证、15 份 preview、
+15 笔接受 mutation 和 2 次接受 logout，没有被拒绝的登录或 mutation。
+六个 session 中 2 个已 revoked、4 个已过期，无未过期且未撤销会话。五份计划
+现均为 `paused/rv3`、消费 1/1；生产 invocation 终态为 1 条 recorded_only、
+4 条 timed_out 和 1 条 succeeded，只有成功 canary 存在那 1 个 attempt。Core
+容器不含 Provider token；最终 ledger-only 空 lease 由 Provider 容器以独立凭据发起，
+返回 204/空正文。
+
+回滚首选始终是暂停 active plan 或将 Core 恢复 `ledger_only`。现在已存在
+plan、preview、mutation、lifecycle、invocation 和 attempt 的只追加生产证据，因此
+不再允许 downgrade 到 `0015c` 或删表伪造回滚。进入下一次故障演练前必须
+创建新的 Git-reviewed 单次计划，不得重置本批 counter 或重开已暂停的权限。

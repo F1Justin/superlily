@@ -16,11 +16,12 @@ The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
 **当前状态：** Phase 3a、`0014_tool_invocations`、`0015_tool_attempts` 与最小控制面
-M0–M2 已默认禁用部署。真实 `status.inspect@1.0.2` authority 和 Provider runtime
-已经精确对齐，但 descriptor 仍为 `reviewed`、执行仍为 `ledger_only`、零 attempt。
-M3 Git-bound 精确 rollout plan 已实现并默认禁用部署；它关闭环境 scope 旁路，首包
-不开放 `enforce`。生产四张 rollout 表全零、无 active plan/lease、零 attempt。
-真实 plan、descriptor activation、自然语言 caller 和生产 canary 尚未签署。
+M0–M3 已部署。M3 关闭了环境 scope 旁路，首包不开放 `enforce`。
+`status.inspect@1.0.2` 已通过审阅者控制面激活为 `active/rv4`，
+Provider 为 `active/rv3`。五份 Git-reviewed 单次计划已完成四个独立 stop
+与一次无平台发送 canary，随后均暂停且消费 1/1。生产已恢复
+`ledger_only`、无 active plan/lease；只有成功 canary 产生 1 个 attempt。
+自然语言 caller、`enforce`、写工具和平台发送能力仍未开放。
 `PHASE3_ACCEPTANCE.md` 是可执行发布清单，`docs/adr/` 中的 accepted ADR 冻结实现
 决策，本文定义总体架构。
 

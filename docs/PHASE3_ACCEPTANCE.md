@@ -342,12 +342,64 @@ disabled，preview 为带安全头 503。真实 Provider lease 探测为 204，�
 1 条 `recorded_only` invocation、0 attempt/event、控制面总计 0。Lily/Nekro 在线。
 因此只签署 M3 默认禁用生产底座，未签署任何 plan、activation 或 canary authority。
 
+### 四个独立 stop 与首次只读 canary 生产证据
+
+2026-07-19 06:14–06:43 CST，提交 `cb9a0c9` 与 `26d5cee` 中的五份
+Git-reviewed plan 已按顺序导入、激活和暂停。每份计划只允许 1 次
+`admin_api + qq:group:1080353942 + status.inspect@1.0.2 +
+provider-status-primary` 调用，并绑定当时的 descriptor/Provider 资源版本。
+所有状态变更都经过角色会话、服务端 preview、重认证、CAS、幂等键和只追加审计，
+没有直接 SQL 改状态。
+
+四个独立 stop 均得到 deadline 前的直接生产证据：
+
+- global stop、descriptor suspension、Provider quarantine 和 rollout plan pause
+  各自使真实 Provider 凭据的 lease 返回 204；
+- 检查时 invocation 仍为 queued，attempt 都为 0；
+- 停止证据不依赖删除队列；四条调用最终均由 reaper 记录为
+  `queued -> timed_out/deadline_expired`。
+
+成功 canary 的唯一 invocation 完整记录
+`propose -> queue -> lease -> start -> complete_success`，只有 1 个 attempt、
+attempt_number=1、fence=1，attempt event 只有一次接受的 lease/start/complete。
+输出为 `provider_runtime/status=ok`，descriptor hash
+`0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd`
+和 implementation hash
+`156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`
+与 reviewed authority 一致。真实 usage 为 wall 371 ms、CPU 351 ms、峰值内存
+51,187,712 bytes、输入 28 bytes、输出 299 bytes、artifact 0 bytes。
+演练窗口内 `responses` 表零新增，也没有 `qq:admin_api:*` 来源的
+response；Provider 没有平台发送能力。
+
+首轮脚本在主体证明完成后，曾因把 queued deadline 误预期为 `expired`
+而非契约中的 `timed_out` 以非零码退出。此异常已完整解释：数据库转移、
+既有单测和恢复矩阵对 `timed_out` 一致，`finally` 成功恢复默认 Core 和 Provider。
+当时四个会话在控制面默认关闭期间全部过期，再开启不同 operator ID 前已验证
+无未过期旧会话。第五份 plan-pause 脚本按 `timed_out` 验收并以零码退出，
+两个新会话都显式 logout/revoked。
+
+两个运维备份均通过 `pg_restore --list` 和独立 PostgreSQL 17 磁盘卷实际恢复：
+首次 canary 前备份大小 150,554,824 字节、SHA-256
+`b5fe18892f7da8741b7db590547c6f9b4fb2347bb197fafbf6ee8d99a65b917c`；
+plan-pause 激活前备份大小 150,643,090 字节、SHA-256
+`65f10a778c8208e6437122b8e469dbac429b09bd578dac9e69ce494d212b4e02`。
+第二份恢复库明确保留首轮的 5 条 invocation、1 个 attempt、3 个 attempt event、
+13 笔 mutation 和 43 条 control audit，证明恢复没有抛弃已产生的治理证据。
+详细路径、计数和操作顺序见 `DEPLOYMENT.md` 第 14 节。
+
+最终生产为 5 份 `paused/rv3`、各消费 1/1 的 plan，无 active plan/lease；
+invocation 为 1 条 recorded_only、4 条 timed_out、1 条 succeeded，只有 1 个
+succeeded attempt。descriptor 为 `active/rv4`，Provider 为 `active/rv3`；Core 已恢复
+`ledger_only/global_stop=false`，operator/Host/Origin/pepper 均为空，控制面路由返回
+带安全头的 503。Core 容器内不存在 Provider token，最终空 lease 只能从
+Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。由此签署“四个独立 stop + 首次
+无平台发送 canary”；不签署剩余中断/恢复故障矩阵或 Phase 3 整体退出。
+
 - [x] `off`、`ledger_only` 与 Git-bound exact `canary` 权限上限已测试；canary
   精确绑定 tool/version/hash、conversation、caller、provider、资源版本、时间窗口和
   调用上限，`enforce` 在 M3 首包中明确关闭。
 - [x] Global stop、精确 descriptor suspension、Provider quarantine 和 rollout
-  plan pause 都已在合同/API 测试中独立阻止新 lease；生产演练仍属于下方未勾选的
-  运维门。
+  plan pause 都已在合同/API 测试与生产边界中独立阻止新 lease。
 - [x] Migration `0014_tool_invocations` and every legal/illegal transition,
   idempotent create, cancellation, deadline and append-only invariant pass both
   databases. `ledger_only` creates no executable lease.
@@ -378,7 +430,7 @@ disabled，preview 为带安全头 503。真实 Provider lease 探测为 204，�
 - [ ] `latex.render` accepts only finalized content-addressed artifacts and
   passes malicious TeX, timeout, MIME/hash/size, cleanup and renderer-boundary
   tests.
-- [ ] No provider sends a platform message; command parsing, invocation,
+- [x] No provider sends a platform message; command parsing, invocation,
   execution, result, rendering and delivery remain separately observable.
 - [ ] Existing command paths remain rollback until per-tool shadow/canary
   equivalence, latency, errors, budgets and evidence window are signed.
@@ -395,7 +447,7 @@ disabled，preview 为带安全头 503。真实 Provider lease 探测为 204，�
   证据一致；第三阶段不在线编辑 descriptor 内容。
 - [x] M3 的 operator/break-glass 权限矩阵、Git-bound rollout plan、服务端 preview、
   CAS/幂等、调用上限、数据库不可变约束和 pause/lease 并发已在两种数据库通过；
-  生产 authority 仍保持关闭。
+  首批生产 authority 已精确消费并暂停，当前无 active plan/lease。
 - [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
   Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
 - [ ] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、
@@ -405,6 +457,6 @@ disabled，preview 为带安全头 503。真实 Provider lease 探测为 204，�
 
 - [ ] `status.inspect`, `wolfram.run`, and `latex.render` use the common
   descriptor/invocation/provider/artifact protocol with stable signed canaries.
-- [ ] Natural-language callers remain disabled; no write/admin tool is enabled.
+- [x] Natural-language callers remain disabled; no write/admin tool is enabled.
 - [ ] All exceptional rows and security/retention findings are explained, docs
   and code are committed, and the operator signs the Phase 3 evidence record.

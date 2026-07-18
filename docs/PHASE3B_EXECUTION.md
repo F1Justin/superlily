@@ -146,3 +146,43 @@ M3 前的 `0015` 切片曾在 SQLite 与 PostgreSQL 17 全量套件各通过 313
 drift、Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 与备份实际
 恢复均通过。精确镜像、配置和备份证据见 `DEPLOYMENT.md` 第 9 节。descriptor
 activation 与 canary 仍受 ADR 0005 的 mutation 治理门约束。
+
+## 首次生产 stop/canary 证据
+
+2026-07-19 06:25–06:26 CST，ADR 0005/0008/0009/0010/0011 的治理门已按
+真实控制面使用，没有直接 SQL 改状态。首批 Git-reviewed plan 各自精确绑定
+`status.inspect@1.0.2`、`admin_api`、`qq:group:1080353942`、
+`provider-status-primary`、descriptor/Provider 资源版本和最多 1 次调用。
+每份计划均经 operator 激活，证明结束后立即由 break-glass 暂停。前四份
+于 06:25–06:26 证明三个停止面和成功 canary；第五份于 06:43 单独证明
+rollout plan pause。
+
+真实结果如下：
+
+- global stop、descriptor suspension 和 Provider quarantine 分别在各自调用
+  deadline 前使 Provider lease 返回 204，调用仍在 `queued`，attempt 为 0；
+- 独立 rollout-pause 计划在 Provider 停止期间先排队、随后暂停，在 deadline
+  前手工 lease 同样为 204/queued/attempt=0；Provider 重启后也没有领取；
+- 这四条队列没有被删除或伪造回滚，而是由生产 reaper 按已有契约记录
+  `queued -> timed_out / deadline_expired`；
+- 成功 canary 只有一个 attempt 和 fence=1，完整转移为
+  `propose -> queue -> lease -> start -> complete_success`；
+- 输出为 `provider_runtime/status=ok`，descriptor hash 和 implementation hash 与
+  reviewed authority 精确一致；实测 wall time 371 ms、CPU 351 ms、峰值内存
+  51,187,712 bytes、输入 28 bytes、输出 299 bytes、artifact 0 bytes；
+- canary 窗口内 `responses` 表零新增，也没有任何
+  `qq:admin_api:*` 触发来源的 response；Provider 仍没有平台发送能力。
+
+首轮演练脚本最后曾把三条未执行队列误写为应当终止于 `expired`，因而在
+主体证明全部完成后返回了非零退出码。此偏差没有改变生产状态：单测、
+本文“状态恢复与不确定性”矩阵和数据库转移均明确规定 queued deadline 是
+`timed_out`。`finally` 已将 Core 恢复为 `ledger_only`，Provider 保持运行。
+第五份脚本已按 `timed_out` 契约验收并以零码退出，两个新会话均显式
+logout/revoked；首轮四个未 logout 会话在再次开启控制面前已全部过期。五份计划
+现均为 `paused/rv3`、消费数 1/1，无 active plan/lease；descriptor
+为 `active/rv4`，Provider 为 `active/rv3`。
+
+这一证据签署了四个独立 stop 和首次只读 canary，不等于 Phase 3b
+整体完成。过期 lease、Core/Provider 中断、旧 fence、重复完成、取消竞态、
+safe retry 和 `unknown_completion` 仍要完成生产故障矩阵；在此之前不扩大
+conversation、caller 或工具集合。

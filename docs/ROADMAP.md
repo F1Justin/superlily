@@ -32,11 +32,14 @@ PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.
 独立 worker、硬 wall-time/输出边界和带裕量的 320 MiB 诚实预算。详细边界见
 `docs/PHASE3B_EXECUTION.md`。
 
-`0015` 与新 Provider 已在生产以 `ledger_only` 安全空转：迁移 head/no drift、
-Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot 心跳均已
-形成证据。canary 前修订的 `status.inspect@1.0.2` 也已作为 reviewed authority 导入，
-新 Provider 正在精确报告它，但没有激活。生产 canary、中断/恢复演练和稳定窗口尚未
-签署。
+`0015` 与新 Provider 先在生产以 `ledger_only` 安全空转，随后又在
+`0015d_rollout_plans` 上完成首次有界生产执行。`status.inspect@1.0.2`
+已通过审阅者控制面激活为 `active/rv4`；五份来自完整 Git commit
+的单次计划分别证明 global stop、descriptor suspension、Provider quarantine、
+rollout plan pause 和一次成功 canary。四条停止路径在 deadline 前均为
+lease=204/零 attempt；成功路径仅产生 1 个 attempt/fence，没有平台发送。当前五份
+计划均已暂停，Core 恢复 `ledger_only`、无 active plan/lease。稳定窗口和
+剩余中断/恢复故障矩阵尚未签署。
 
 直接改数据库激活 descriptor 的路径继续被禁止。ADR 0005 的治理包中，M0 会话/
 审计底座已默认禁用部署；M1 descriptor lifecycle preview/CAS 已完成实现、审查和
@@ -54,9 +57,10 @@ M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，Postg
 rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废止，执行模式只作为
 `off/ledger_only/canary` 上限；reviewed plan 精确绑定工具、会话、caller、Provider、
 资源版本、24 小时内窗口和调用上限，调用创建与 lease 都会重验并支持可审计 pause。
-默认禁用生产迁移已于 2026-07-19 完成：`0015d` head/no drift、四张 rollout 表全零、
-operator 为空、Registry 无 active plan/lease，真实 Provider lease=204 且零 attempt。
-真实停止演练和首个 `admin_api` 精确 canary 仍待签署。自然语言工具循环仍属 Phase 5。
+默认禁用生产迁移与首次计划已于 2026-07-19 完成：`0015d` head/no
+drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active plan/lease。
+四个独立 stop 和首个 `admin_api` 精确 canary 已有生产证据；剩余恢复故障矩阵
+与稳定窗口仍待签署。自然语言工具循环仍属 Phase 5。
 
 ## Sequencing rules
 
@@ -157,12 +161,12 @@ covered on SQLite and PostgreSQL.
 
 ### 3b. Invocation ledger and provider lease protocol
 
-状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
-`status.inspect@1.0.2` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
-安全空转、零 attempt。M0 控制面底座、M1 descriptor lifecycle 与 M2 Provider
-quarantine 已默认禁用部署；descriptor 仍为 `reviewed`。M3 Git-bound rollout plan
-已完成实现和关键回归，但默认禁用生产迁移与生产 canary 尚未签署。实施与回滚细节见
-`docs/PHASE3B_EXECUTION.md`。
+状态：`0014_tool_invocations`、`0015_tool_attempts`、M0–M3 控制面和
+`status.inspect@1.0.2` 已完成实现、双数据库回归与生产部署。
+`status.inspect@1.0.2` 已为 `active`；五份 Git-bound 单次计划已完成独立
+stop 和首次成功 canary，随后全部暂停，生产恢复 `ledger_only`。实施、
+证据与回滚细节见 `docs/PHASE3B_EXECUTION.md`、`docs/PHASE3_ACCEPTANCE.md`
+和 `docs/DEPLOYMENT.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,
   fencing tokens, deadlines, cancellation, structured errors, and artifact
