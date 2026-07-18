@@ -30,7 +30,7 @@ from .models import (
     ToolInvocationTransition,
     new_id,
 )
-from .settings import Settings
+from .settings import Settings, ToolRolloutScope
 from .tool_registry_service import tool_registry_view
 
 
@@ -60,6 +60,78 @@ def _not_found() -> HTTPException:
 def _snapshot(value: Any) -> tuple[Any, str]:
     canonical = canonicalize_json_value(value)
     return canonical.value, canonical.sha256
+
+
+def canonical_invocation_conversation(payload: ToolInvocationCreateIn) -> str:
+    return f"{payload.principal.platform}:{payload.principal.conversation_id}"
+
+
+def _matching_rollout_scope(
+    settings: Settings,
+    payload: ToolInvocationCreateIn,
+    identity: InvocationIdentity,
+) -> ToolRolloutScope | None:
+    if settings.tool_execution_mode == "canary":
+        scopes = settings.tool_canary_scopes
+    elif settings.tool_execution_mode == "enforce":
+        scopes = settings.tool_enforce_scopes
+    else:
+        return None
+    conversation = canonical_invocation_conversation(payload)
+    return next(
+        (
+            scope
+            for scope in scopes
+            if scope.tool_id == payload.tool_id
+            and scope.descriptor_version == payload.descriptor_version
+            and scope.descriptor_hash == payload.descriptor_hash
+            and scope.canonical_conversation == conversation
+            and scope.caller == identity.caller
+        ),
+        None,
+    )
+
+
+async def _rate_limit_exceeded(
+    session: AsyncSession,
+    descriptor: ToolDescriptor,
+    payload: ToolInvocationCreateIn,
+    selected_scope: ToolRolloutScope,
+    database_time: datetime,
+) -> bool:
+    rate = descriptor.rate_limit
+    statement = select(ToolInvocation).where(
+        ToolInvocation.created_at
+        >= database_time - timedelta(seconds=rate.window_seconds),
+        ToolInvocation.state.not_in({"rejected", "recorded_only"}),
+        ToolInvocation.execution_mode.in_({"canary", "enforce"}),
+    )
+    if rate.scope in {"tool", "provider", "conversation", "sender"}:
+        statement = statement.where(ToolInvocation.tool_id == descriptor.tool_id)
+    rows = list((await session.scalars(statement.order_by(ToolInvocation.created_at))).all())
+    canonical_conversation = canonical_invocation_conversation(payload)
+    count = 0
+    for row in rows:
+        if rate.scope == "provider":
+            matched = row.policy_snapshot_json.get("selected_provider_id") == selected_scope.provider_id
+        elif rate.scope == "conversation":
+            matched = (
+                row.policy_snapshot_json.get("canonical_conversation")
+                == canonical_conversation
+            )
+        elif rate.scope == "sender":
+            facts = row.principal_snapshot_json.get("facts", {})
+            matched = (
+                facts.get("platform") == payload.principal.platform
+                and facts.get("sender_id") == payload.principal.sender_id
+            )
+        else:
+            matched = True
+        if matched:
+            count += 1
+            if count >= rate.requests:
+                return True
+    return False
 
 
 async def _descriptor_record(
@@ -116,12 +188,6 @@ async def create_tool_invocation(
 
     if settings.tool_execution_mode == "off":
         raise _conflict("tool invocation creation is disabled")
-    if settings.tool_execution_mode != "ledger_only":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="executable tool modes are unavailable before the lease migration",
-        )
-
     descriptor_record = await _descriptor_record(session, payload)
     descriptor = ToolDescriptor.model_validate(descriptor_record.descriptor_json)
     try:
@@ -142,6 +208,7 @@ async def create_tool_invocation(
     if registry_version is None:
         raise _conflict("descriptor disappeared while evaluating invocation policy")
 
+    input_value, input_hash = _snapshot(payload.input)
     hard_reasons: list[str] = []
     if identity.caller not in descriptor.allowed_callers:
         hard_reasons.append("caller_forbidden")
@@ -153,14 +220,59 @@ async def create_tool_invocation(
     if descriptor_record.lifecycle in {"retired", "revoked"}:
         hard_reasons.append("inactive_descriptor")
 
-    effective_reasons = list(registry_version["effective"]["reasons"])
-    reasons = list(dict.fromkeys([*effective_reasons, *hard_reasons]))
-    decision = "rejected" if hard_reasons else "recorded_only"
-    reason_code = hard_reasons[0] if hard_reasons else "ledger_only"
-    event: InvocationTransitionEvent = "reject" if hard_reasons else "record_only"
-    database_time = await database_now(session)
+    input_limit = descriptor.resource_budget.input_bytes
+    if input_limit is not None and len(canonicalize_json_value(payload.input).canonical_bytes) > input_limit:
+        hard_reasons.append("input_budget_exceeded")
 
-    input_value, input_hash = _snapshot(payload.input)
+    effective_reasons = list(registry_version["effective"]["reasons"])
+    database_time = await database_now(session)
+    selected_scope = _matching_rollout_scope(settings, payload, identity)
+    selected_runtime: dict[str, Any] | None = None
+    execution_reasons: list[str] = []
+    if settings.tool_execution_mode in {"canary", "enforce"}:
+        if selected_scope is None:
+            execution_reasons.append("rollout_scope_mismatch")
+        else:
+            selected_runtime = next(
+                (
+                    item
+                    for item in registry_version["reported"]
+                    if item["provider_id"] == selected_scope.provider_id
+                    and item["runtime_eligible"]
+                ),
+                None,
+            )
+            if selected_runtime is None:
+                execution_reasons.extend(effective_reasons or ["provider_ineligible"])
+        if descriptor.confirmation != "never":
+            execution_reasons.append("confirmation_unavailable")
+        if (
+            selected_scope is not None
+            and selected_runtime is not None
+            and await _rate_limit_exceeded(
+                session,
+                descriptor,
+                payload,
+                selected_scope,
+                database_time,
+            )
+        ):
+            execution_reasons.append("rate_limited")
+        execution_reasons.extend(effective_reasons)
+
+    reasons = list(dict.fromkeys([*effective_reasons, *hard_reasons, *execution_reasons]))
+    if hard_reasons or execution_reasons:
+        decision = "rejected"
+        reason_code = (hard_reasons or execution_reasons)[0]
+        event: InvocationTransitionEvent = "reject"
+    elif settings.tool_execution_mode == "ledger_only":
+        decision = "recorded_only"
+        reason_code = "ledger_only"
+        event = "record_only"
+    else:
+        decision = "queued"
+        reason_code = f"{settings.tool_execution_mode}_queued"
+        event = "queue"
     descriptor_snapshot, _ = _snapshot(descriptor.model_dump(mode="json"))
     principal_snapshot, principal_hash = _snapshot(
         {
@@ -177,10 +289,8 @@ async def create_tool_invocation(
             "execution_mode": settings.tool_execution_mode,
             "global_stop": settings.tool_global_stop,
             "decision": decision,
-            "eligible_if_execution_enabled": bool(
-                registry_version["effective"]["eligible"] and not hard_reasons
-            ),
-            "queue_created": False,
+            "eligible_if_execution_enabled": not reasons,
+            "queue_created": decision == "queued",
             "lease_created": False,
             "effective_reasons": reasons,
             "missing_capabilities": missing_capabilities,
@@ -192,6 +302,31 @@ async def create_tool_invocation(
             "permission": descriptor.permission,
             "confirmation": descriptor.confirmation,
             "allowed_callers": descriptor.allowed_callers,
+            "canonical_conversation": canonical_invocation_conversation(payload),
+            "selected_provider_id": (
+                None if selected_scope is None else selected_scope.provider_id
+            ),
+            "rollout_scope": (
+                None
+                if selected_scope is None
+                else {
+                    "tool_id": selected_scope.tool_id,
+                    "descriptor_version": selected_scope.descriptor_version,
+                    "descriptor_hash": selected_scope.descriptor_hash,
+                    "canonical_conversation": selected_scope.canonical_conversation,
+                    "caller": selected_scope.caller,
+                    "provider_id": selected_scope.provider_id,
+                }
+            ),
+            "rate_limit": descriptor.rate_limit.model_dump(mode="json"),
+            "selected_inventory_hash": (
+                None if selected_runtime is None else selected_runtime["inventory_hash"]
+            ),
+            "selected_implementation_hash": (
+                None if selected_runtime is None else selected_runtime["implementation_hash"]
+            ),
+            "resource_budget": descriptor.resource_budget.model_dump(mode="json"),
+            "execution_permissions": descriptor.execution_permissions.model_dump(mode="json"),
             "provider_observations": registry_version["reported"],
         }
     )
@@ -214,12 +349,13 @@ async def create_tool_invocation(
         capability_hash=capability_hash,
         policy_snapshot_json=policy_snapshot,
         policy_hash=policy_hash,
+        selected_provider_id=(None if selected_scope is None else selected_scope.provider_id),
         execution_mode=settings.tool_execution_mode,
         state=decision,
         transition_sequence=2,
         reason_code=reason_code,
         deadline_at=database_time + timedelta(milliseconds=descriptor.timeout_ms),
-        terminal_at=database_time,
+        terminal_at=(database_time if decision in TERMINAL_INVOCATION_STATES else None),
         created_at=database_time,
         updated_at=database_time,
     )
@@ -243,7 +379,7 @@ async def create_tool_invocation(
             "eligible_if_execution_enabled": policy_snapshot[
                 "eligible_if_execution_enabled"
             ],
-            "queue_created": False,
+            "queue_created": decision == "queued",
             "lease_created": False,
         }
     )
@@ -333,6 +469,7 @@ async def invocation_view(session: AsyncSession, invocation: ToolInvocation) -> 
         },
         "policy": invocation.policy_snapshot_json,
         "policy_hash": invocation.policy_hash,
+        "selected_provider_id": invocation.selected_provider_id,
         "execution_mode": invocation.execution_mode,
         "state": invocation.state,
         "reason_code": invocation.reason_code,

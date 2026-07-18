@@ -106,9 +106,10 @@ async def test_empty_registry_is_admin_only_and_has_no_execution_authority(clien
         "schema_version": "1.0",
         "execution": {
             "mode": "off",
-            "global_stop": False,
-            "invocation_endpoints": False,
-            "leases_enabled": False,
+                "global_stop": False,
+                "invocation_endpoints": False,
+                "lease_endpoint": True,
+                "leases_enabled": False,
             "natural_language_callers": False,
         },
         "summary": {
@@ -311,9 +312,14 @@ async def test_provider_auth_inventory_heartbeat_and_effective_state(client, app
     tool = payload["tools"][0]
     assert tool["reported"] == [
         {
-            "provider_id": "provider-status-primary",
-            "inventory_hash": inventory["snapshot_hash"],
-            "heartbeat_health": "healthy",
+                "provider_id": "provider-status-primary",
+                "inventory_hash": inventory["snapshot_hash"],
+                "implementation_hash": "a" * 64,
+                "budget_enforcement": {
+                    "output_bytes": "hard",
+                    "wall_time": "hard",
+                },
+                "heartbeat_health": "healthy",
             "reasons": [],
             "runtime_eligible": True,
         }

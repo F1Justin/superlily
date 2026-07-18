@@ -6,10 +6,18 @@ from pathlib import Path
 import httpx
 import pytest
 
-from superlily_contracts import ProviderRegistration, load_tool_descriptor
+from superlily_contracts import (
+    ProviderRegistration,
+    ToolExecutionStartIn,
+    ToolLeaseOut,
+    canonicalize_json_value,
+    load_tool_descriptor,
+)
 from superlily_core.tool_registry_service import import_tool_descriptor, register_tool_provider
 from superlily_provider_sdk import (
     ProviderRegistryClient,
+    ProviderExecutionClient,
+    ProviderExecutionError,
     ProviderReportError,
     ProviderToolImplementation,
 )
@@ -93,6 +101,11 @@ async def test_sdk_publishes_exact_authority_and_honest_runtime_capabilities(app
     assert tool["reported"][0] == {
         "provider_id": "provider-status-primary",
         "inventory_hash": inventory.snapshot_hash,
+        "implementation_hash": status_implementation_hash(),
+        "budget_enforcement": {
+            "output_bytes": "hard",
+            "wall_time": "unsupported",
+        },
         "heartbeat_health": "healthy",
         "reasons": ["budget_unenforceable"],
         "runtime_eligible": False,
@@ -106,6 +119,7 @@ async def test_sdk_publishes_exact_authority_and_honest_runtime_capabilities(app
         "mode": "off",
         "global_stop": False,
         "invocation_endpoints": False,
+        "lease_endpoint": True,
         "leases_enabled": False,
         "natural_language_callers": False,
     }
@@ -185,3 +199,92 @@ def test_sdk_rejects_unsafe_core_urls(base_url: str) -> None:
             tools=[_implementation()],
             max_concurrency=4,
         )
+
+
+async def test_execution_sdk_is_single_shot_and_validates_the_lease() -> None:
+    requests: list[httpx.Request] = []
+
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(503, json={"detail": "temporary"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable)) as http_client:
+        executor = ProviderExecutionClient(
+            base_url="https://core.example.test",
+            provider_id="provider-status-primary",
+            token="execution-token-that-must-not-leak",
+            client=http_client,
+        )
+        with pytest.raises(ProviderExecutionError) as failure:
+            await executor.request_lease("a" * 64)
+    assert len(requests) == 1
+    assert "execution-token-that-must-not-leak" not in str(failure.value)
+
+    input_value = {"scope": "provider_runtime"}
+    lease = ToolLeaseOut(
+        invocation_id="invocation-1",
+        attempt_id="attempt-1",
+        attempt_number=1,
+        fencing_token=1,
+        lease_secret="s" * 43,
+        provider_id="provider-status-primary",
+        inventory_hash="a" * 64,
+        implementation_hash="b" * 64,
+        tool_id="status.inspect",
+        descriptor_version="1.0.0",
+        descriptor_hash="c" * 64,
+        input=input_value,
+        input_hash=canonicalize_json_value(input_value).sha256,
+        deadline_at=datetime(2026, 7, 19, 0, 0, tzinfo=timezone.utc),
+        lease_expires_at=datetime(2026, 7, 19, 0, 0, tzinfo=timezone.utc),
+        resource_budget={"output_bytes": 32768},
+        execution_permissions={
+            "network": "deny",
+            "filesystem": "deny",
+            "subprocess": "deny",
+            "secrets": [],
+            "remote_fetch": "deny",
+            "artifacts": [],
+        },
+    )
+    responses = iter(
+        [
+            httpx.Response(204),
+            httpx.Response(200, json=lease.model_dump(mode="json")),
+        ]
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: next(responses))
+    ) as http_client:
+        executor = ProviderExecutionClient(
+            base_url="https://core.example.test",
+            provider_id="provider-status-primary",
+            token="provider-token",
+            client=http_client,
+        )
+        assert await executor.request_lease("a" * 64) is None
+        received = await executor.request_lease("a" * 64)
+    assert received == lease
+
+
+async def test_execution_sdk_rejects_empty_non_lease_receipt() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ) as http_client:
+        executor = ProviderExecutionClient(
+            base_url="https://core.example.test",
+            provider_id="provider-status-primary",
+            token="provider-token",
+            client=http_client,
+        )
+        with pytest.raises(ProviderExecutionError, match="empty execution receipt"):
+            await executor.start(
+                "invocation-1",
+                ToolExecutionStartIn.model_validate(
+                    {
+                        "attempt_id": "attempt-1",
+                        "fencing_token": 1,
+                        "lease_secret": "s" * 43,
+                    }
+                ),
+            )

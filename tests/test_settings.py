@@ -10,7 +10,7 @@ from superlily_core.settings import Settings
         ("correlation_window_seconds", -1),
         ("raw_max_bytes", 1_023),
         ("claim_mode", "unsafe"),
-        ("tool_execution_mode", "canary"),
+        ("tool_execution_mode", "unsafe"),
     ],
 )
 def test_settings_reject_unsafe_control_plane_values(field: str, value: object) -> None:
@@ -57,13 +57,46 @@ def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> No
     settings = Settings.from_env()
 
     assert settings.tool_execution_mode == "ledger_only"
+    assert settings.tool_lease_seconds == 15
+    assert settings.tool_reaper_interval_seconds == 1
     assert settings.tool_global_stop is True
 
 
-def test_executable_tool_mode_is_rejected_before_attempt_migration(monkeypatch) -> None:
+def test_executable_tool_mode_requires_exact_reviewed_scope(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "enforce")
 
-    with pytest.raises(ValueError, match="until the lease migration exists"):
+    with pytest.raises(ValueError, match="explicit reviewed scope"):
+        Settings.from_env()
+
+
+def test_exact_canary_scope_loads_without_implicit_wildcards(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
+    monkeypatch.setenv(
+        "SUPERLILY_TOOL_CANARY_SCOPES_JSON",
+        '[{"tool_id":"status.inspect","descriptor_version":"1.0.0",'
+        '"descriptor_hash":"' + "a" * 64 + '",'
+        '"canonical_conversation":"qq:group:1080353942","caller":"admin_api",'
+        '"provider_id":"provider-status-primary"}]',
+    )
+    monkeypatch.setenv("SUPERLILY_TOOL_LEASE_SECONDS", "12")
+
+    settings = Settings.from_env()
+
+    assert settings.tool_execution_mode == "canary"
+    assert settings.tool_lease_seconds == 12
+    assert len(settings.tool_canary_scopes) == 1
+
+
+def test_rollout_scope_rejects_noncanonical_conversation(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
+    monkeypatch.setenv(
+        "SUPERLILY_TOOL_CANARY_SCOPES_JSON",
+        '[{"tool_id":"status.inspect","descriptor_version":"1.0.0",'
+        '"descriptor_hash":"' + "a" * 64 + '",'
+        '"canonical_conversation":"1080353942","caller":"admin_api",'
+        '"provider_id":"provider-status-primary"}]',
+    )
+    with pytest.raises(ValueError, match="platform:type:id"):
         Settings.from_env()
 
 

@@ -18,7 +18,7 @@ def test_revision_identifiers_fit_alembic_version_column() -> None:
     assert all(len(revision.revision) <= 32 for revision in revisions)
 
 
-def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
+def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "migration.sqlite"
@@ -73,8 +73,18 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
                 "AND tbl_name = 'tool_invocation_transitions'"
             ).fetchall()
         }
+        attempt_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tool_attempts)").fetchall()
+        }
+        attempt_event_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name = 'tool_attempt_events'"
+            ).fetchall()
+        }
 
-    assert version == ("0014_tool_invocations",)
+    assert version == ("0015_tool_attempts",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -91,9 +101,10 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
         "tool_providers",
         "tool_invocation_transitions",
         "tool_invocations",
+        "tool_attempt_events",
+        "tool_attempts",
     }
     assert descriptor_count == (0,)
-    assert not any("attempt" in table or "lease" in table for table in tool_tables)
     assert {
         "request_hash",
         "descriptor_snapshot_json",
@@ -101,6 +112,7 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
         "principal_hash",
         "capability_hash",
         "policy_hash",
+        "selected_provider_id",
         "execution_mode",
         "state",
         "transition_sequence",
@@ -110,6 +122,26 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
     assert transition_triggers == {
         "tool_invocation_transitions_no_update",
         "tool_invocation_transitions_no_delete",
+    }
+    assert {
+        "attempt_number",
+        "provider_id",
+        "inventory_hash",
+        "implementation_hash",
+        "fencing_token",
+        "lease_secret_hash",
+        "state",
+        "lease_expires_at",
+        "last_heartbeat_at",
+        "budget_hash",
+        "permissions_hash",
+        "usage_hash",
+        "output_hash",
+        "event_sequence",
+    }.issubset(attempt_columns)
+    assert attempt_event_triggers == {
+        "tool_attempt_events_no_update",
+        "tool_attempt_events_no_delete",
     }
     assert collection_tables == {
         "collector_watermarks",
@@ -129,6 +161,27 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
         "platform_extra_json",
         "capture_reason",
     }.issubset(observation_columns)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "0014_tool_invocations"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        tool_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'tool_%'"
+            ).fetchall()
+        }
+    assert version == ("0014_tool_invocations",)
+    assert "tool_attempts" not in tool_tables
+    assert "tool_attempt_events" not in tool_tables
+    assert "tool_invocations" in tool_tables
 
     subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "0013_collection_reliability"],
@@ -210,7 +263,7 @@ def test_sqlite_alembic_upgrade_reaches_invocation_ledger_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0014_tool_invocations",)
+    assert version == ("0015_tool_attempts",)
     assert descriptor_count == (0,)
 
     subprocess.run(

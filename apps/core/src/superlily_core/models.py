@@ -708,6 +708,7 @@ class ToolInvocation(Base):
     capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    selected_provider_id: Mapped[str | None] = mapped_column(String(128))
     execution_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     transition_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -752,6 +753,12 @@ class ToolInvocation(Base):
             name="ck_tool_invocation_terminal_time",
         ),
         Index("ix_tool_invocations_tool", "tool_id", "descriptor_version"),
+        Index(
+            "ix_tool_invocations_provider_queue",
+            "selected_provider_id",
+            "state",
+            "created_at",
+        ),
         Index("ix_tool_invocations_state_deadline", "state", "deadline_at"),
         Index("ix_tool_invocations_created", "created_at"),
     )
@@ -812,6 +819,122 @@ class ToolInvocationTransition(Base):
             "invocation_id",
             "created_at",
         ),
+    )
+
+
+class ToolAttempt(Base):
+    __tablename__ = "tool_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
+    )
+    inventory_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    lease_secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    budget_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    budget_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    permissions_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    permissions_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    usage_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    usage_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_json: Mapped[Any | None] = mapped_column(JSON)
+    output_hash: Mapped[str | None] = mapped_column(String(64))
+    provider_result_id: Mapped[str | None] = mapped_column(String(512))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    safe_error_detail: Mapped[str | None] = mapped_column(String(512))
+    event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "invocation_id",
+            "attempt_number",
+            name="uq_tool_attempt_number",
+        ),
+        UniqueConstraint(
+            "invocation_id",
+            "fencing_token",
+            name="uq_tool_attempt_fencing_token",
+        ),
+        CheckConstraint("attempt_number >= 1", name="ck_tool_attempt_number"),
+        CheckConstraint("fencing_token >= 1", name="ck_tool_attempt_fencing_token"),
+        CheckConstraint(
+            "event_sequence >= 1",
+            name="ck_tool_attempt_current_event_sequence",
+        ),
+        CheckConstraint(
+            "state IN ('leased', 'running', 'succeeded', 'failed', 'cancelled', "
+            "'lease_expired', 'unknown_completion')",
+            name="ck_tool_attempt_state",
+        ),
+        CheckConstraint(
+            "((state IN ('succeeded', 'failed', 'cancelled', 'lease_expired', "
+            "'unknown_completion') AND completed_at IS NOT NULL) OR "
+            "(state IN ('leased', 'running') AND completed_at IS NULL))",
+            name="ck_tool_attempt_terminal_time",
+        ),
+        Index(
+            "uq_tool_attempt_active_invocation",
+            "invocation_id",
+            unique=True,
+            postgresql_where=sql_text("state IN ('leased', 'running')"),
+            sqlite_where=sql_text("state IN ('leased', 'running')"),
+        ),
+        Index("ix_tool_attempt_provider_state", "provider_id", "state"),
+        Index("ix_tool_attempt_lease_expiry", "state", "lease_expires_at"),
+    )
+
+
+class ToolAttemptEvent(Base):
+    __tablename__ = "tool_attempt_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "sequence", name="uq_tool_attempt_event_sequence"),
+        CheckConstraint("sequence >= 1", name="ck_tool_attempt_event_sequence"),
+        CheckConstraint("fencing_token >= 1", name="ck_tool_attempt_event_fencing_token"),
+        CheckConstraint(
+            "event IN ('lease', 'start', 'heartbeat', 'complete', 'fail', 'cancel', "
+            "'lease_expire', 'reject')",
+            name="ck_tool_attempt_event_type",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'rejected')",
+            name="ck_tool_attempt_event_outcome",
+        ),
+        Index("ix_tool_attempt_events_created", "attempt_id", "created_at"),
     )
 
 
@@ -879,3 +1002,49 @@ event.listen(
     "after_drop",
     _INVOCATION_TRANSITION_POSTGRES_FUNCTION_DROP,
 )
+
+
+_ATTEMPT_EVENT_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_attempt_events_no_update
+    BEFORE UPDATE ON tool_attempt_events
+    BEGIN
+        SELECT RAISE(ABORT, 'tool attempt events are append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ATTEMPT_EVENT_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_attempt_events_no_delete
+    BEFORE DELETE ON tool_attempt_events
+    BEGIN
+        SELECT RAISE(ABORT, 'tool attempt events are append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ATTEMPT_EVENT_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_tool_attempt_event_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'tool attempt events are append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_ATTEMPT_EVENT_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_attempt_events_no_mutation
+    BEFORE UPDATE OR DELETE ON tool_attempt_events
+    FOR EACH ROW EXECUTE FUNCTION reject_tool_attempt_event_mutation()
+    """
+).execute_if(dialect="postgresql")
+_ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_tool_attempt_event_mutation()"
+).execute_if(dialect="postgresql")
+
+event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_SQLITE_UPDATE_TRIGGER)
+event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_SQLITE_DELETE_TRIGGER)
+event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_POSTGRES_FUNCTION)
+event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_POSTGRES_TRIGGER)
+event.listen(ToolAttemptEvent.__table__, "after_drop", _ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP)

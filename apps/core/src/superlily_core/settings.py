@@ -1,10 +1,30 @@
 import json
 import os
 from dataclasses import dataclass, field
+import re
 
 from .command_registry import DEFAULT_COMMAND_REGISTRY_PATH
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://superlily:superlily@127.0.0.1:5432/superlily"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRolloutScope:
+    tool_id: str
+    descriptor_version: str
+    descriptor_hash: str
+    canonical_conversation: str
+    caller: str
+    provider_id: str
+
+
+_TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+_SEMVER_RE = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z.-]+)?$"
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_OPAQUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$")
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -68,6 +88,74 @@ def _group_modes(value: str | None, *, variable: str) -> dict[str, str]:
     return modes
 
 
+def _tool_rollout_scopes(
+    value: str | None,
+    *,
+    variable: str,
+) -> frozenset[ToolRolloutScope]:
+    if not value:
+        return frozenset()
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{variable} must be a JSON array") from exc
+    if not isinstance(parsed, list):
+        raise ValueError(f"{variable} must be a JSON array")
+    expected = {
+        "tool_id",
+        "descriptor_version",
+        "descriptor_hash",
+        "canonical_conversation",
+        "caller",
+        "provider_id",
+    }
+    scopes: list[ToolRolloutScope] = []
+    for item in parsed:
+        if not isinstance(item, dict) or set(item) != expected:
+            raise ValueError(f"{variable} entries must contain the exact rollout scope fields")
+        if not all(isinstance(item[name], str) for name in expected):
+            raise ValueError(f"{variable} rollout scope fields must be strings")
+        scope = ToolRolloutScope(**item)
+        if not _TOOL_ID_RE.fullmatch(scope.tool_id):
+            raise ValueError(f"{variable} contains an invalid tool_id")
+        if not _SEMVER_RE.fullmatch(scope.descriptor_version):
+            raise ValueError(f"{variable} contains an invalid descriptor_version")
+        if not _SHA256_RE.fullmatch(scope.descriptor_hash):
+            raise ValueError(f"{variable} contains an invalid descriptor_hash")
+        if scope.caller not in {"command", "admin_api"}:
+            raise ValueError(f"{variable} caller must be command or admin_api")
+        if not _OPAQUE_RE.fullmatch(scope.provider_id):
+            raise ValueError(f"{variable} contains an invalid provider_id")
+        conversation_parts = scope.canonical_conversation.split(":", 2)
+        if (
+            len(conversation_parts) != 3
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", conversation_parts[0])
+            or conversation_parts[1] not in {"group", "private", "channel", "system"}
+            or not conversation_parts[2]
+        ):
+            raise ValueError(
+                f"{variable} canonical_conversation must use platform:type:id format"
+            )
+        scopes.append(scope)
+    if len(scopes) != len(set(scopes)):
+        raise ValueError(f"{variable} must not contain duplicate scopes")
+    execution_targets = {
+        (
+            scope.tool_id,
+            scope.descriptor_version,
+            scope.descriptor_hash,
+            scope.canonical_conversation,
+            scope.caller,
+        )
+        for scope in scopes
+    }
+    if len(execution_targets) != len(scopes):
+        raise ValueError(f"{variable} must select exactly one provider per execution target")
+    if len(scopes) > 1_000:
+        raise ValueError(f"{variable} must contain at most 1000 scopes")
+    return frozenset(scopes)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_url: str = DEFAULT_DATABASE_URL
@@ -84,6 +172,10 @@ class Settings:
     provider_heartbeat_stale_seconds: int = 90
     tool_execution_mode: str = "off"
     tool_global_stop: bool = False
+    tool_canary_scopes: frozenset[ToolRolloutScope] = field(default_factory=frozenset)
+    tool_enforce_scopes: frozenset[ToolRolloutScope] = field(default_factory=frozenset)
+    tool_lease_seconds: int = 15
+    tool_reaper_interval_seconds: int = 1
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
@@ -126,10 +218,16 @@ class Settings:
             raise ValueError("provider_inventory_stale_seconds must be between 1 and 86400")
         if not 1 <= self.provider_heartbeat_stale_seconds <= 86_400:
             raise ValueError("provider_heartbeat_stale_seconds must be between 1 and 86400")
-        if self.tool_execution_mode not in {"off", "ledger_only"}:
-            raise ValueError(
-                "tool_execution_mode must be off or ledger_only until the lease migration exists"
-            )
+        if self.tool_execution_mode not in {"off", "ledger_only", "canary", "enforce"}:
+            raise ValueError("tool_execution_mode must be off, ledger_only, canary, or enforce")
+        if self.tool_execution_mode == "canary" and not self.tool_canary_scopes:
+            raise ValueError("canary tool execution requires at least one exact canary scope")
+        if self.tool_execution_mode == "enforce" and not self.tool_enforce_scopes:
+            raise ValueError("enforce tool execution requires an explicit reviewed scope")
+        if not 1 <= self.tool_lease_seconds <= 300:
+            raise ValueError("tool_lease_seconds must be between 1 and 300")
+        if not 1 <= self.tool_reaper_interval_seconds <= 60:
+            raise ValueError("tool_reaper_interval_seconds must be between 1 and 60")
         valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
         if self.group_default_mode not in valid_group_modes:
             raise ValueError(
@@ -150,6 +248,13 @@ class Settings:
             return "full"
         key = f"{platform}:{conversation_type}:{canonical_conversation_id}"
         return self.group_modes.get(key, self.group_default_mode)
+
+    def active_tool_rollout_scopes(self) -> frozenset[ToolRolloutScope]:
+        if self.tool_execution_mode == "canary":
+            return self.tool_canary_scopes
+        if self.tool_execution_mode == "enforce":
+            return self.tool_enforce_scopes
+        return frozenset()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -188,6 +293,18 @@ class Settings:
                 "off",
             ).strip().lower(),
             tool_global_stop=_as_bool(os.getenv("SUPERLILY_TOOL_GLOBAL_STOP")),
+            tool_canary_scopes=_tool_rollout_scopes(
+                os.getenv("SUPERLILY_TOOL_CANARY_SCOPES_JSON", "[]"),
+                variable="SUPERLILY_TOOL_CANARY_SCOPES_JSON",
+            ),
+            tool_enforce_scopes=_tool_rollout_scopes(
+                os.getenv("SUPERLILY_TOOL_ENFORCE_SCOPES_JSON", "[]"),
+                variable="SUPERLILY_TOOL_ENFORCE_SCOPES_JSON",
+            ),
+            tool_lease_seconds=int(os.getenv("SUPERLILY_TOOL_LEASE_SECONDS", "15")),
+            tool_reaper_interval_seconds=int(
+                os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")
+            ),
             group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
             group_modes=_group_modes(
                 os.getenv("SUPERLILY_GROUP_MODES_JSON"),

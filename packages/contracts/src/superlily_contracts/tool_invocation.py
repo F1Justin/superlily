@@ -161,6 +161,17 @@ class InvocationPrincipal(InvocationContractModel):
             raise ValueError("source_event_id must not contain surrounding whitespace")
         return value
 
+    @model_validator(mode="after")
+    def validate_conversation_identity(self) -> "InvocationPrincipal":
+        expected_prefix = f"{self.conversation_type}:"
+        if not self.conversation_id.startswith(expected_prefix):
+            raise ValueError(
+                "conversation_id must use the conversation_type:id canonical form"
+            )
+        if len(self.conversation_id) == len(expected_prefix):
+            raise ValueError("conversation_id must contain an identifier after its type")
+        return self
+
 
 class ToolInvocationCreateIn(InvocationContractModel):
     schema_version: Literal["1.0"] = TOOL_INVOCATION_SCHEMA_VERSION

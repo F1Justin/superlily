@@ -15,6 +15,11 @@ from superlily_contracts import (
     ResponseIn,
     ToolInvocationCancelIn,
     ToolInvocationCreateIn,
+    ToolExecutionCompleteIn,
+    ToolExecutionFailIn,
+    ToolExecutionHeartbeatIn,
+    ToolExecutionStartIn,
+    ToolLeaseRequestIn,
 )
 
 from .audit import classify_decision_outcome
@@ -66,6 +71,14 @@ from .tool_invocation_service import (
     create_tool_invocation,
     get_tool_invocation,
     invocation_view,
+)
+from .tool_execution_service import (
+    attempt_views,
+    complete_tool_execution,
+    fail_tool_execution,
+    heartbeat_tool_execution,
+    lease_tool_execution,
+    start_tool_execution,
 )
 
 router = APIRouter()
@@ -1136,7 +1149,9 @@ async def get_tool_invocation_view(
     authenticated_caller: ToolInvocationIdentity,
 ) -> dict:
     invocation = await get_tool_invocation(session, invocation_id, authenticated_caller)
-    return await invocation_view(session, invocation)
+    result = await invocation_view(session, invocation)
+    result["attempts"] = await attempt_views(session, invocation.id)
+    return result
 
 
 @router.post("/v1/tool-invocations/{invocation_id}/cancel")
@@ -1152,4 +1167,84 @@ async def post_tool_invocation_cancel(
         authenticated_caller,
         payload.reason,
     )
-    return await invocation_view(session, invocation)
+    result = await invocation_view(session, invocation)
+    result["attempts"] = await attempt_views(session, invocation.id)
+    return result
+
+
+@router.post("/v1/tool-executions/lease", response_model=None)
+async def post_tool_execution_lease(
+    payload: ToolLeaseRequestIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> Response | dict:
+    lease = await lease_tool_execution(
+        session,
+        payload,
+        authenticated_provider,
+        session.info["settings"],
+    )
+    if lease is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return lease.model_dump(mode="json")
+
+
+@router.post("/v1/tool-executions/{invocation_id}/start")
+async def post_tool_execution_start(
+    invocation_id: str,
+    payload: ToolExecutionStartIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    return await start_tool_execution(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+    )
+
+
+@router.post("/v1/tool-executions/{invocation_id}/heartbeat")
+async def post_tool_execution_heartbeat(
+    invocation_id: str,
+    payload: ToolExecutionHeartbeatIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    return await heartbeat_tool_execution(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+        session.info["settings"],
+    )
+
+
+@router.post("/v1/tool-executions/{invocation_id}/complete")
+async def post_tool_execution_complete(
+    invocation_id: str,
+    payload: ToolExecutionCompleteIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    return await complete_tool_execution(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+    )
+
+
+@router.post("/v1/tool-executions/{invocation_id}/fail")
+async def post_tool_execution_fail(
+    invocation_id: str,
+    payload: ToolExecutionFailIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    return await fail_tool_execution(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+    )

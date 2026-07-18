@@ -675,11 +675,27 @@ async def tool_registry_view(
                 heartbeat_age=heartbeat_age,
                 settings=settings,
             )
+            inventory_entry = next(
+                (
+                    item
+                    for item in ([] if inventory is None else entries_by_snapshot.get(inventory.id, []))
+                    if item.tool_id == descriptor.tool_id
+                ),
+                None,
+            )
             provider_reason_sets.append(reasons)
             runtime.append(
                 {
                     "provider_id": provider_id,
                     "inventory_hash": None if inventory is None else inventory.snapshot_hash,
+                    "implementation_hash": (
+                        None if inventory_entry is None else inventory_entry.implementation_hash
+                    ),
+                    "budget_enforcement": (
+                        None
+                        if inventory_entry is None
+                        else inventory_entry.budget_enforcement_json
+                    ),
                     "heartbeat_health": None if heartbeat is None else heartbeat.health,
                     "reasons": _ordered_reasons(reasons),
                     "runtime_eligible": not reasons,
@@ -729,8 +745,10 @@ async def tool_registry_view(
         "execution": {
             "mode": settings.tool_execution_mode,
             "global_stop": settings.tool_global_stop,
-            "invocation_endpoints": settings.tool_execution_mode == "ledger_only",
-            "leases_enabled": False,
+            "invocation_endpoints": settings.tool_execution_mode != "off",
+            "lease_endpoint": True,
+            "leases_enabled": settings.tool_execution_mode in {"canary", "enforce"}
+            and not settings.tool_global_stop,
             "natural_language_callers": False,
         },
         "summary": {

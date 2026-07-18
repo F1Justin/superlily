@@ -89,6 +89,7 @@ def test_invocation_request_hash_is_canonical_and_identity_bound() -> None:
         lambda payload: payload.update({"input": {"value": float("nan")}}),
         lambda payload: payload["principal"].update({"platform_roles": ["member", "member"]}),
         lambda payload: payload["principal"].update({"sender_id": " user "}),
+        lambda payload: payload["principal"].update({"conversation_id": "private:1080353942"}),
     ],
 )
 def test_invocation_contract_rejects_ambiguous_or_unbounded_values(mutation) -> None:

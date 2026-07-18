@@ -83,7 +83,7 @@ def admin_headers(idempotency_key: str) -> dict[str, str]:
     }
 
 
-async def make_descriptor_and_provider_eligible(client, app, descriptor) -> None:
+async def make_descriptor_and_provider_eligible(client, app, descriptor) -> str:
     async with app.state.database.sessions() as session:
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
         assert stored is not None
@@ -159,6 +159,7 @@ async def make_descriptor_and_provider_eligible(client, app, descriptor) -> None
         headers={"Authorization": "Bearer provider-status-secret"},
     )
     assert heartbeat.status_code == 200, heartbeat.text
+    return snapshot_hash
 
 
 async def test_ledger_only_records_policy_evidence_without_queue_or_lease(client, app) -> None:
@@ -190,7 +191,12 @@ async def test_ledger_only_records_policy_evidence_without_queue_or_lease(client
         "record_only",
     ]
     assert [item["sequence"] for item in body["transitions"]] == [1, 2]
-    assert (await client.post("/v1/tool-executions/lease", json={})).status_code == 404
+    lease = await client.post(
+        "/v1/tool-executions/lease",
+        json={"schema_version": "1.0", "inventory_hash": "a" * 64},
+        headers={"Authorization": "Bearer provider-status-secret"},
+    )
+    assert lease.status_code == 204
 
     replay = await client.post(
         "/v1/tool-invocations",
@@ -311,6 +317,7 @@ async def test_eligible_ledger_only_proposal_still_creates_no_queue_or_lease(cli
         "mode": "ledger_only",
         "global_stop": False,
         "invocation_endpoints": True,
+        "lease_endpoint": True,
         "leases_enabled": False,
         "natural_language_callers": False,
     }
