@@ -9,6 +9,7 @@ COPY pyproject.toml README.md alembic.ini ./
 COPY deploy/constraints.txt ./deploy/constraints.txt
 COPY apps ./apps
 COPY packages ./packages
+COPY registry ./registry
 RUN python -m pip install --constraint deploy/constraints.txt . && chmod -R a+rX /app
 
 USER 65532:65532

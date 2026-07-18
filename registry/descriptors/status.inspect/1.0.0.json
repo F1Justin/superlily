@@ -1,0 +1,111 @@
+{
+  "tool_id": "status.inspect",
+  "version": "1.0.0",
+  "title": "Inspect the status provider runtime",
+  "description": "Return a bounded structured liveness snapshot of the standalone Superlily status provider. This bootstrap tool does not inspect host resources, query external services, render an image, or send a platform message.",
+  "provider_selector": {
+    "provider_ids": ["provider-status-primary"],
+    "protocol": "superlily-provider-pull-v1"
+  },
+  "source_plugin": "superlily_status_provider.status",
+  "schema_profile": "json-schema-2020-12-superlily-v1",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "scope": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 16,
+        "enum": ["provider_runtime"]
+      }
+    },
+    "required": ["scope"],
+    "additionalProperties": false,
+    "minProperties": 1,
+    "maxProperties": 1
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 11,
+        "enum": ["ok", "degraded", "unavailable"]
+      },
+      "checked_at": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40
+      },
+      "scope": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 16,
+        "const": "provider_runtime"
+      },
+      "provider_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "const": "provider-status-primary"
+      },
+      "descriptor_hash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "implementation_hash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "status",
+      "checked_at",
+      "scope",
+      "provider_id",
+      "descriptor_hash",
+      "implementation_hash"
+    ],
+    "additionalProperties": false,
+    "minProperties": 6,
+    "maxProperties": 6
+  },
+  "side_effect": "read",
+  "determinism": "external_state",
+  "retry_policy": "retry_safe",
+  "permission": "public",
+  "confirmation": "never",
+  "allowed_callers": ["command", "admin_api"],
+  "natural_language": false,
+  "timeout_ms": 5000,
+  "concurrency_limit": 4,
+  "rate_limit": {
+    "requests": 10,
+    "window_seconds": 60,
+    "scope": "sender"
+  },
+  "resource_budget": {
+    "cpu_ms": 1000,
+    "memory_bytes": 67108864,
+    "input_bytes": 4096,
+    "output_bytes": 32768,
+    "artifact_bytes": null
+  },
+  "required_budget_enforcement": ["wall_time", "output_bytes"],
+  "execution_permissions": {
+    "network": "deny",
+    "filesystem": "deny",
+    "subprocess": "deny",
+    "secrets": [],
+    "remote_fetch": "deny",
+    "artifacts": []
+  },
+  "required_capabilities": [],
+  "data_classification": "public",
+  "result_retention_seconds": 2592000
+}

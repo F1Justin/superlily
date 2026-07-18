@@ -18,12 +18,13 @@ same tool protocol that future natural-language planning will use.
 **Status:** Phase 3a implementation is in progress. The signed policy-v6 Phase
 2 gate is recorded in `PHASE2_FINAL_AUDIT.md`; contracts, migration
 `0012_tool_registry`, Git-bound local imports, provider reporting, and
-admin-only effective-state reads are deployed in zero-authority mode. The
-production Registry has no Provider credential or descriptor, all future
-imports start `reviewed` rather than `active`, and execution authority remains
-hard-off. `PHASE3_ACCEPTANCE.md` is the executable release checklist, the
-accepted ADRs under `docs/adr/` freeze the first implementation decisions, and
-this document defines the architecture.
+admin-only effective-state reads are deployed in zero-authority mode. The real
+`status.inspect` authority, shared Provider SDK, and a reporting-only status
+runtime are now the current rollout slice. Descriptors still import only as
+`reviewed`, the runtime has no invocation/lease consumer, and execution
+authority remains hard-off. `PHASE3_ACCEPTANCE.md` is the executable release
+checklist, the accepted ADRs under `docs/adr/` freeze the first implementation
+decisions, and this document defines the architecture.
 
 ## Non-goals
 
@@ -173,6 +174,15 @@ Dynamic provider state is split again:
 A fresh heartbeat cannot refresh stale inventory, and a fresh inventory does
 not prove the provider is healthy. Stable registration, latest inventory, and
 latest heartbeat are displayed separately in effective-state diagnostics.
+
+The shared Provider SDK is deliberately smaller than a general agent runtime.
+In Phase 3a it can load the same reviewed descriptor bytes with the same
+validator/JCS implementation as Core and the CLI, construct a deterministic
+inventory, authenticate inventory/heartbeat reports, and retry only the same
+bounded report. It has no invocation create, lease, execution, artifact,
+command parsing, model, rendering, or platform-send method. Provider-specific
+code supplies an implementation hash and reports budget support honestly;
+loading an SDK object never activates a descriptor.
 
 A tool is eligible only when descriptor and runtime identity match, the
 snapshot is fresh, the provider is online, and the caller/principal/capability
@@ -443,9 +453,21 @@ Proves descriptor registration, provider freshness, lease, structured output,
 audit, timeout, and command compatibility without expensive compute or
 artifacts.
 
-The first implementation may wrap Lily's existing status plugin, but it still
-uses the provider pull protocol. It does not execute inside the Core FastAPI
-process and does not receive the Core admin token.
+The reviewed `1.0.0` bootstrap scope is only `provider_runtime`: it returns a
+small structured self-liveness result from a standalone process. It does not
+wrap Lily's current `nonebot_plugin_picstatus` command because that command
+combines host/bot collection, network tests, background-image fetching,
+rendering, and platform delivery, which conflicts with this descriptor's
+no-network/no-filesystem structured boundary. The old command remains
+unchanged. A later version may add separately permissioned service scopes.
+
+During Phase 3a the standalone process invokes the operation only as a local
+self-test and reports inventory/heartbeat. It has no lease consumer and Core
+has no invocation route. Until the Phase 3b executor adds a hard wall-time
+supervisor, the runtime reports wall-time enforcement as `unsupported`, so the
+effective view must show `budget_unenforceable` in addition to
+`inactive_descriptor` and `execution_off`. This is evidence of honest reduced
+authority, not a failure to be hidden.
 
 ### Second: `wolfram.run`
 
@@ -519,13 +541,17 @@ After the start checklist is green, implementation begins in this exact order:
 4. Import the Git descriptor bundle, authenticate provider inventory/heartbeat,
    and expose admin-only desired/runtime/effective views. Deploy with zero
    active descriptors, execution `off`, and prove discovery grants no authority.
-5. Import/review only `status.inspect`; keep execution `off` while collecting
-   descriptor/provider/effective-state evidence. A read-only control-panel view
-   may begin here, but no mutation UI.
+5. Import/review only the real `status.inspect` authority and run its
+   reporting-only Provider SDK process; keep execution `off` while collecting
+   exact descriptor/provider/effective-state evidence. The expected Phase 3a
+   reason includes `budget_unenforceable` until the later hard wall-time
+   executor exists. A read-only control-panel view may begin here, but no
+   mutation UI.
 6. Add migration `0014_tool_invocations`, transition/DB-time/reaper tests, and
    `ledger_only` proposals. No provider lease exists yet.
 7. Add migration `0015_tool_attempts`, lease/fence fault injection, all three
-   stop controls, then a standalone status provider. Canary the exact
+   stop controls, then upgrade the reporting-only status process with the
+   standalone hard-budget lease executor. Canary the exact
    tool/version/conversation/caller/provider tuple and prove rollback.
 8. Add migration `0016_tool_confirmations_artifacts` and pass reservation,
    upload, finalize, expiry, quota, MIME/hash, reaper, and late-fence tests.

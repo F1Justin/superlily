@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-07-18
+- Migration numbering amended by: ADR 0007
 
 ## Context
 
@@ -30,9 +31,9 @@ authority over a newer attempt.
 
 ## Consequences
 
-Migration `0013_tool_invocations` can support `ledger_only` without leases.
-Migration `0014_tool_attempts` adds executable lease/fence state only after the
-transition table passes both databases.
+The invocation ledger can support `ledger_only` without leases. Executable
+lease/fence state is added only after the transition table passes both
+databases. ADR 0007 assigns the post-C0-D migration numbers.
 
 ## Required evidence
 

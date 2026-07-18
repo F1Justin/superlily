@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-07-18
+- Migration numbering amended by: ADR 0007
 
 ## Context
 
@@ -27,9 +28,10 @@ provider attempt and independently verified by Core.
 
 ## Consequences
 
-Migration `0015_tool_confirmations_artifacts` precedes image-producing Wolfram
-and `latex.render`. Storage implementation may change in Phase 4 without
-changing content identity or invocation references.
+The confirmation/artifact migration precedes image-producing Wolfram and
+`latex.render`; ADR 0007 assigns its post-C0-D migration number. Storage
+implementation may change in Phase 4 without changing content identity or
+invocation references.
 
 ## Required evidence
 

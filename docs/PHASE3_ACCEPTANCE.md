@@ -20,10 +20,10 @@ evidence exists.
 
 - [ ] Git-reviewed descriptor bundles are the only authority source; import
   stores immutable canonical bytes/hash, commit, lifecycle and reviewer audit.
-- [ ] The restricted JSON Schema profile rejects duplicate keys, non-finite
+- [x] The restricted JSON Schema profile rejects duplicate keys, non-finite
   numbers, remote/dynamic refs, cycles, unknown/unsafe keywords and all size,
   depth, item and expansion-limit violations.
-- [ ] Shared JCS golden vectors produce identical canonical bytes/hash in Core,
+- [x] Shared JCS golden vectors produce identical canonical bytes/hash in Core,
   CLI and provider SDK; semantic Wolfram/LaTeX whitespace is preserved.
 - [x] Migration `0012_tool_registry` passes SQLite/PostgreSQL fresh upgrade,
   downgrade/re-upgrade, concurrency and production drift tests.

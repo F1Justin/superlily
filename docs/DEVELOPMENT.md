@@ -47,11 +47,29 @@ The descriptor under `vectors/` is a test vector, not an active registry entry.
 The CLI performs offline verification only and cannot import, activate, or run
 a tool.
 
+The reviewed production candidate and its reporting-only implementation are
+verified separately:
+
+```bash
+.venv/bin/superlily-tool-registry verify-descriptor \
+  registry/descriptors/status.inspect/1.0.0.json
+.venv/bin/superlily-status-provider verify \
+  --descriptor registry/descriptors/status.inspect/1.0.0.json
+.venv/bin/pytest -q tests/test_provider_sdk.py tests/test_status_provider.py
+```
+
+The second command runs only a local schema-bound self-test. The Phase 3a SDK
+can publish inventory and heartbeat, but it has no invocation or lease client.
+The provider intentionally reports wall-time enforcement as `unsupported`
+until the Phase 3b hard-timeout executor exists.
+
 Phase 3a persistence and Core API regression tests are isolated with:
 
 ```bash
 .venv/bin/pytest -q \
   tests/test_tool_registry_contracts.py \
+  tests/test_provider_sdk.py \
+  tests/test_status_provider.py \
   tests/test_tool_registry_api.py \
   tests/test_migrations.py
 ```

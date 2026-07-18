@@ -13,3 +13,4 @@ Current records:
 - `0004-artifact-lifecycle-and-storage.md`
 - `0005-control-plane-authentication.md`
 - `0006-c0d-collection-reliability-boundary.md`
+- `0007-phase3-migration-allocation-after-c0d.md`

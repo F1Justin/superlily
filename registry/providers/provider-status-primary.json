@@ -1,0 +1,7 @@
+{
+  "provider_id": "provider-status-primary",
+  "owner": "superlily-operations",
+  "lifecycle": "active",
+  "allowed_protocols": ["superlily-provider-pull-v1"],
+  "tool_selectors": ["status.inspect"]
+}

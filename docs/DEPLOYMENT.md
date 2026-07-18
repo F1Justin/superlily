@@ -66,14 +66,19 @@ SUPERLILY_CLAIM_REQUIRED_OBSERVATIONS=2
 SUPERLILY_CLAIM_COALESCE_MILLISECONDS=200
 ```
 
-Phase 3a Provider credentials are a third, unrelated token class. Keep the map
-empty for the first schema deployment; an empty map makes both Provider write
-endpoints return 401 and leaves the Registry with zero reported providers.
+Phase 3a Provider credentials are a third, unrelated token class. The first
+schema deployment kept this map empty, which made both Provider write endpoints
+return 401 and left the Registry with zero reported providers. The reviewed
+`status.inspect` rollout adds exactly one independently generated mapping and
+passes the same value only to the status-provider process:
 
 ```dotenv
-SUPERLILY_PROVIDER_TOKENS_JSON={}
+SUPERLILY_PROVIDER_TOKENS_JSON={"provider-status-primary":"independent-random-token"}
+SUPERLILY_STATUS_PROVIDER_TOKEN=independent-random-token
 SUPERLILY_PROVIDER_INVENTORY_STALE_SECONDS=600
 SUPERLILY_PROVIDER_HEARTBEAT_STALE_SECONDS=90
+SUPERLILY_STATUS_PROVIDER_HEARTBEAT_SECONDS=30
+SUPERLILY_STATUS_PROVIDER_INVENTORY_SECONDS=300
 ```
 
 When a reviewed Provider is introduced later, generate a new token that is not
@@ -82,6 +87,35 @@ create the stable registration through the local
 `superlily-tool-registry-admin` command. Do not place Provider tokens in a
 descriptor, inventory, heartbeat metadata, logs, browser storage, or exported
 evidence.
+
+After the authority commit exists, obtain its canonical hash and use the local
+administration CLI against that exact full commit. Both commands create
+reviewed/registered state only; neither can activate or execute the tool:
+
+```bash
+commit=$(git rev-parse HEAD)
+bundle_hash=$(
+  .venv/bin/superlily-tool-registry verify-descriptor \
+    registry/descriptors/status.inspect/1.0.0.json \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["descriptor_hash"])'
+)
+.venv/bin/superlily-tool-registry-admin import-descriptor \
+  registry/descriptors/status.inspect/1.0.0.json \
+  --repository . \
+  --source-commit "$commit" \
+  --bundle-hash "$bundle_hash" \
+  --reviewer phase3-status-review
+.venv/bin/superlily-tool-registry-admin register-provider \
+  registry/providers/provider-status-primary.json \
+  --actor phase3-status-review
+```
+
+The status-provider container has a read-only root filesystem, no Linux
+capabilities, no inbound port and only the shared bus needed to report to Core.
+In this slice it repeatedly runs a local structured self-test and publishes
+inventory/heartbeat; it cannot accept a lease or send a QQ message. Its
+expected effective-state reasons are `inactive_descriptor`,
+`budget_unenforceable`, and `execution_off`.
 
 ## 2. Lily bridge
 
@@ -179,13 +213,14 @@ Do not jump directly from shadow to enforcement.
 ## 6. Phase 3 deployment boundary
 
 The first `0012_tool_registry` production deployment completed on 2026-07-18
-after the Phase 2 signature. It keeps `SUPERLILY_PROVIDER_TOKENS_JSON={}`,
-imports no descriptor, exposes only the admin read surface, and reports
-`active_descriptors=0`, `eligible_tools=0`, and execution `off`. Keep this
-zero-authority state until the Provider SDK, real descriptor review and their
-separate rollout authorization are ready. Follow `PHASE3_ACCEPTANCE.md` and
-`PHASE3_TOOL_REGISTRY.md`. The future control panel described in
-`CONTROL_PLANE.md` remains read-only until its own authentication,
+after the Phase 2 signature with `SUPERLILY_PROVIDER_TOKENS_JSON={}`, no
+descriptor, and execution `off`. The next authorized Phase 3a slice adds only
+the reviewed real `status.inspect` authority, one stable Provider credential,
+and its reporting-only runtime. Descriptor lifecycle remains `reviewed`, hard
+wall-time remains honestly unsupported, and Core still has no invocation,
+attempt, lease, execution, or natural-language route. Follow
+`PHASE3_ACCEPTANCE.md` and `PHASE3_TOOL_REGISTRY.md`. The future control panel
+described in `CONTROL_PLANE.md` remains read-only until its own authentication,
 authorization, preview, audit, and mutation gates pass.
 
 ## 7. C0-D durable ingress rollout and rollback
