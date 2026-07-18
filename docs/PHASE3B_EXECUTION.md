@@ -186,3 +186,20 @@ logout/revoked；首轮四个未 logout 会话在再次开启控制面前已全�
 整体完成。过期 lease、Core/Provider 中断、旧 fence、重复完成、取消竞态、
 safe retry 和 `unknown_completion` 仍要完成生产故障矩阵；在此之前不扩大
 conversation、caller 或工具集合。
+
+## 第二批故障矩阵实施包
+
+第二批不再重复实现 Provider SDK 或 `status.inspect`，而是验证它们在异常条件下的
+真实收敛。详细矩阵、短 lease 数学、八份单调用 plan、正式驱动器、Core/数据库中断
+边界和验收门见 `PHASE3_FAULT_DRILLS.md`。
+
+实现新增明确回归：第二 fence 成功后旧 worker 与重复完成仍被拒绝；完成与取消竞态
+进入 `unknown_completion`；取消未确认在 lease 过期后进入
+`cancellation_unacknowledged`；Provider 自报 2099/1970 时间均不能延长数据库
+deadline。生产 authority 仍是一次只激活一份、每份最多 1 次的 Git-bound plan，
+驱动器本身不能激活计划或管理容器。
+
+提交前完整回归为 SQLite 395 项通过、4 项 PostgreSQL 专用场景跳过；同一提交在
+一次性 PostgreSQL 17.10 上为 399 项全部通过。13 份已提交/待提交的 status 单调用
+authority 均由生产合同逐份解析，并统一验证精确工具、hash、conversation、caller、
+Provider、`max_invocations=1` 和 `rollback_mode=ledger_only`。

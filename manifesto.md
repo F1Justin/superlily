@@ -328,6 +328,15 @@ M2 Provider quarantine 随后完成实现与双数据库全量回归。security_
 
 M3 随后用 `0015d_rollout_plans` 和 ADR 0011 关闭环境 scope 旁路。首包只允许 Git-reviewed、最长 24 小时、带调用上限且回退到 `ledger_only` 的精确 canary plan，明确拒绝 `enforce`；operator 可激活/暂停，break-glass 只能暂停。调用创建与 lease 都锁定并重验 plan，非匹配和漂移安全降级；计划暂停接受后不能新增 lease。SQLite 最终全量 370 项通过、4 项 PostgreSQL 专用测试跳过，PostgreSQL 17 全量 374 项通过。M3 已部署到生产 `0015d`，前四份 Git-reviewed 单次计划于 06:25–06:26 CST 完成三个独立停止证明和一次只读成功 canary，第五份于 06:43 直接证明 rollout plan pause。成功路径为 `propose -> queue -> lease -> start -> complete_success`，只有一个 attempt/fence；四条受停止保护的队列均在零 attempt 下按既有契约终止为 `timed_out`。当前五份计划均为 `paused/rv3`且无 active plan/lease，Core 已回到 `ledger_only`。
 
+同日开始的第二批故障矩阵不再重复建设 Provider SDK 或 status 工具，而是补齐异常
+收敛：短 lease safe retry 与单调 fence、旧 worker/重复完成拒绝、非法输出、快慢
+Provider 时钟、取消确认、取消/完成竞态、取消未确认，以及 Core/PostgreSQL 中断。
+这批实现已有正式、脱敏的单场景驱动器和八份 Git-bound 单调用计划；每次仍只允许
+`admin_api + qq:group:1080353942 + status.inspect@1.0.2`，不发送 QQ，不扩大模型
+authority。完整 SQLite 为 395 项通过、4 项 PostgreSQL 专用场景跳过；PostgreSQL
+17.10 为 399 项全部通过。生产演练与稳定窗口完成前，Phase 3b 仍不签署整体退出。
+详细边界见 `docs/PHASE3_FAULT_DRILLS.md`。
+
 9. 第四阶段：统一 Renderer
 
 第四阶段目标是建立统一渲染系统。所有长文本、Markdown、LaTeX、Wolfram 图形、代码块、状态卡片、抽奖结果、活动流程、OBS 字幕卡片都应当通过 Renderer 生成标准输出。工具只返回结构化结果，不直接发送 QQ 消息。平台 adapter 根据自身能力发送文本、图片、HTML、Markdown、语音或字幕。
@@ -403,7 +412,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 3. M2 Provider quarantine、M3 Git-bound rollout plan、四种独立 stop 和首个单次 `admin_api` canary 已完成生产证明。继续保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚，禁止直接 SQL 代替。
 4. 当前五份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
 5. 首个无平台发送 canary 已记录真实 lease/start/complete、implementation hash 和资源使用；接下来不扩大会话或 caller，而是先完成恢复故障矩阵。
-6. 完成过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core 中断和 `unknown_completion` 的生产故障演练，再开始 `status.inspect` 稳定窗口。
+6. 过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core/PostgreSQL 中断和 `unknown_completion` 已拆成八份单调用计划并有正式驱动器；完成生产故障演练后，再开始 `status.inspect` 稳定窗口。
 7. `status.inspect` 签署后，才继续 `0016_tool_confirmations_artifacts`、文本模式 `wolfram.run` 和 `latex.render`；通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。

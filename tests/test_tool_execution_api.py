@@ -607,6 +607,42 @@ async def test_expired_lease_requeues_with_new_fence_and_rejects_old_worker(clie
         ).all()
         assert [item.state for item in attempts] == ["lease_expired", "running"]
 
+    output = successful_output(descriptor.descriptor_hash)
+    completed = await client.post(
+        f"/v1/tool-executions/{invocation['invocation_id']}/complete",
+        json={
+            **proof(second),
+            "provider_result_id": "status-result-retry-success-1",
+            "output": output,
+            "usage": completion_usage(output),
+        },
+        headers=PROVIDER_HEADERS,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["state"] == "succeeded"
+
+    late_old_worker = await client.post(
+        f"/v1/tool-executions/{invocation['invocation_id']}/complete",
+        json={
+            **proof(first),
+            "provider_result_id": "status-result-stale-retry-1",
+            "output": output,
+            "usage": completion_usage(output),
+        },
+        headers=PROVIDER_HEADERS,
+    )
+    assert late_old_worker.status_code == 409
+    view = await client.get(
+        f"/v1/tool-invocations/{invocation['invocation_id']}",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert view.status_code == 200
+    assert view.json()["state"] == "succeeded"
+    assert [item["state"] for item in view.json()["attempts"]] == [
+        "lease_expired",
+        "succeeded",
+    ]
+
 
 async def test_cancellation_request_is_observed_and_acknowledged(client, app) -> None:
     descriptor, snapshot_hash = await prepare_canary(client, app)
@@ -676,6 +712,90 @@ async def test_cancellation_before_start_can_be_acknowledged_without_unknown_sta
     assert acknowledged.status_code == 200, acknowledged.text
     assert acknowledged.json()["state"] == "cancelled"
     assert acknowledged.json()["started_at"] is None
+
+
+async def test_completion_racing_cancellation_becomes_unknown_completion(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    invocation = await create_queued(client, descriptor, key="attempt-cancel-race-1")
+    lease = (await pull_lease(client, snapshot_hash)).json()
+    assert (
+        await client.post(
+            f"/v1/tool-executions/{invocation['invocation_id']}/start",
+            json=proof(lease),
+            headers=PROVIDER_HEADERS,
+        )
+    ).status_code == 200
+    cancelled = await client.post(
+        f"/v1/tool-invocations/{invocation['invocation_id']}/cancel",
+        json={"schema_version": "1.0", "reason": "test completion cancellation race"},
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "cancel_requested"
+
+    output = successful_output(descriptor.descriptor_hash)
+    raced = await client.post(
+        f"/v1/tool-executions/{invocation['invocation_id']}/complete",
+        json={
+            **proof(lease),
+            "provider_result_id": "status-result-cancel-race-1",
+            "output": output,
+            "usage": completion_usage(output),
+        },
+        headers=PROVIDER_HEADERS,
+    )
+    assert raced.status_code == 200, raced.text
+    assert raced.json()["state"] == "unknown_completion"
+    assert raced.json()["output"] is None
+    assert raced.json()["output_hash"] is not None
+    view = await client.get(
+        f"/v1/tool-invocations/{invocation['invocation_id']}",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert view.status_code == 200
+    assert view.json()["state"] == "unknown_completion"
+    assert view.json()["reason_code"] == "completion_raced_cancellation"
+    assert [item["event"] for item in view.json()["transitions"]][-2:] == [
+        "request_cancel",
+        "unknown_completion",
+    ]
+
+
+async def test_unacknowledged_cancellation_expires_to_unknown_completion(client, app) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    invocation = await create_queued(client, descriptor, key="attempt-cancel-unack-1")
+    lease = (await pull_lease(client, snapshot_hash)).json()
+    assert (
+        await client.post(
+            f"/v1/tool-executions/{invocation['invocation_id']}/start",
+            json=proof(lease),
+            headers=PROVIDER_HEADERS,
+        )
+    ).status_code == 200
+    cancelled = await client.post(
+        f"/v1/tool-invocations/{invocation['invocation_id']}/cancel",
+        json={"schema_version": "1.0", "reason": "test unacknowledged cancellation"},
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "cancel_requested"
+
+    async with app.state.database.sessions() as session:
+        attempt = await session.get(ToolAttempt, lease["attempt_id"])
+        assert attempt is not None
+        attempt.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await session.commit()
+    async with app.state.database.sessions() as session:
+        assert await reap_expired_attempts(session) == [lease["attempt_id"]]
+
+    view = await client.get(
+        f"/v1/tool-invocations/{invocation['invocation_id']}",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert view.status_code == 200
+    assert view.json()["state"] == "unknown_completion"
+    assert view.json()["reason_code"] == "cancellation_unacknowledged"
+    assert view.json()["attempts"][0]["state"] == "lease_expired"
 
 
 async def test_core_lifespan_starts_and_stops_the_tool_reaper(app) -> None:
@@ -764,6 +884,75 @@ async def test_live_budget_violation_requests_cancellation(client, app) -> None:
         assert stored is not None
         assert stored.state == "cancel_requested"
         assert stored.reason_code == "budget_exceeded"
+
+
+async def test_provider_clock_skew_is_diagnostic_and_database_time_controls_lease(
+    client, app
+) -> None:
+    descriptor, snapshot_hash = await prepare_canary(client, app)
+    invocation = await create_queued(client, descriptor, key="attempt-clock-skew-1")
+    lease = (await pull_lease(client, snapshot_hash)).json()
+    assert (
+        await client.post(
+            f"/v1/tool-executions/{invocation['invocation_id']}/start",
+            json=proof(lease),
+            headers=PROVIDER_HEADERS,
+        )
+    ).status_code == 200
+
+    reported_times = [
+        "2099-01-01T00:00:00+00:00",
+        "1970-01-01T00:00:00+00:00",
+    ]
+    receipts = []
+    for reported_time in reported_times:
+        heartbeat = await client.post(
+            f"/v1/tool-executions/{invocation['invocation_id']}/heartbeat",
+            json={
+                **proof(lease),
+                "usage": ToolUsage(wall_time_ms=1).model_dump(mode="json"),
+                "provider_observed_at": reported_time,
+            },
+            headers=PROVIDER_HEADERS,
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
+        receipts.append(heartbeat.json())
+
+    deadline_at = datetime.fromisoformat(lease["deadline_at"])
+    assert all(
+        datetime.fromisoformat(receipt["lease_expires_at"]) <= deadline_at
+        for receipt in receipts
+    )
+    async with app.state.database.sessions() as session:
+        events = (
+            await session.scalars(
+                select(ToolAttemptEvent)
+                .where(
+                    ToolAttemptEvent.attempt_id == lease["attempt_id"],
+                    ToolAttemptEvent.event == "heartbeat",
+                )
+                .order_by(ToolAttemptEvent.sequence)
+            )
+        ).all()
+    assert [item.evidence_json["provider_observed_at"] for item in events] == reported_times
+    assert all(
+        datetime.fromisoformat(item.evidence_json["lease_expires_at"]) <= deadline_at
+        for item in events
+    )
+
+    output = successful_output(descriptor.descriptor_hash)
+    completed = await client.post(
+        f"/v1/tool-executions/{invocation['invocation_id']}/complete",
+        json={
+            **proof(lease),
+            "provider_result_id": "status-result-clock-skew-1",
+            "output": output,
+            "usage": completion_usage(output),
+        },
+        headers=PROVIDER_HEADERS,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["state"] == "succeeded"
 
 
 async def test_concurrent_pull_issues_only_one_active_lease(client, app) -> None:

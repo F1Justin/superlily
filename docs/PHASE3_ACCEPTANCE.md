@@ -410,6 +410,12 @@ Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。�
 - [ ] Restart, reaper crash, lease expiry, cancellation race, provider/Core
   outage, clock skew, invalid output, safe retry, unknown completion and queue
   starvation have deterministic tested outcomes.
+- [x] 第二批协议回归明确覆盖第二 fence 成功、旧 worker/重复完成拒绝、非法输出、
+  Provider 快慢时钟、取消确认、完成竞态和取消未确认；可复用驱动器输出不含
+  credential、lease secret 或请求/结果正文。完整 SQLite 为 395 通过、4 跳过，
+  PostgreSQL 17.10 为 399 通过。
+- [ ] 八份单调用故障 plan 完成生产导入、激活/暂停与真实 Core/PostgreSQL 中断；
+  两条预期 `unknown_completion` 均有解释，无 active attempt/plan 和平台发送。
 - [ ] Input/output, rate, concurrency, wall-time, CPU, memory and byte budgets
   are enforced or make the provider ineligible; best-effort is never labeled
   hard.

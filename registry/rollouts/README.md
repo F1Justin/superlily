@@ -17,3 +17,17 @@
   rollout plan pause 独立阻止 lease；
 - 导入只能得到 `reviewed`，激活/暂停仍需独立 operator/break-glass 会话。窗口过期或
   计划暂停后保留为不可变历史，不复制到长期策略中。
+
+2026-07-19 的第二组八份计划用于 Phase 3b 故障矩阵，窗口统一为
+07:00–13:00 CST，每份仍只允许 1 条 executable invocation：
+
+- `retry-fence` 同时证明 Provider 在已开始 attempt 中断后，短 lease 能安全重排队、
+  新 attempt 获得单调 fence、旧 worker 与重复完成均被拒绝，第二 attempt 成功；
+- `invalid-output` 与 `clock-skew` 分别证明非法结果 fail closed，以及 Provider 自报
+  时间只作诊断、不能延长数据库 deadline；
+- `cancel-ack`、`cancel-race`、`cancel-unack` 分别证明明确取消、完成竞态和未确认
+  取消的三种不同终态；后两项预期产生受解释的 `unknown_completion`，不是成功；
+- `core-outage` 与 `database-outage` 只证明持久账本在真实服务中断后由 reaper 收敛，
+  不在中断期间重放完成请求；
+- 八份计划均精确绑定当前 `active/rv4` descriptor 与 `active/rv3` Provider。一次只激活
+  一份；每项完成或失败后都先暂停当前 plan，再处理下一项。

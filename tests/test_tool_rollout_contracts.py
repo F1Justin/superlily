@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 
 import pytest
 
 from superlily_contracts import ToolRegistryContractError, load_tool_rollout_plan
+
+
+ROLLOUT_DIRECTORY = Path(__file__).parents[1] / "registry/rollouts"
 
 
 def _plan(**changes) -> dict:
@@ -86,3 +90,25 @@ def test_rollout_plan_rejects_duplicate_execution_target_with_other_provider() -
 
     with pytest.raises(ToolRegistryContractError):
         load_tool_rollout_plan(_source(value))
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(ROLLOUT_DIRECTORY.glob("status-inspect-*.json")),
+    ids=lambda path: path.name,
+)
+def test_committed_status_rollout_authorities_are_strict_and_single_call(path: Path) -> None:
+    loaded = load_tool_rollout_plan(path.read_bytes())
+    assert loaded.plan.mode == "canary"
+    assert loaded.plan.max_invocations == 1
+    assert loaded.plan.rollback_mode == "ledger_only"
+    assert len(loaded.plan.items) == 1
+    item = loaded.plan.items[0]
+    assert item.tool_id == "status.inspect"
+    assert item.descriptor_version == "1.0.2"
+    assert item.descriptor_hash == (
+        "0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd"
+    )
+    assert item.canonical_conversation == "qq:group:1080353942"
+    assert item.caller == "admin_api"
+    assert item.provider_id == "provider-status-primary"

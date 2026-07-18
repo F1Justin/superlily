@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "status-inspect-cancel-unack-20260719",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-19T07:00:00+08:00",
+  "expires_at": "2026-07-19T13:00:00+08:00",
+  "max_invocations": 1,
+  "rollback_mode": "ledger_only",
+  "reason": "Bounded unacknowledged cancellation production drill",
+  "items": [
+    {
+      "item_id": "status-inspect-admin",
+      "tool_id": "status.inspect",
+      "descriptor_version": "1.0.2",
+      "descriptor_hash": "0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "admin_api",
+      "provider_id": "provider-status-primary",
+      "expected_descriptor_resource_version": 4,
+      "expected_provider_resource_version": 3
+    }
+  ]
+}

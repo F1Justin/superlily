@@ -39,7 +39,8 @@ PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.
 rollout plan pause 和一次成功 canary。四条停止路径在 deadline 前均为
 lease=204/零 attempt；成功路径仅产生 1 个 attempt/fence，没有平台发送。当前五份
 计划均已暂停，Core 恢复 `ledger_only`、无 active plan/lease。稳定窗口和
-剩余中断/恢复故障矩阵尚未签署。
+剩余中断/恢复故障矩阵尚未签署。故障矩阵的权限拆分、账本终态、可复用驱动器和
+八份单调用计划见 `docs/PHASE3_FAULT_DRILLS.md`。
 
 直接改数据库激活 descriptor 的路径继续被禁止。ADR 0005 的治理包中，M0 会话/
 审计底座已默认禁用部署；M1 descriptor lifecycle preview/CAS 已完成实现、审查和
@@ -60,7 +61,10 @@ rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废
 默认禁用生产迁移与首次计划已于 2026-07-19 完成：`0015d` head/no
 drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active plan/lease。
 四个独立 stop 和首个 `admin_api` 精确 canary 已有生产证据；剩余恢复故障矩阵
-与稳定窗口仍待签署。自然语言工具循环仍属 Phase 5。
+与稳定窗口仍待签署。故障矩阵的协议回归、正式驱动器和八份 Git-bound 单次
+authority 已进入实施，完整 SQLite 为 395 通过、4 跳过，PostgreSQL 17.10 为
+399 通过。生产演练完成前不扩大 conversation、caller 或工具；自然语言工具循环仍属
+Phase 5。
 
 ## Sequencing rules
 

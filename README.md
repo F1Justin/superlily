@@ -1,43 +1,41 @@
 # Superlily
 
-Superlily is the Lily Core described in [`manifesto.md`](manifesto.md). Phase 1
-provides the observability spine; Phase 2 adds canonical correlation,
-deterministic decisions, authenticated runtime command inventory, outcome
-auditing, and an opt-in fail-open claim canary. Tool execution remains outside
-Core. Phase 3a has deployed authority contracts, bounded JSON Schema/JCS
-validation, provider inventory models, a verifier CLI, and shared vectors in
-zero-authority mode. The current priority is the authority-neutral C0-D
-collection-reliability packet; production tool authority and execution remain
-absent and disabled.
+Superlily 是 [`manifesto.md`](manifesto.md) 描述的 Lily Core。Phase 1 建立可观测
+脊柱；Phase 2 建立规范关联、确定性裁决、运行时命令清单、结果审计和 fail-open
+claim canary；C0-D 建立持久采集 spool、commit receipt、action observation 和覆盖诊断。
+这些阶段均已完成生产签署。
 
-The runtime is deliberately fail-open: telemetry failures never block either
-bot, and claim failures preserve their existing behavior.
+Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共享 SDK 已
+上线。Phase 3b 的 invocation/attempt 账本、lease/fence/reaper、控制面 M0–M3、
+`status.inspect@1.0.2` 和 Git-bound rollout plan 已部署；四个独立 stop 与一次无平台
+发送的生产 canary 已完成，所有首批计划随后暂停，Core 恢复 `ledger_only`。当前优先
+工作是完成异常恢复故障矩阵与稳定窗口，不扩大自然语言、conversation、caller 或
+工具集合。
 
-## Layout
+运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
+工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
 
-- `packages/contracts`: versioned ingestion/tool schemas, canonical authority
-  validation, shared vectors, and payload sanitization.
-- `apps/core`: FastAPI ingestion/query service and database models.
-- `bridges/lily_nonebot`: NoneBot event/API observer.
-- `bridges/nekro`: Nekro local plugin observer.
-- `deploy`: Docker Compose and integration examples.
-- `docs`: operations, security, and acceptance criteria.
+## 目录
 
-See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for local setup.
-The implementation sequence and cross-phase gates are in
-[`docs/ROADMAP.md`](docs/ROADMAP.md); the next-phase protocol is specified in
-[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md).
-The durable product consensus for archive-oriented event collection, nested
-merged forwards, platform actions, progressive tool disclosure, fast-path
-chat behavior, and cost-aware model routing is in
-[`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md).
-The deployed C0-D1 through C0-D4 boundary and the still-open C0-D5 fault and
-behavior gates are tracked separately in
-[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md).
-Renderer, agent, Watchdog, platform, memory, event, avatar, and optional
-runtime-replacement plans are decomposed in
-[`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md).
-The selected three-account high-availability topology is detailed in
-[`docs/PHASE6_THREE_ACCOUNT_HA.md`](docs/PHASE6_THREE_ACCOUNT_HA.md).
-The final Phase 2 production gate is reproducible from
-[`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md).
+- `packages/contracts`：版本化采集/工具合同、authority 校验、共享向量和 payload
+  sanitizer。
+- `apps/core`：FastAPI 采集/查询/工具账本/控制面服务和数据库模型。
+- `apps/status_provider`：独立、受硬边界约束的 `status.inspect` Provider。
+- `bridges/lily_nonebot`：Lily/NoneBot observer 与 durable reporter。
+- `bridges/nekro`：Nekro observer 与 durable reporter。
+- `registry`：Git-reviewed descriptor、Provider 和短时 rollout plan authority。
+- `deploy`：Docker Compose、固定依赖和集成配置。
+- `docs`：设计、运维、安全、路线和验收证据。
+
+## 文档入口
+
+- 本地开发：[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
+- 权威实施顺序：[`docs/ROADMAP.md`](docs/ROADMAP.md)
+- 第三阶段协议：[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md)
+- 第三阶段故障矩阵：[`docs/PHASE3_FAULT_DRILLS.md`](docs/PHASE3_FAULT_DRILLS.md)
+- 采集与 agent 共识：
+  [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
+- C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)
+- 后续阶段设计：[`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md)
+- 三账号高可用：[`docs/PHASE6_THREE_ACCOUNT_HA.md`](docs/PHASE6_THREE_ACCOUNT_HA.md)
+- Phase 2 最终审计：[`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md)
