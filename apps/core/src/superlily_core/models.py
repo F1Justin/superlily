@@ -938,6 +938,137 @@ class ToolAttemptEvent(Base):
     )
 
 
+_CONTROL_ROLES_SQL = "'auditor', 'operator', 'reviewer', 'security_admin', 'break_glass'"
+
+
+class ControlPlaneSession(Base):
+    __tablename__ = "control_plane_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    csrf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_reauthenticated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"role IN ({_CONTROL_ROLES_SQL})", name="ck_control_session_role"),
+        CheckConstraint("resource_version >= 1", name="ck_control_session_version"),
+        CheckConstraint("expires_at > issued_at", name="ck_control_session_expiry"),
+        Index("ix_control_sessions_operator_expiry", "operator_id", "expires_at"),
+    )
+
+
+class ControlPlaneLoginAttempt(Base):
+    __tablename__ = "control_plane_login_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operator_lookup_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_fingerprint_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('accepted', 'rejected')",
+            name="ck_control_login_outcome",
+        ),
+        Index("ix_control_login_operator_time", "operator_lookup_hash", "created_at"),
+        Index("ix_control_login_client_time", "client_fingerprint_hash", "created_at"),
+    )
+
+
+class ControlPlaneMutation(Base):
+    __tablename__ = "control_plane_mutations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("control_plane_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    preview_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_hash: Mapped[str | None] = mapped_column(String(64))
+    after_hash: Mapped[str | None] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    result_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "operator_id",
+            "operation",
+            "idempotency_key",
+            name="uq_control_mutation_idempotency",
+        ),
+        CheckConstraint(f"role IN ({_CONTROL_ROLES_SQL})", name="ck_control_mutation_role"),
+        CheckConstraint("expected_version >= 1", name="ck_control_mutation_version"),
+        CheckConstraint(
+            "outcome IN ('accepted', 'rejected')",
+            name="ck_control_mutation_outcome",
+        ),
+        Index("ix_control_mutations_target_time", "target_type", "target_id", "created_at"),
+    )
+
+
+class ControlPlaneAuditEvent(Base):
+    __tablename__ = "control_plane_audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("control_plane_sessions.id", ondelete="RESTRICT")
+    )
+    operator_id: Mapped[str | None] = mapped_column(String(64))
+    role: Mapped[str | None] = mapped_column(String(32))
+    event: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            f"role IS NULL OR role IN ({_CONTROL_ROLES_SQL})",
+            name="ck_control_audit_role",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'rejected')",
+            name="ck_control_audit_outcome",
+        ),
+        Index("ix_control_audit_created", "created_at"),
+        Index("ix_control_audit_operator_created", "operator_id", "created_at"),
+    )
+
+
 _INVOCATION_TRANSITION_SQLITE_UPDATE_TRIGGER = DDL(
     """
     CREATE TRIGGER tool_invocation_transitions_no_update
@@ -1048,3 +1179,77 @@ event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_SQLITE_D
 event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_POSTGRES_FUNCTION)
 event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_POSTGRES_TRIGGER)
 event.listen(ToolAttemptEvent.__table__, "after_drop", _ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP)
+
+
+_CONTROL_EVIDENCE_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_control_plane_evidence_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'control plane evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_CONTROL_EVIDENCE_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_control_plane_evidence_mutation()"
+).execute_if(dialect="postgresql")
+
+
+def _install_control_evidence_triggers(table) -> None:
+    name = table.name
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_update
+            BEFORE UPDATE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'control plane evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_delete
+            BEFORE DELETE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'control plane evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_mutation
+            BEFORE UPDATE OR DELETE ON {name}
+            FOR EACH ROW EXECUTE FUNCTION reject_control_plane_evidence_mutation()
+            """
+        ).execute_if(dialect="postgresql"),
+    )
+
+
+event.listen(
+    ControlPlaneLoginAttempt.__table__,
+    "after_create",
+    _CONTROL_EVIDENCE_POSTGRES_FUNCTION,
+)
+for _control_evidence_table in (
+    ControlPlaneLoginAttempt.__table__,
+    ControlPlaneMutation.__table__,
+    ControlPlaneAuditEvent.__table__,
+):
+    _install_control_evidence_triggers(_control_evidence_table)
+event.listen(
+    ControlPlaneLoginAttempt.__table__,
+    "after_drop",
+    _CONTROL_EVIDENCE_POSTGRES_FUNCTION_DROP,
+)

@@ -1,11 +1,9 @@
-# Architecture decision records
+# 架构决策记录
 
-Phase 3 uses short, committed architecture decision records before a contract
-or authority boundary is implemented. An accepted ADR can be superseded only
-by a later ADR; it is not edited into a different decision after production
-evidence exists.
+第三阶段在实现合同或 authority 边界前，先提交简短、可追溯的架构决策记录。已经
+接受的 ADR 只能由后续 ADR 取代；形成生产证据后，不得把原记录改写成另一项决定。
 
-Current records:
+当前记录：
 
 - `0001-descriptor-authority-and-canonicalization.md`
 - `0002-provider-identity-inventory-health.md`
@@ -14,3 +12,4 @@ Current records:
 - `0005-control-plane-authentication.md`
 - `0006-c0d-collection-reliability-boundary.md`
 - `0007-phase3-migration-allocation-after-c0d.md`
+- `0008-phase3-minimum-mutation-governance.md`

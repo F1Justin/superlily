@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 的 `0014_tool_invocations` 已在 `ledger_only` 中上线；`0015_tool_attempts`、Provider 拉取协议和 `status.inspect@1.0.1` 硬边界执行器也已按 `ledger_only` 部署并证明零 attempt。下一 authority 门是 ADR 0005 规定的受审计控制面 mutation 基础及其后的单一精确 canary；自然语言调用权仍未开放。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 的 `0014_tool_invocations` 已在 `ledger_only` 中上线；`0015_tool_attempts`、Provider 拉取协议和 `status.inspect@1.0.1` 硬边界执行器也已按 `ledger_only` 部署并证明零 attempt。ADR 0005/0008 的最小控制面 M0 会话与只追加审计底座已完成双数据库发布前验收，但默认没有 operator 配置，也没有任何 descriptor、Provider 或 canary mutation 端点。下一 authority 门是 M1–M3 的 preview/CAS/幂等治理及其后的单一精确 canary；自然语言调用权仍未开放。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 

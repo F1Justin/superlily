@@ -168,6 +168,24 @@ Provider 已按 `ledger_only` 部署。Core/Provider 镜像分别为
 0005 禁止在角色/会话、重认证、CAS、幂等、append-only 审计和回滚测试通过前执行
 activation/suspension/quarantine/canary mutation。直接 SQL 不可作为绕过方案。
 
+### 最小控制面 M0 发布前证据
+
+2026-07-19，ADR 0008 的 M0 会话与审计底座完成。`0015a_control_plane_auth` 在线性
+迁移史中接在 `0015_tool_attempts` 后，不占用已经冻结给 confirmation/artifact 的
+`0016`。operator authority 只来自严格版本化环境配置；默认空配置使控制面返回
+503，既有 admin/provider/ingest bearer 均不能兑换控制会话。
+
+SQLite 全量 323 项通过、1 项 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 全量
+324 项通过。覆盖 Secure/HttpOnly/SameSite cookie、内存态 CSRF、精确 Host/Origin/
+Content-Type、脱敏 422、CSP/no-store、数据库时间过期、配置撤权、登录限速、scrypt
+并发上限、再认证/退出 CAS、并发旧 CSRF 最多一次、secret 不落审计，以及
+login/mutation/audit 三表的 UPDATE/DELETE 拒绝。两种数据库均通过迁移往返和
+`alembic check`；PostgreSQL 另验证了真实 function/trigger 的创建与清除。
+
+M0 没有 descriptor lifecycle、Provider quarantine 或 rollout mutation 端点，不能
+单独解除 canary 门。下一包是 M1 的 server-computed preview、角色授权、资源版本
+CAS、幂等 apply、接受/拒绝审计与回滚测试。
+
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
   enforce uses its own exact allowlist.
@@ -211,11 +229,14 @@ activation/suspension/quarantine/canary mutation。直接 SQL 不可作为绕过
 
 ## Control panel, security, and operations
 
+- [x] M0 short server-side sessions, Secure cookie, CSRF/Origin/Host/content
+  type, DB-time expiry, reauthentication/logout CAS, rate limit, CSP,
+  redacted validation errors and append-only session audit pass both databases.
 - [ ] Read-only panel desired/reported/effective/actual counts and reason codes
   match direct API/SQL evidence; descriptor content is not edited in Phase 3.
-- [ ] Auditor/operator/reviewer/security-admin/break-glass boundaries, short
-  server-side sessions, CSRF/Origin, reauth, CAS, idempotency, preview, CSP,
-  redaction, export and append-only audit tests pass before any mutation.
+- [ ] Auditor/operator/reviewer/security-admin/break-glass mutation matrices,
+  idempotency, server preview, rollback, sensitive-read audit and bounded export
+  tests pass before any mutation authority is enabled.
 - [ ] No bearer token is in browser storage, logs, URLs, tool inputs/results,
   artifacts or exported evidence. Provider/bot/admin credentials are distinct
   and rotation/revocation is tested.

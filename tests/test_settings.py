@@ -127,3 +127,49 @@ def test_group_modes_reject_noncanonical_key(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_GROUP_MODES_JSON", '{"123":"full"}')
     with pytest.raises(ValueError, match="platform:group:id"):
         Settings.from_env()
+
+
+def test_control_operators_require_complete_exact_boundary_configuration(monkeypatch) -> None:
+    verifier = f"scrypt$16384$8$1${'A' * 22}${'B' * 43}"
+    monkeypatch.setenv(
+        "SUPERLILY_CONTROL_OPERATORS_JSON",
+        '{"schema_version":"1.0","operators":['
+        '{"operator_id":"reviewer.one","role":"reviewer",'
+        f'"password_hash":"{verifier}","enabled":true}}]}}',
+    )
+
+    with pytest.raises(ValueError, match="allowed hosts, allowed origins"):
+        Settings.from_env()
+
+    monkeypatch.setenv("SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON", '["control.test"]')
+    monkeypatch.setenv(
+        "SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON",
+        '["https://control.test"]',
+    )
+    monkeypatch.setenv(
+        "SUPERLILY_CONTROL_AUDIT_PEPPER",
+        "control-test-audit-pepper-32-bytes-minimum",
+    )
+    settings = Settings.from_env()
+
+    assert settings.control_operators["reviewer.one"].role == "reviewer"
+    assert settings.control_allowed_hosts == frozenset({"control.test"})
+    assert settings.control_allowed_origins == frozenset({"https://control.test"})
+    assert verifier not in repr(settings)
+    assert settings.control_audit_pepper not in repr(settings)
+
+
+def test_control_configuration_rejects_wildcard_or_non_https_authority(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON", '["*.example.test"]')
+
+    with pytest.raises(ValueError, match="invalid exact Host"):
+        Settings.from_env()
+
+    monkeypatch.setenv("SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON", '["control.test"]')
+    monkeypatch.setenv(
+        "SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON",
+        '["http://control.test"]',
+    )
+
+    with pytest.raises(ValueError, match="HTTPS origins"):
+        Settings.from_env()

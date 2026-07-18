@@ -40,6 +40,11 @@ mutation 基础：角色/短会话、重认证、preview、CAS、幂等、append
 回滚。该门通过后，才评审一个 `admin_api` 精确 canary；自然语言 tool loop 仍属
 Phase 5。
 
+该治理包的 M0 会话/审计底座已完成发布前实现：SQLite 323 项通过、1 项
+PostgreSQL 专用测试跳过，PostgreSQL 17 全量 324 项通过；两端 migration 往返、
+drift、CSRF/CAS、限速、脱敏和 append-only 证据均成立。M0 本身不提供 mutation
+端点，下一实现包是 M1 descriptor lifecycle preview/CAS。
+
 ## Sequencing rules
 
 1. A phase begins only after the previous phase's acceptance evidence exists,
@@ -140,8 +145,9 @@ covered on SQLite and PostgreSQL.
 ### 3b. Invocation ledger and provider lease protocol
 
 状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
-`status.inspect@1.0.1` 已完成实现与双数据库回归，等待以 `ledger_only` 部署。
-这表示执行底座已经可发布，不表示生产 canary 已签署。实施与回滚细节见
+`status.inspect@1.0.1` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
+安全空转、零 attempt。M0 控制面底座已完成发布前回归，但 descriptor 仍为
+`reviewed`，生产 canary 尚未签署。实施与回滚细节见
 `docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,

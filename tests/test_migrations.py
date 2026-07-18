@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 import sqlite3
@@ -8,6 +9,10 @@ import sys
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+import pytest
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import create_async_engine
 
 
 def test_revision_identifiers_fit_alembic_version_column() -> None:
@@ -18,7 +23,7 @@ def test_revision_identifiers_fit_alembic_version_column() -> None:
     assert all(len(revision.revision) <= 32 for revision in revisions)
 
 
-def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
+def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "migration.sqlite"
@@ -83,8 +88,22 @@ def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
                 "AND tbl_name = 'tool_attempt_events'"
             ).fetchall()
         }
+        control_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name LIKE 'control_plane_%'"
+            ).fetchall()
+        }
+        control_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name LIKE 'control_plane_%'"
+            ).fetchall()
+        }
 
-    assert version == ("0015_tool_attempts",)
+    assert version == ("0015a_control_plane_auth",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -143,6 +162,20 @@ def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
         "tool_attempt_events_no_update",
         "tool_attempt_events_no_delete",
     }
+    assert control_tables == {
+        "control_plane_sessions",
+        "control_plane_login_attempts",
+        "control_plane_mutations",
+        "control_plane_audit_events",
+    }
+    assert control_triggers == {
+        "control_plane_login_attempts_no_update",
+        "control_plane_login_attempts_no_delete",
+        "control_plane_mutations_no_update",
+        "control_plane_mutations_no_delete",
+        "control_plane_audit_events_no_update",
+        "control_plane_audit_events_no_delete",
+    }
     assert collection_tables == {
         "collector_watermarks",
         "conversation_capture_profiles",
@@ -161,6 +194,37 @@ def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
         "platform_extra_json",
         "capture_reason",
     }.issubset(observation_columns)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "check"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "0015_tool_attempts"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        control_tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name LIKE 'control_plane_%'"
+        ).fetchall()
+        attempt_tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name IN ('tool_attempts', 'tool_attempt_events')"
+        ).fetchall()
+    assert version == ("0015_tool_attempts",)
+    assert control_tables == []
+    assert {row[0] for row in attempt_tables} == {"tool_attempts", "tool_attempt_events"}
 
     subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "0014_tool_invocations"],
@@ -263,7 +327,7 @@ def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0015_tool_attempts",)
+    assert version == ("0015a_control_plane_auth",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -279,3 +343,104 @@ def test_sqlite_alembic_upgrade_reaches_attempt_lease_head_and_round_trips(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'alembic_version'"
         ).fetchall()
     assert application_tables == []
+
+
+def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
+    database_url = os.getenv("SUPERLILY_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("SUPERLILY_TEST_DATABASE_URL is not configured")
+    parsed = make_url(database_url)
+    assert parsed.drivername == "postgresql+asyncpg"
+    assert parsed.host in {"127.0.0.1", "localhost"}
+    assert parsed.database is not None and parsed.database.endswith("_test")
+    env = {**os.environ, "SUPERLILY_DATABASE_URL": database_url}
+    cwd = Path(__file__).parents[1]
+
+    def alembic(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "alembic", *arguments],
+            cwd=cwd,
+            env=env,
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+    async def snapshot() -> tuple[str | None, set[str], set[str], bool]:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                version_table = await connection.scalar(
+                    text(
+                        "SELECT to_regclass(current_schema() || '.alembic_version') IS NOT NULL"
+                    )
+                )
+                version = None
+                if version_table:
+                    version = await connection.scalar(text("SELECT version_num FROM alembic_version"))
+                tables = set(
+                    (
+                        await connection.scalars(
+                            text(
+                                "SELECT table_name FROM information_schema.tables "
+                                "WHERE table_schema = current_schema() "
+                                "AND table_name LIKE 'control_plane_%'"
+                            )
+                        )
+                    ).all()
+                )
+                triggers = set(
+                    (
+                        await connection.scalars(
+                            text(
+                                "SELECT trigger_name FROM information_schema.triggers "
+                                "WHERE event_object_schema = current_schema() "
+                                "AND event_object_table LIKE 'control_plane_%'"
+                            )
+                        )
+                    ).all()
+                )
+                function_exists = bool(
+                    await connection.scalar(
+                        text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_proc p "
+                            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                            "WHERE n.nspname = current_schema() "
+                            "AND p.proname = 'reject_control_plane_evidence_mutation')"
+                        )
+                    )
+                )
+                return version, tables, triggers, function_exists
+        finally:
+            await engine.dispose()
+
+    alembic("downgrade", "base")
+    try:
+        alembic("upgrade", "head")
+        version, tables, triggers, function_exists = asyncio.run(snapshot())
+        assert version == "0015a_control_plane_auth"
+        assert tables == {
+            "control_plane_sessions",
+            "control_plane_login_attempts",
+            "control_plane_mutations",
+            "control_plane_audit_events",
+        }
+        assert triggers == {
+            "control_plane_login_attempts_no_mutation",
+            "control_plane_mutations_no_mutation",
+            "control_plane_audit_events_no_mutation",
+        }
+        assert function_exists is True
+        alembic("check")
+
+        alembic("downgrade", "0015_tool_attempts")
+        version, tables, triggers, function_exists = asyncio.run(snapshot())
+        assert version == "0015_tool_attempts"
+        assert tables == set()
+        assert triggers == set()
+        assert function_exists is False
+
+        alembic("upgrade", "head")
+        assert asyncio.run(snapshot())[0] == "0015a_control_plane_auth"
+    finally:
+        alembic("downgrade", "base", check=False)

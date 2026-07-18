@@ -2,9 +2,13 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from .database import Database
+from .control_routes import router as control_router
 from .routes import router
 from .settings import Settings
 from .tool_execution_service import reap_expired_attempts
@@ -75,7 +79,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = active_settings
     app.state.database = database
+
+    @app.middleware("http")
+    async def control_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/v1/control/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; frame-ancestors 'none'"
+            )
+        return response
+
+    @app.exception_handler(RequestValidationError)
+    async def redact_control_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/v1/control/"):
+            return JSONResponse(status_code=422, content={"detail": "invalid control request"})
+        return await request_validation_exception_handler(request, exc)
+
     app.include_router(router)
+    app.include_router(control_router)
     return app
 
 

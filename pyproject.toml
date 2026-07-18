@@ -30,6 +30,7 @@ dev = [
 superlily-tool-registry = "superlily_contracts.tool_registry_cli:main"
 superlily-tool-registry-admin = "superlily_core.tool_registry_admin:main"
 superlily-status-provider = "superlily_status_provider.main:main"
+superlily-control-password = "superlily_core.control_plane_cli:main"
 
 [tool.setuptools]
 packages = ["superlily_core", "superlily_contracts", "superlily_provider_sdk", "superlily_status_provider"]

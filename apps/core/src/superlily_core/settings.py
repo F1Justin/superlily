@@ -18,6 +18,14 @@ class ToolRolloutScope:
     provider_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ControlOperator:
+    operator_id: str
+    role: str
+    password_hash: str = field(repr=False)
+    enabled: bool = True
+
+
 _TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _SEMVER_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
@@ -25,6 +33,11 @@ _SEMVER_RE = re.compile(
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _OPAQUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$")
+_CONTROL_OPERATOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
+_SCRYPT_HASH_RE = re.compile(
+    r"^scrypt\$16384\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$"
+)
+_CONTROL_ROLES = {"auditor", "operator", "reviewer", "security_admin", "break_glass"}
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -86,6 +99,50 @@ def _group_modes(value: str | None, *, variable: str) -> dict[str, str]:
             )
         modes[key] = mode
     return modes
+
+
+def _control_operators(value: str | None, *, variable: str) -> dict[str, ControlOperator]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{variable} must be valid JSON") from exc
+    if not isinstance(parsed, dict) or set(parsed) != {"schema_version", "operators"}:
+        raise ValueError(f"{variable} must contain schema_version and operators")
+    if parsed["schema_version"] != "1.0" or not isinstance(parsed["operators"], list):
+        raise ValueError(f"{variable} must use schema_version 1.0 and an operators array")
+    operators: dict[str, ControlOperator] = {}
+    expected = {"operator_id", "role", "password_hash", "enabled"}
+    for raw in parsed["operators"]:
+        if not isinstance(raw, dict) or set(raw) != expected:
+            raise ValueError(f"{variable} operator entries must contain the exact fields")
+        if (
+            not isinstance(raw["operator_id"], str)
+            or not isinstance(raw["role"], str)
+            or not isinstance(raw["password_hash"], str)
+            or not isinstance(raw["enabled"], bool)
+        ):
+            raise ValueError(f"{variable} operator fields have invalid types")
+        operator_id = raw["operator_id"]
+        role = raw["role"]
+        if not _CONTROL_OPERATOR_RE.fullmatch(operator_id):
+            raise ValueError(f"{variable} contains an invalid operator_id")
+        if role not in _CONTROL_ROLES:
+            raise ValueError(f"{variable} contains an invalid role")
+        if not _SCRYPT_HASH_RE.fullmatch(raw["password_hash"]):
+            raise ValueError(f"{variable} password_hash must use the bounded scrypt format")
+        if operator_id in operators:
+            raise ValueError(f"{variable} must not contain duplicate operator IDs")
+        operators[operator_id] = ControlOperator(
+            operator_id=operator_id,
+            role=role,
+            password_hash=raw["password_hash"],
+            enabled=raw["enabled"],
+        )
+    if len(operators) > 100:
+        raise ValueError(f"{variable} must contain at most 100 operators")
+    return operators
 
 
 def _tool_rollout_scopes(
@@ -176,6 +233,14 @@ class Settings:
     tool_enforce_scopes: frozenset[ToolRolloutScope] = field(default_factory=frozenset)
     tool_lease_seconds: int = 15
     tool_reaper_interval_seconds: int = 1
+    control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
+    control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
+    control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
+    control_audit_pepper: str = field(default="", repr=False)
+    control_session_seconds: int = 900
+    control_reauth_seconds: int = 300
+    control_login_attempts: int = 5
+    control_login_window_seconds: int = 300
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
@@ -228,6 +293,33 @@ class Settings:
             raise ValueError("tool_lease_seconds must be between 1 and 300")
         if not 1 <= self.tool_reaper_interval_seconds <= 60:
             raise ValueError("tool_reaper_interval_seconds must be between 1 and 60")
+        if any(
+            not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
+            or "/" in host
+            for host in self.control_allowed_hosts
+        ):
+            raise ValueError("control_allowed_hosts contains an invalid exact Host")
+        if any(
+            not re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", origin)
+            for origin in self.control_allowed_origins
+        ):
+            raise ValueError("control_allowed_origins must contain exact HTTPS origins")
+        if self.control_operators and (
+            not self.control_allowed_hosts
+            or not self.control_allowed_origins
+            or len(self.control_audit_pepper) < 32
+        ):
+            raise ValueError(
+                "control operators require allowed hosts, allowed origins, and a 32-byte audit pepper"
+            )
+        if not 60 <= self.control_session_seconds <= 3_600:
+            raise ValueError("control_session_seconds must be between 60 and 3600")
+        if not 30 <= self.control_reauth_seconds <= self.control_session_seconds:
+            raise ValueError("control_reauth_seconds must be between 30 and session lifetime")
+        if not 1 <= self.control_login_attempts <= 20:
+            raise ValueError("control_login_attempts must be between 1 and 20")
+        if not 60 <= self.control_login_window_seconds <= 3_600:
+            raise ValueError("control_login_window_seconds must be between 60 and 3600")
         valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
         if self.group_default_mode not in valid_group_modes:
             raise ValueError(
@@ -304,6 +396,31 @@ class Settings:
             tool_lease_seconds=int(os.getenv("SUPERLILY_TOOL_LEASE_SECONDS", "15")),
             tool_reaper_interval_seconds=int(
                 os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")
+            ),
+            control_operators=_control_operators(
+                os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),
+                variable="SUPERLILY_CONTROL_OPERATORS_JSON",
+            ),
+            control_allowed_hosts=_string_set(
+                os.getenv("SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON"),
+                variable="SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON",
+            ),
+            control_allowed_origins=_string_set(
+                os.getenv("SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON"),
+                variable="SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON",
+            ),
+            control_audit_pepper=os.getenv("SUPERLILY_CONTROL_AUDIT_PEPPER", ""),
+            control_session_seconds=int(
+                os.getenv("SUPERLILY_CONTROL_SESSION_SECONDS", "900")
+            ),
+            control_reauth_seconds=int(
+                os.getenv("SUPERLILY_CONTROL_REAUTH_SECONDS", "300")
+            ),
+            control_login_attempts=int(
+                os.getenv("SUPERLILY_CONTROL_LOGIN_ATTEMPTS", "5")
+            ),
+            control_login_window_seconds=int(
+                os.getenv("SUPERLILY_CONTROL_LOGIN_WINDOW_SECONDS", "300")
             ),
             group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
             group_modes=_group_modes(
