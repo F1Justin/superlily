@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 的 `0014_tool_invocations` 已在 `ledger_only` 中上线；`0015_tool_attempts`、Provider 拉取协议和 `status.inspect@1.0.1` 硬边界执行器也已按 `ledger_only` 部署并证明零 attempt。ADR 0005/0008/0009 的最小控制面 M0 会话/审计与 M1 descriptor lifecycle 均已完成双数据库验收，并以 operator 配置为空、5 张控制面表零记录的默认禁用状态部署。下一 authority 门是 M2 Provider quarantine 与 M3 精确 rollout plan；自然语言调用权仍未开放。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 的 `0014_tool_invocations` 已在 `ledger_only` 中上线；`0015_tool_attempts`、Provider 拉取协议和硬边界执行器也已按 `ledger_only` 部署并证明零 attempt。ADR 0005/0008/0009/0010 的最小控制面 M0 会话/审计、M1 descriptor lifecycle 与 M2 Provider quarantine 均已完成双数据库验收，并以 operator 配置为空、5 张控制面表零记录的默认禁用状态部署。`status.inspect@1.0.2` 已按完整 Git commit 导入为 reviewed authority，由 Provider 精确报告但未激活。下一 authority 门是 M3 精确 rollout plan；自然语言调用权仍未开放。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -320,11 +320,11 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
 
-同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 各通过 313 项测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。生产已经完成 `ledger_only` 迁移、hard budget inventory、健康 heartbeat、认证 lease=204 与零 attempt 签署。descriptor 仍为 `reviewed`；ADR 0005 所要求的 mutation 治理门完成前，不得直接改库激活或打开 canary。
+同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器；canary 前审查又将执行边界修订为不可变 `1.0.2`。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 通过测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。生产已经完成 `ledger_only` 迁移、hard budget inventory、健康 heartbeat、认证 lease=204 与零 attempt 签署。descriptor 仍为 `reviewed`；ADR 0005 所要求的 mutation 治理门完成前，不得直接改库激活或打开 canary。
 
-最小控制面随后完成 M0 与 M1 两包。M0 的短会话、独立 operator authority、CSRF、精确 Host/Origin/JSON、数据库时间过期、再认证/退出 CAS、登录限速和只追加审计已默认禁用部署。M1 新增持久 canonical preview、descriptor 单调资源版本、reviewer 权限、新鲜再认证、apply CAS、幂等重放/冲突、runtime drift 重算和反向 suspension/restore；数据库直接拒绝 authority 改写、证据删改以及没有匹配 lifecycle event 的状态更新。SQLite 全量 334 项通过、1 项 PostgreSQL 专用测试跳过；PostgreSQL 17 分段全量 335 项通过。生产已经默认禁用迁移到 `0015b_descriptor_mutations`，5 张控制面表为零、两个 descriptor 仍为 `reviewed/resource_version=1`、工具仍是 `ledger_only` 且零 attempt。M2 Provider quarantine、M3 精确 rollout plan 和任何真实 canary 均未签署。
+最小控制面随后完成 M0 与 M1 两包。M0 的短会话、独立 operator authority、CSRF、精确 Host/Origin/JSON、数据库时间过期、再认证/退出 CAS、登录限速和只追加审计已默认禁用部署。M1 新增持久 canonical preview、descriptor 单调资源版本、reviewer 权限、新鲜再认证、apply CAS、幂等重放/冲突、runtime drift 重算和反向 suspension/restore；数据库直接拒绝 authority 改写、证据删改以及没有匹配 lifecycle event 的状态更新。SQLite 全量 334 项通过、1 项 PostgreSQL 专用测试跳过；PostgreSQL 17 分段全量 335 项通过。生产已经默认禁用迁移到 `0015b_descriptor_mutations`，5 张控制面表为零、两个 descriptor 仍为 `reviewed/resource_version=1`、工具仍是 `ledger_only` 且零 attempt。M2 的实现与上线证据见下一段；M3 精确 rollout plan 和任何真实 canary 仍未签署。
 
-M2 Provider quarantine 随后完成实现与双数据库全量回归。security_admin 通过持久 preview、新鲜再认证、CAS 和幂等证据执行 `active <-> quarantined`；恢复必须重新验证 credential、inventory、heartbeat、协议和 implementation hash。lease 与 quarantine 共用 Provider 行锁，因此接受 quarantine 后不能产生新 lease；quarantined Provider 仍能上报恢复证据。SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计 343 项通过。同期 canary 前审查把 `status.inspect` 升为不可变 `1.0.2`：创建 worker 时不继承父环境，传输有界，并将无裕量的 256 MiB 申报修正为 320 MiB。M2 与 `1.0.2` 尚未部署，M3 精确 rollout plan 和任何真实 canary 仍未签署。
+M2 Provider quarantine 随后完成实现与双数据库全量回归。security_admin 通过持久 preview、新鲜再认证、CAS 和幂等证据执行 `active <-> quarantined`；恢复必须重新验证 credential、inventory、heartbeat、协议和 implementation hash。lease 与 quarantine 共用 Provider 行锁，因此接受 quarantine 后不能产生新 lease；quarantined Provider 仍能上报恢复证据。SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计 343 项通过。同期 canary 前审查把 `status.inspect` 升为不可变 `1.0.2`：创建 worker 时不继承父环境，传输有界，并将无裕量的 256 MiB 申报修正为 320 MiB。M2 与 `1.0.2` 已于 2026-07-19 默认禁用部署：生产为 `0015c` head/no drift，三版 descriptor 均为 reviewed，Provider 为 active/rv1 且精确报告 `1.0.2`，控制面五表和 attempt/event 均为零。M3 精确 rollout plan 和任何真实 canary 仍未签署。
 
 9. 第四阶段：统一 Renderer
 
@@ -396,9 +396,9 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 当前近期优先级已经从“实现执行底座”推进到“用最小 authority 签署执行底座”：
 
-1. `0015_tool_attempts`、`status.inspect@1.0.1` 的 `ledger_only` 与 M0 默认禁用生产签署已完成，继续观察零 attempt、inventory/heartbeat 与旧命令不变。
+1. `0015_tool_attempts`、`status.inspect@1.0.2` 的 `ledger_only` 与 M0 默认禁用生产签署已完成，继续观察零 attempt、inventory/heartbeat 与旧命令不变。
 2. M1 descriptor lifecycle 已完成实现、双数据库回归、生产备份/恢复和默认禁用迁移；继续观察零 mutation、零 attempt 和无 drift。
-3. 实现 M2 Provider quarantine 与 M3 Git-bound 精确 rollout plan，保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚；禁止直接 SQL 代替。
+3. M2 Provider quarantine 已完成双数据库回归、备份恢复和默认禁用生产签署；实现 M3 Git-bound 精确 rollout plan，继续保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚，禁止直接 SQL 代替。
 4. 治理门通过后，在生产边界分别演练 global stop、精确 descriptor suspension、Provider quarantine 和 scope withdrawal；任何一个开关都必须能独立阻止新 lease。
 5. 只为一个明确会话、`admin_api` caller、一个 descriptor hash 和一个 Provider 开放首个无平台发送 canary，记录真实 lease/start/heartbeat/complete 与资源使用；canary 前重新测量 `status.inspect` 子进程峰值内存并保留预算裕量。
 6. 完成过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core 中断和 `unknown_completion` 的生产故障演练，再考虑稳定窗口或扩大 canary。

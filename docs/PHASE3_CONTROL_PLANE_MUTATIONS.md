@@ -40,7 +40,11 @@ M2 Provider quarantine 也已完成实现、审查与发布前回归。新增
 lifecycle event 的数据库不可变约束。lease 与 quarantine 使用同一 Provider 行锁，
 保证 quarantine 接受后不再创建新 lease；quarantined Provider 仍可上报新鲜 runtime
 作为恢复证据。SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL
-17 分段全量 343 项通过。M2 尚未部署，M3 也尚未实现。
+17 分段全量 343 项通过。M2 已于 2026-07-19 04:52–04:54 CST 默认禁用部署：生产为
+`0015c_provider_quarantine` head 且无 drift，三版 descriptor 均为
+`reviewed/resource_version=1`，Provider 为 `active/resource_version=1`，控制面五表
+全零，工具仍为 `ledger_only` 且零 attempt。`status.inspect@1.0.2` 已按完整 Git commit
+导入并由 Provider 精确报告，但没有激活。M3 尚未实现。
 
 ## 分包顺序
 

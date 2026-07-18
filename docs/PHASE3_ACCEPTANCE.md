@@ -274,7 +274,32 @@ SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL 1
 343 项通过。测试覆盖默认禁用、角色/CSRF/再认证、quarantine/restore、runtime
 漂移与恢复 blocker、幂等、并发 CAS、preview/mutation 限速、直接 SQL 拒绝、secret
 不落证据、quarantine 期间上报和 lease 行锁。两种数据库迁移往返与 drift 均通过。
-这些是发布前证据；M2 默认禁用生产签署与 M3 rollout plan 仍未完成。
+这些是发布前证据；M2 默认禁用生产签署见下一节，M3 rollout plan 仍未完成。
+
+### Provider quarantine M2 生产默认禁用证据
+
+2026-07-19 04:52–04:54 CST，提交
+`1f12100a48df189b7829751af97a383173038d7f` 已部署。上线前备份
+`/home/justin/backups/superlily/20260719-phase3-control-m2/superlily-pre-control-m2-1f12100.dump`
+为 150,346,845 字节，SHA-256 为
+`02a8e7591f64935c8dc2c80d94367115ef2662006d2ad1ce276c5065ed67b3c9`；它已在独立
+PostgreSQL 17 中实际恢复出 `0015b`、386,440 条 source event 和预期的工具/控制面
+计数。临时容器已删除，主机备份保留。
+
+生产启动日志记录 `0015b_descriptor_mutations -> 0015c_provider_quarantine`，head/no
+drift 均通过。Core 与 Provider 镜像分别为
+`sha256:83e338743719da8d5534a76322792a8f06fcbd4cf758625c26ff5395a8d51504` 和
+`sha256:db13bb712ea72c3edf729a053d51b696e5d070131ff0eb262ce4d12636dcec8d`，
+镜像依赖检查通过。Git-bound 导入的 `status.inspect@1.0.2` 与旧两版均为
+`reviewed/resource_version=1`；Provider 为 `active/resource_version=1`，没有新增
+lifecycle mutation。最新 inventory/heartbeat 精确匹配 `1.0.2` 的 descriptor 与
+implementation hash、hard budgets、healthy 和 0/1 并发。
+
+8 个控制面/descriptor/Provider 只追加或 authority trigger 均存在。operator/pepper
+未配置，Host/Origin 为空数组；M2 preview 返回带安全响应头的 503。探测后 5 张控制面
+表仍全零。生产继续为 `ledger_only`、global stop=false、空 canary/enforce scopes、
+1 条既有 invocation、0 attempt/event。因此只签署 M2 默认禁用上线，不签署真实
+Provider mutation、descriptor activation 或 canary；M3 仍是下一 authority 门。
 
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
@@ -322,11 +347,13 @@ SQLite 全量 341 项通过、2 项 PostgreSQL 专用测试跳过；PostgreSQL 1
 - [x] M0 服务端短会话、Secure cookie、CSRF/Origin/Host/内容类型、数据库时间过期、
   再认证/退出 CAS、限速、CSP、脱敏校验错误和只追加会话审计在两种数据库通过。
 - [x] M1 reviewer descriptor lifecycle 的服务端 preview、CAS、幂等、反向回滚、
-  runtime 重算和只追加证据在两种数据库通过；生产默认禁用签署仍待完成。
+  runtime 重算和只追加证据在两种数据库通过，并已完成生产默认禁用签署。
+- [x] M2 security_admin Provider quarantine/restore、runtime 恢复门、lease 行锁、
+  数据库 authority trigger 与默认禁用生产部署均已签署。
 - [ ] 只读面板的 desired/reported/effective/actual 数量和 reason code 与直接 API/SQL
   证据一致；第三阶段不在线编辑 descriptor 内容。
-- [ ] M2/M3 的 security-admin/operator/break-glass 权限矩阵、Provider quarantine、
-  rollout plan、敏感读取审计和有界导出测试在任何 canary authority 启用前通过。
+- [ ] M3 的 operator/break-glass 权限矩阵、Git-bound rollout plan、敏感读取审计和
+  有界导出测试在任何 canary authority 启用前通过。
 - [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
   Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
 - [ ] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、

@@ -460,3 +460,48 @@ online，Provider 为 healthy、0/1 并发。
 回退应用时，才可 downgrade 到 `0015a_control_plane_auth`。一旦产生任何 preview、
 mutation、audit 或 lifecycle event，不得以 downgrade 删除证据；必须使用新的反向
 mutation 降低 authority。
+
+## 12. Provider quarantine M2 默认禁用上线记录
+
+2026-07-19 04:52–04:54 CST，提交
+`1f12100a48df189b7829751af97a383173038d7f` 的 Core 与 status Provider 完成替换，
+生产迁移从 `0015b_descriptor_mutations` 线性升级到
+`0015c_provider_quarantine`。Core 与 Provider 镜像分别为
+`sha256:83e338743719da8d5534a76322792a8f06fcbd4cf758625c26ff5395a8d51504` 和
+`sha256:db13bb712ea72c3edf729a053d51b696e5d070131ff0eb262ce4d12636dcec8d`，
+两张镜像内 `pip check` 均通过；Compose 配置哈希分别为
+`815ce6f44d709d7032a1c6e92d95a999c031fd8a0ee20218b3d8bec188ee685d` 和
+`ea06bcdd92005d0eb2d284c87383c031fb1cccfc83631736f2b9ddc1d9b2b05f`。
+PostgreSQL 没有重建。
+
+上线前自定义格式备份位于
+`/home/justin/backups/superlily/20260719-phase3-control-m2/superlily-pre-control-m2-1f12100.dump`，
+大小 150,346,845 字节、权限 `0600`、SHA-256
+`02a8e7591f64935c8dc2c80d94367115ef2662006d2ad1ce276c5065ed67b3c9`；
+备份目录权限为 `0700`。除 `pg_restore --list` 外，还在独立 PostgreSQL 17 容器中
+实际恢复出 `0015b_descriptor_mutations`、386,440 条 source event、2 个 descriptor、
+1 个 Provider、1 个 invocation、0 attempt，以及全零的 5 张控制面表。一次性容器和
+容器内副本已经删除，主机备份保留。
+
+生产启动日志明确记录 `0015b_descriptor_mutations -> 0015c_provider_quarantine`；
+`alembic current` 为 head，`alembic check` 无 drift。随后通过本机 Git-bound CLI 从
+上述完整提交导入 `status.inspect@1.0.2`，descriptor hash 为
+`0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd`，结果为
+`reviewed/resource_version=1`，没有激活。三版 descriptor 均保持 reviewed；Provider
+`provider-status-primary` 保持 `active/resource_version=1`，仅有原始 sequence=1
+lifecycle event，没有发生 quarantine/restore mutation。
+
+新 Provider 的最新 inventory 精确报告 `1.0.2`、上述 descriptor hash、implementation
+hash `156aaa422b4a1dd5290f31312512526866ba2826f1f04b318084c2bb166f4aac`、
+协议 `superlily-provider-pull-v1` 和 hard wall-time/output-bytes；heartbeat 为 healthy、
+0/1 并发。控制面 4 个只追加 trigger、descriptor 2 个 trigger 和 Provider 2 个 trigger
+均存在。operator 与 audit pepper 未配置，Host/Origin 为空数组；Provider preview
+路由带 `no-store`、`no-referrer`、`nosniff` 和 CSP 返回 503。探测后 5 张控制面表仍
+为 0。执行模式保持 `ledger_only`、global stop=false、canary/enforce scopes 均为空；
+既有 invocation 仍为 1 条，attempt 与 attempt event 均为 0。
+
+第一回滚手段是保持控制面默认关闭，并将 Provider 先退回旧镜像、Core 再退回旧镜像；
+`0015c` schema 可暂时保留，已导入的 `1.0.2` authority 也不得删除。只有确认没有任何
+Provider preview/mutation/audit、新 lifecycle event 或资源版本变化，已经另做新备份，
+且应用已同步回退时，才可考虑 downgrade 到 `0015b`。一旦产生治理证据，只能使用
+新的反向 mutation 降低 authority，禁止靠删表或 downgrade 抹除历史。

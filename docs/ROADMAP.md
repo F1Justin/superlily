@@ -34,7 +34,9 @@ PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.
 
 `0015` 与新 Provider 已在生产以 `ledger_only` 安全空转：迁移 head/no drift、
 Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot 心跳均已
-形成证据。生产 canary、中断/恢复演练和稳定窗口尚未签署。
+形成证据。canary 前修订的 `status.inspect@1.0.2` 也已作为 reviewed authority 导入，
+新 Provider 正在精确报告它，但没有激活。生产 canary、中断/恢复演练和稳定窗口尚未
+签署。
 
 直接改数据库激活 descriptor 的路径继续被禁止。ADR 0005 的治理包中，M0 会话/
 审计底座已默认禁用部署；M1 descriptor lifecycle preview/CAS 已完成实现、审查和
@@ -47,7 +49,9 @@ M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，Postg
 `0015b_descriptor_mutations`，operator/Host/Origin/pepper 为空，5 张控制面表为零，
 `ledger_only` 且零 attempt。M2 Provider quarantine 已完成实现、审查与双数据库
 全量回归：SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计
-343 项通过；默认禁用生产签署尚待完成。随后实现 M3 Git-bound 精确 rollout plan；
+343 项通过，并已默认禁用部署到 `0015c_provider_quarantine`：Provider 仍为
+`active/resource_version=1`，控制面五表为零，preview 返回 503。随后实现 M3
+Git-bound 精确 rollout plan；
 三包均签署后才评审一个 `admin_api` 精确 canary。自然语言工具循环仍属 Phase 5。
 
 ## Sequencing rules
@@ -150,9 +154,9 @@ covered on SQLite and PostgreSQL.
 ### 3b. Invocation ledger and provider lease protocol
 
 状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
-`status.inspect@1.0.1` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
-安全空转、零 attempt。M0 控制面底座与 M1 descriptor lifecycle 已默认禁用部署；
-descriptor 仍为 `reviewed`，M2/M3 与生产 canary 尚未签署。实施与回滚细节见
+`status.inspect@1.0.2` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
+安全空转、零 attempt。M0 控制面底座、M1 descriptor lifecycle 与 M2 Provider
+quarantine 已默认禁用部署；descriptor 仍为 `reviewed`，M3 与生产 canary 尚未签署。实施与回滚细节见
 `docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,
