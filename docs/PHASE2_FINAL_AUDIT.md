@@ -7,7 +7,10 @@ passed to both `phase2_final_audit.sql` and `policy_v6_backtest.sql`. Policy v6
 changes only the claim result for deterministic reply-to-other decisions, so
 final acceptance combines that stored-window backtest with a controlled live
 canary pair; it does not discard the completed window or require another fixed
-24-hour wait. Migration `0011_claim_ack` and bridge 0.3.2 remain unchanged.
+24-hour wait. Migration `0011_claim_ack` remains unchanged. The close-out audit
+then exposed a Nekro scheduler-attribution TTL defect: Lily remains on bridge
+0.3.2, while the task-binding Nekro bridge 0.3.4 is part of the final signed
+runtime.
 
 The completed policy-v4 window (`2026-07-15 10:15:49 CST` through
 `2026-07-16 10:15:49 CST`) is retained as diagnostic evidence, not acceptance.
@@ -199,7 +202,9 @@ After all violation sets are empty and every exceptional row is explained:
    unchanged invariants, then run `policy_v6_backtest.sql` over the same stored
    sources and review every counterfactual suppression row;
 2. deploy policy v6 Core only while retaining bridge 0.3.2, migration
-   `0011_claim_ack`, and the exact canary allowlist;
+   `0011_claim_ack`, and the exact canary allowlist; if the stored audit exposes
+   a bridge observability defect, fix and verify that defect without expanding
+   claim scope (the final runtime uses Nekro 0.3.4 for long-task attribution);
 3. pass controlled samples in `708309706`: Lily command, Nekro summon, reply to
    Lily, reply to Nekro with and without QQ's automatic `at`, reply to another
    user without an explicit summon (two acknowledged denies and no allow),

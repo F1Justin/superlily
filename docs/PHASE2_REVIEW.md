@@ -8,6 +8,11 @@ attribution, command-structure, private-recipient, and claim-handshake defects.
 Those findings define policy v5 and require a fresh deployment, controlled
 samples, and a new 24-hour window before this review can be signed.
 
+**Final status:** signed on 2026-07-18. `ACCEPTANCE.md` records the completed
+policy-v5 window, policy-v6 backtest and live samples, zero invariant
+violations, the Nekro 0.3.4 long-task attribution repair, and the operator
+confirmation. This document retains the earlier review chronology below.
+
 ## Review fixes
 
 - Correlation v3 is limited to the QQ group-message domain actually validated

@@ -10,8 +10,8 @@
 - [x] Phase 2b.2 runtime command-registry synchronization.
 - [x] Phase 2 typed platform-capability snapshots are live on both bridges.
 - [x] Phase 2b shadow decision/actual-response comparison and acceptance.
-- [ ] Phase 2c fail-open claim-lock canary.
-- [ ] Phase 2 completion review before Tool Registry work begins.
+- [x] Phase 2c fail-open claim-lock canary.
+- [x] Phase 2 completion review before Tool Registry work begins.
 
 ## Phase 2a.1 production evidence
 
@@ -165,7 +165,7 @@ response gap.
   fingerprint de-splitting, structural `command_eligible`, private-recipient
   policy, task-bound response attribution, and ambiguous completion are
   deployed and covered by controlled samples.
-- [ ] Canary evidence is stable before Phase 3 begins.
+- [x] Canary evidence is stable before Phase 3 begins.
 
 ### Policy v6 reply-to-other suppression candidate
 
@@ -195,9 +195,9 @@ response gap.
   and 190 two-observer sources. Integrity violations were zero. The two
   historical successful Lily responses, both `今日老婆` in group `686922858`,
   are included in the suppressible set.
-- [ ] Deploy the reviewed Core candidate without changing either bridge or the
+- [x] Deploy the reviewed Core candidate without changing either bridge or the
   exact canary allowlist, then run the controlled no-summon/summon pair.
-- [ ] Run `policy_v6_backtest.sql` against the completed policy-v5 window,
+- [x] Run `policy_v6_backtest.sql` against the completed policy-v5 window,
   combine it with the unchanged 24-hour evidence and the live controlled pair,
   then complete operator sign-off. No new fixed 24-hour wait is required.
 
@@ -516,4 +516,84 @@ At 2026-07-16 21:49:26 CST both instances were online on bridge 0.3.2 with
 `claim_ack_failures=0`. That window reached its planned endpoint at
 2026-07-17 21:49:26 CST. Because policy v6 changes claim authority for one
 previously abstaining decision class, this baseline cannot be reused for final
-Phase 2 sign-off; Phase 2c and Phase 2 completion remain unchecked.
+Phase 2 sign-off; at that endpoint Phase 2c and Phase 2 completion therefore
+remained unchecked.
+
+## Phase 2 final sign-off (2026-07-18)
+
+Phase 2 is accepted and the Phase 3 entrance gate is open. Policy v6 Core
+commit `1c3f212` was deployed at 11:21:02 CST as healthy image
+`sha256:d923ec20cc5ff3b57c589e571b6c96b7e00fa2af58cfecfabe31c93b1075d5a1`.
+It retained migration head `0011_claim_ack`, `mode=canary`, and the sole exact
+allowlist entry `qq:group:708309706`; Lily, Nekro, and both NapCat processes
+were not restarted for that policy deployment.
+
+The completed policy-v5 window contains 14,501 sources, 16,076 observations,
+14,501 canonical decisions, 12,602 claims, and 651 response rows. After
+correcting three audit-query defects rather than changing production data,
+every canonical, claim/ACK, response-attribution, raw-retention, and structured
+data violation count is zero. The corrections limit command-structure
+reconstruction to message events and use the same complete whitespace set as
+Python, accept only a bounded complementary Nekro image/text pair as temporary
+multipart output, and exclude user display-text fields from the structured URI
+scan. Five repeated-response groups were exactly those permitted pairs. The
+four former custom-URI hits were two user-authored WeChat share URLs observed
+by both accounts, not retained structured credentials.
+
+The outcome distribution is 638 `matched`, 13,843 `matched_no_response`, two
+`ambiguous_completion`, 15 `missed`, and three `unexpected_response`. Every
+exception was reviewed:
+
+- the two ambiguous rows are the already modeled Lily NapCat send timeouts for
+  `今日老婆` and `换老婆`; neither is treated as a confirmed failure or retried;
+- one unexpected response is Lily's intentional group-join welcome on
+  `notice.group_increase.approve`, outside the message-routing policy;
+- the other two unexpected rows are the two policy-v5 `今日老婆` replies to
+  another person. Both are in policy v6's 1,689-source suppress-all backtest,
+  and the live no-summon sample proves the outbound guard blocks the plugin;
+- eight missed talk decisions have only a Lily observation during the known
+  overnight Nekro collection incident; Lily retained those source messages;
+- four dual-observer misses reached Nekro's ToMe task, but its retained logs
+  show all configured LLM attempts timing out or failing, including the retired
+  free `hy3-preview` fallback. These are model-provider failures, not routing or
+  claim-owner errors; and
+- the remaining three apparent misses did produce Nekro responses after
+  approximately 4m22s, 4m26s, and 8m38s. Their response rows were unlinked
+  because the scheduler attribution cache expired at 180 seconds. Commit
+  `2defca7` retains an already-bound source while the same scheduler task stays
+  active; follow-up commit `28c0232` adds the missing bounded task-start binder
+  so a source is attached as soon as Nekro first exposes the task token. An
+  expired idle source still cannot bind an unrelated later task. The final
+  Nekro-only bridge 0.3.4 deployment started at 11:58:21 CST, connected to
+  NapCat at 11:58:50, and is healthy. Lily remains on bridge 0.3.2; Core and
+  both NapCat containers were not restarted for this fix.
+
+The operator's controlled no-summon source
+`event:00e14df5-b6bb-4982-bfcf-06a2649b82ad` produced acknowledged enforced
+denies for both instances, no allow, and no platform send; Lily's attempted
+command response is stored only as `blocked_by_core_claim / suppressed`. The
+explicit-summon source `event:aea0566a-8ffd-497e-9746-30e90f04c83d` produced an
+acknowledged Lily deny, one enforced Nekro allow, and exactly one successful
+Nekro platform message (`391219067`). Lily produced none.
+
+The final build passes 183 tests independently on SQLite and PostgreSQL 17,
+plus `compileall`, `pip check`, and `git diff --check`. The preceding fresh
+PostgreSQL `base -> head -> base -> head`, `alembic check`, production head and
+drift checks remain valid because neither final commit changes a migration.
+The recorded pre-migration backup and rollback procedure remain unchanged.
+
+After policy-v6 deployment, 503 sources produced 596 observations, 503
+policy-v6 decisions, 499 claims, and six response rows at the final snapshot.
+There were zero enforced claims outside the exact canary, zero unlinked
+responses, zero ACK-before-claim rows, and zero enforced allows without an
+acknowledged peer deny. The Nekro restart caused five Lily claim `ReadTimeout`
+fail-open events during one catch-up burst; all corresponding events were
+subsequently persisted idempotently, Core recorded no 4xx/5xx response, and the
+counter remained stable at five after recovery. Final live counters were Lily
+`queue=0, dropped=1, claim_failures=5, claim_ack_failures=0` and Nekro
+`queue=0, dropped=0, claim_failures=0, claim_ack_failures=0`; both instances
+were online. The nonzero counters are cumulative, timestamp-correlated, and do
+not hide message loss in the reviewed deployment interval.
+
+Operator confirmation of both controlled samples was received in this task.
+No Phase 3 execution authority was enabled as part of this sign-off.

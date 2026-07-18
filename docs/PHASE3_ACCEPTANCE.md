@@ -2,10 +2,11 @@
 
 ## Status and entrance gate
 
-Phase 3 has not started. Every item below is unchecked until evidence is
-recorded; design prose is not implementation evidence.
+Phase 3 implementation has not started. Its Phase 2 entrance prerequisite is
+now recorded; every Phase 3 implementation item remains unchecked until its
+own evidence exists, and design prose is not implementation evidence.
 
-- [ ] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
+- [x] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
   reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
   acknowledged claim coordination, response attribution, SQLite/PostgreSQL
   tests, `0011_claim_ack` migration/drift, backup and rollback.
