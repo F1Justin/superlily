@@ -12,7 +12,9 @@
 
 当前系统已经存在两套独立 QQ bot。Lily Bot 基于 NoneBot2、FastAPI Driver 和 OneBot V11，当前接入 QQ 3643287298（历史记录中仍包含旧账号 985393579），经 NapCat 提供 QQ 协议服务。它目前主要承担命令式工具箱功能，包括 LaTeX 公式渲染、Wolfram Engine 计算、东方运势、语音触发、梗图检测、词云、服务器状态等能力。Nekro Agent 独立运行于 Docker Compose，接入 QQ 2022692714，主要承担自然语言聊天、模型路由、沙箱代码执行、Qdrant 记忆和插件式 AI 能力。
 
-目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者完全独立，拥有不同 QQ 号、不同数据库、不同配置和不同代码架构。管理员 QQ 号在两个系统中均为超管。这个分裂状态短期可用，但长期会造成工具重复、记忆分裂、权限分裂、响应抢答、灾备困难和多平台扩展困难。
+目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
+
+截至 2026-07-18，Phase 1 与 Phase 2 已完成并由 `docs/ACCEPTANCE.md` 签署。线上基线包含 Correlation v3、引用解析、policy v6 canonical decision、认证运行时命令清单、响应归因、typed platform capability、迁移 `0011_claim_ack` 和单会话 fail-open claim canary；Phase 2 冻结标签为 `phase2-production-accepted-20260718`。Phase 3a 的 ADR、描述符/Provider 契约、受限 JSON Schema、RFC 8785 canonicalization、离线验证 CLI 和共享向量已经进入代码，但尚无生产 Tool Registry 表、Provider 凭据、活动描述符或工具执行路径。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -84,47 +86,25 @@ Tools / Renderers
 
 5. 推荐技术栈
 
-第一版 Lily Core 推荐使用 Python、FastAPI、asyncio、PostgreSQL 和 Redis。Python 能最大程度复用现有 NoneBot 插件、Wolfram 调用、LaTeX 渲染、Playwright 和 Nekro 周边生态。FastAPI 适合作为核心 API 和 Web Admin 后端。PostgreSQL 负责长期结构化数据，包括事件、配置、权限、工具调用轨迹、响应记录和审计日志。Redis 负责短期状态，包括 claim lock、heartbeat、rate limit、任务队列和临时缓存。
+当前 Lily Core 已采用 Python、FastAPI、asyncio、SQLAlchemy/Alembic 和 PostgreSQL。Python 能最大程度复用现有 NoneBot 插件、Wolfram 调用、LaTeX 渲染、Playwright 和 Nekro 周边生态；FastAPI 提供核心 API；PostgreSQL 负责事件、引用、裁决、claim/ACK、响应、实例状态和审计。Redis 没有成为 Phase 1/2 的 correctness 依赖：当前 correlation 与 claim 由 PostgreSQL 事务、唯一约束和 advisory lock 保证，只有 Phase 3 后续的分布式 rate limit、lease 或 queue 出现经验证的职责时才考虑引入 Redis。
 
 向量数据库不应作为第一阶段核心依赖。未来如果需要记忆和历史语义检索，可以优先考虑 PostgreSQL 全文搜索、BM25、pgvector 或继续复用现有 Qdrant。第一阶段重点不是“让莉莉记住一切”，而是让它能够统一接入事件、记录状态、抽象工具和控制响应。
 
-仓库结构可以先采用 monorepo，降低开发和部署心智负担。一个初始结构可以是：
+仓库已经采用 monorepo，当前结构是：
 
 superlily/
-  core/
-    api/
-    models/
-    router/
-    permissions/
-    storage/
-  adapters/
-    onebot/
-    telegram/
-    web/
-    avatar/
-  tools/
-    wolfram/
-    latex/
-    render/
-    history/
-    status/
-    fortune/
-  agent/
-    prompts/
-    runtime.py
-    router.py
-  watchdog/
-  webui/
+  apps/core/                 # Core API、模型、裁决、存储与迁移
+  packages/contracts/       # 跨 Core/bridge 的版本化契约与共享向量
+  bridges/lily_nonebot/     # Lily / NoneBot bridge
+  bridges/nekro/            # Nekro bridge
+  deploy/                   # Compose、约束与集成配置
   docs/
-    LILY.md
-    TOOLS.md
-    SERVICES.md
-    GROUPS.md
-    ROADMAP.md
+    adr/                    # 已接受的架构决策
+  tests/                    # SQLite/PostgreSQL 与契约回归测试
 
-6. 第一阶段详细规划：Lily Core MVP
+6. 第一阶段详细规划：Lily Core MVP（已完成基线）
 
-第一阶段的目标不是重写 NoneBot，也不是替换 Nekro，而是建立一个独立的 Lily Core MVP，使它能够接收、记录和观察现有系统事件，并为后续统一调度打基础。第一阶段完成后，现有 Lily Bot 和 Nekro Agent 仍然可以按原逻辑运行，但它们的消息、回复、心跳和工具调用应当开始进入 Lily Core 的统一视图。
+第一阶段的原始目标不是重写 NoneBot，也不是替换 Nekro，而是建立一个独立的 Lily Core MVP，使它能够接收、记录和观察现有系统事件，并为后续统一调度打基础。这个旁路观察基线已经完成；现有 Lily Bot 和 Nekro Agent 仍按各自逻辑运行，但它们的消息、回复、心跳和运行时能力已经进入 Lily Core 的统一视图。以下各节保留第一阶段的设计范围与取舍，当前 HTTP 和数据契约以 `docs/CONTRACTS.md` 为准。
 
 6.1 阶段目标
 
@@ -134,20 +114,22 @@ superlily/
 
 6.2 最小功能范围
 
-第一阶段 Lily Core 至少应提供以下 API。
+第一阶段初稿列出的 API 已收敛为带版本、认证和幂等边界的实际接口。
 
-POST /events
+POST /v1/events
 接收标准化事件，包括消息事件、命令事件、健康事件和系统事件。
-POST /responses
+POST /v1/responses
 记录某个 bot 实例对某个事件发出的响应，包括文本、图片、错误和耗时。
-POST /heartbeat
+POST /v1/heartbeats
 记录 bot 实例心跳，包括实例名、平台、账号、进程状态、连接状态和时间戳。
-GET /health
-返回核心服务、数据库、Redis 和已注册 bot 实例的健康状态。
-GET /events/recent
+GET /health/live 与 GET /health/ready
+分别验证进程存活和 PostgreSQL readiness；实例状态不混入进程存活判断。
+GET /v1/events/recent
 查看最近事件，供调试使用。
-GET /instances
+GET /v1/instances
 查看当前所有 bot 实例及最近心跳。
+
+写接口使用实例绑定 bearer token，事件与响应写入带 `Idempotency-Key`；管理读接口使用独立 admin bearer token。Phase 2 另增加了 references、decisions、claims/ACK、command-registry snapshots、native identity、capability 和 outcome 审计接口。Provider 与 Tool Registry 的身份和接口属于 Phase 3，不能复用 bot ingest 或 admin token。
 
 第一阶段可以不实现复杂权限和 claim lock，但数据库模型应当预留相关字段，避免后续迁移困难。消息事件至少要能记录平台、适配器、bot 身份、会话、发送者、消息 ID、文本、附件摘要、原始 payload 的安全截断版本和时间戳。
 
@@ -302,7 +284,7 @@ Phase 2b.2 的完成标准是：运行时插件树新增、删除或不变都能
 
 Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。完成标准是：命令只允许 Lily、自然语言召唤或回复 Nekro 只允许 Nekro、回复 Lily 不触发 Nekro、普通消息不被 claim 破坏、Core 停机时两个 bot 自动回到旧行为，并且所有 claim 与被抑制发送均可审计。通过稳定窗口后，第二阶段完成，方可进入 Phase 3 Tool Registry。
 
-截至 2026-07-13，Phase 2a.2 与 2b.2 已实现并部署：Correlation v3、canonical decision policy v2、运行时命令清单、response outcome、唯一引用解析、平台 capability snapshot 和双桥 claim 均已上线。单测试群 canary 的 command/talk/reply/ordinary 样本已经通过，Core 两分钟故障回退也已通过；当前只等待最终部署后的 24 小时稳定窗口与安全审计。在这些证据写入 `docs/ACCEPTANCE.md` 前，不开始第三阶段工具执行。
+截至 2026-07-18，Phase 2 已完成最终签署。最终基线部署 Correlation v3、policy v6、运行时命令清单、response outcome、唯一引用解析、typed platform capability、claim/ACK 协调和长任务 response attribution；policy-v5 稳定窗口、policy-v6 counterfactual、无显式召唤/显式召唤实测、SQLite/PostgreSQL、迁移/漂移、备份和回滚证据均记录在 `docs/ACCEPTANCE.md`。Phase 3 入口已经开放，但签署本身没有启用任何工具执行权。
 
 8. 第三阶段：Tool Registry 与现有插件迁移
 
@@ -313,6 +295,12 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 第三阶段进一步拆成四步。3a 只建立经过人工审阅的 tool descriptor 和经过实例认证的 runtime provider snapshot，不执行工具；3b 建立 invocation、attempt、confirmation、lease、fencing token、deadline、budget、artifact 的完整账本和 provider 拉取协议；3c 依次迁移 status.inspect、wolfram.run、latex.render 等低风险工具；3d 才让旧命令入口在 shadow/canary 后切到同一工具协议。运行时发现只证明“实现正在加载”，不能自动获得权限。工具 provider 不运行在 Core API 进程内，也不开放 Lily/Nekro 的入站执行端口，而是从 Core 拉取有界 lease。
 
 第三阶段完成时，命令入口仍然存在，自然语言模型仍然没有工具执行权。详细字段、状态机、数据库表、API、迁移顺序和验收标准见 `docs/PHASE3_TOOL_REGISTRY.md`；跨阶段依赖和门禁见 `docs/ROADMAP.md`。
+
+8.1 当前 Phase 3a 状态（2026-07-18）
+
+Phase 3a 已经完成第一笔契约基线提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。当前全量测试为 200 项通过。
+
+这些代码只是 authority contract，不是生产 authority。`status.inspect-1.0.0.json` 只是 golden vector；数据库里尚未建立 `0012_tool_registry`，Core 尚未导入 descriptor bundle，也没有 Provider 认证端点、活动描述符、eligible tool、invocation 或 lease。下一步必须先实现 `0012_tool_registry` 和 desired/reported/effective 的零活动 Registry，并保持 execution `off`，通过 SQLite/PostgreSQL 迁移、并发、漂移和回滚测试后，才算完成 3a 的持久化与只读面。
 
 9. 第四阶段：统一 Renderer
 
@@ -382,14 +370,14 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经从第一阶段推进到第二阶段最终验收：
+当前近期优先级已经推进到 Phase 3a 的持久化与只读 Registry：
 
-1. 完成 2026-07-14 修复部署后的 24 小时 canary、安全和稳定性审计；前一候选窗口发现自定义 URI 清理缺口和 bridge 超时计数增长，未予签字通过。
-2. 固化 Phase 2 acceptance、项目 review、迁移/回滚证据并提交。
-3. 按 `docs/PHASE3_TOOL_REGISTRY.md` 先实现 3a descriptor/registry，保持执行关闭。
-4. 再实现 3b invocation ledger 与 provider lease/fencing，不接自然语言模型。
-5. 依次迁移 status.inspect、wolfram.run、latex.render；每个工具单独 shadow/canary。
-6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置。
+1. 实现迁移 `0012_tool_registry`，保存 Git 来源、不可变 canonical descriptor/JCS hash、生命周期、导入结果和 reviewer audit；首个部署保持零活动描述符与 execution `off`。
+2. 建立与 bot ingest/admin 身份分离的 Provider registration、inventory、heartbeat 认证入口，以及 desired/reported/effective 与稳定 ineligibility reason 的只读 Core 视图。
+3. 让 Core、CLI 和后续 Provider SDK 共同消费同一组接受/拒绝与 JCS golden vectors，完成 SQLite/PostgreSQL 新建、升级、降级/再升级、并发、漂移和回滚证据，签署 Phase 3a gate。
+4. 3a 通过后再实现 3b invocation ledger、attempt、confirmation、provider lease/fencing、deadline、budget 和 artifact，不接自然语言模型。
+5. 依次迁移 status.inspect、文本模式 wolfram.run、具备安全 artifact 生命周期后的 latex.render；每个工具单独经过 off、ledger-only、shadow、精确 canary 和回滚。
+6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 
@@ -397,8 +385,8 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 超究极莉莉的本质不是“一个更大的 bot”，而是一个面向社群、活动和群聊环境的 personal/social agent harness。它借鉴 Codex、Claude Code、Pi、Hermes 等 harness 的工具调用、权限、审计、沙箱和 agent loop 思路，但目标域不是代码仓库，而是 QQ 群、社群活动、线下现场、渲染工具、计算引擎、聊天记录、多账号灾备和虚拟/实体身体。
 
-第一阶段的意义在于让莉莉从“两个独立 bot”开始变成“一个统一大脑”。只要这个核心立住，后续的 Wolfram、LaTeX、自然语言、Watchdog、多平台、Fumo、皮套和活动系统都可以作为能力逐渐接入。否则继续堆插件只会让莉莉越来越强，但也越来越分裂、越来越不可控。
+第一、二阶段已经让莉莉从“两个互不可见的 bot”进入“独立运行时共享一个裁决与审计核心”的状态。第三阶段要继续把工具 authority 和执行账本收归 Core，而不是把插件代码搬进 Core API 进程。只有这些合同和 authority gate 稳定后，Wolfram、LaTeX、自然语言、Watchdog、多平台、Fumo、皮套和活动系统才可以作为能力逐渐接入；否则继续堆插件只会让莉莉越来越强，但也越来越分裂、越来越不可控。
 
-当前执行路线以 `docs/ROADMAP.md` 为准，第二阶段证据以 `docs/ACCEPTANCE.md` 和 `docs/PHASE2_REVIEW.md` 为准，第三阶段协议以 `docs/PHASE3_TOOL_REGISTRY.md` 为准。愿景、合同、实现和验收由此分开维护。
+当前执行路线以 `docs/ROADMAP.md` 为准，第二阶段证据以 `docs/ACCEPTANCE.md`、`docs/PHASE2_FINAL_AUDIT.md` 和 `docs/PHASE2_REVIEW.md` 为准；第三阶段协议、验收和已接受决策分别以 `docs/PHASE3_TOOL_REGISTRY.md`、`docs/PHASE3_ACCEPTANCE.md` 和 `docs/adr/` 为准。愿景、合同、实现和验收由此分开维护。
 
 第四至第十一阶段的共享契约、内部工作包、故障模型、权限提升点和退出门槛见 `docs/FUTURE_PHASES_DESIGN.md`。该文档用于提前消除架构歧义，不代表允许跳过当前阶段门禁并行上线后续功能。
