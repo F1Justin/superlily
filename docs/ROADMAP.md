@@ -39,25 +39,23 @@ Earlier rejected windows remain diagnostic evidence. Migration
 `0012_tool_registry`, local Git-bound imports, separately authenticated
 provider inventory/heartbeat endpoints, and the admin-only
 desired/reported/effective view are deployed in zero-authority mode. The
-authority-neutral `0013_collection_reliability` migration and C0-D1 through
-C0-D4 bridge durability, diagnostics and factual platform actions are also
-deployed. The complete
+authority-neutral `0013_collection_reliability` migration and all C0-D1 through
+C0-D5 gates are also deployed and signed. The complete
 SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
 backup and production drift checks pass. Production has zero Provider
 credentials, descriptors, active or eligible tools, and execution remains
-off. Only C0-D5 controlled fault/behavior evidence remains before Phase 3b.
-The next Phase 3 gate is the shared Provider SDK plus
-the separately reviewed real `status.inspect` authority and runtime evidence;
-no invocation or lease surface exists.
+off. Natural production reaction capture, bounded Core and PostgreSQL outage
+replay, and an explicit Lily-command/Nekro-reply pair are recorded in
+`C0D_ACCEPTANCE.md`; both collectors returned to zero pending and contiguous
+watermarks after the drills.
 
-Before Phase 3b adds invocation or lease authority, the current operator
-priority is the authority-neutral `C0-D` collection-reliability packet. It
-pulls forward durable bridge spools, commit receipts, capture profiles,
-sanitization, normalized basic platform actions, replay and coverage
-diagnostics. The larger `C0-A` archival packet follows C0-D but is not a Phase
-3b correctness dependency. Phase 2's signed routing acceptance remains valid,
-and Phase 3a's zero-authority Registry remains deployed; neither packet
-changes bot response behavior or tool authority.
+The Phase 3b entrance gate is now open. The current operator priority is the
+shared Provider SDK plus the separately reviewed real `status.inspect`
+authority and runtime evidence; no invocation or lease surface exists yet. The
+larger `C0-A` archival packet may proceed independently and is not a Phase 3b
+correctness dependency. Phase 2's signed routing acceptance remains valid, and
+Phase 3a's zero-authority Registry remains deployed; C0-D changed neither bot
+response behavior nor tool authority.
 
 ## Sequencing rules
 
@@ -74,7 +72,7 @@ changes bot response behavior or tool authority.
 6. Existing command entry points stay available until their tool-backed path
    has passed shadow comparison, exact-conversation canary, and rollback.
 
-## Immediate authority-neutral packet: C0-D collection reliability
+## Completed authority-neutral packet: C0-D collection reliability
 
 C0-D is an earlier-layer reliability repair scheduled after deployed Phase 3a
 and before Phase 3b. Its detailed scope and acceptance criteria are in
@@ -95,6 +93,9 @@ C0-D is complete only when outage/restart replay loses no controlled records,
 Lily and Nekro basic action notices are represented with honest completeness
 status, receipt/coverage diagnostics and media policy are enforced, and
 command/claim/Registry behavior is unchanged.
+
+Those gates passed and were signed on 2026-07-18. The production evidence and
+exact controlled sequence ranges are recorded in `C0D_ACCEPTANCE.md`.
 
 After C0-D is stable, `C0-A` adds nested merged-forward expansion,
 `archive_full` rollout, portable exports, reconstruction, retention/deletion

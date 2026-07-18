@@ -1,16 +1,17 @@
 # C0-D collection reliability acceptance
 
-This document tracks the release gate for the authority-neutral C0-D packet.
-It deliberately separates the implemented collection foundation from
-production fault evidence. C0-D is not complete, and Phase 3b remains gated,
-until the remaining C0-D5 gates below pass.
+This document records the signed release gate for the authority-neutral C0-D
+packet. It deliberately separates implementation, production rollout and
+controlled fault evidence. All C0-D1 through C0-D5 gates passed on 2026-07-18;
+the C0-D prerequisite no longer gates Phase 3b.
 
 ## Current implementation snapshot
 
-As of 2026-07-18 21:09 CST, C0-D1 through C0-D4 are deployed in production.
-Core is at `0013_collection_reliability`; Lily and Nekro run bridge `0.5.0`
-with independent durable spools and real action capture. C0-D remains open at
-the controlled fault/behavior items in C0-D5.
+As of 2026-07-18 21:39 CST, C0-D1 through C0-D5 are deployed and accepted in
+production. Core is at `0013_collection_reliability`; Lily and Nekro run bridge
+`0.5.0` with independent durable spools and real action capture. The controlled
+Core/PostgreSQL faults and post-rollout behavior checks passed without changing
+claim or Tool Registry authority.
 
 Implemented:
 
@@ -44,7 +45,7 @@ Implemented:
 - linear Alembic migration `0013_collection_reliability`, with no C0-A tables
   and no tool execution authority.
 
-C0-D2/D3/D4 have production evidence. Only C0-D5 remains open.
+C0-D2/D3/D4/D5 have production evidence. C0-D is signed complete.
 
 ## Verification evidence
 
@@ -104,13 +105,19 @@ Production rollout evidence:
   `complete`; the intentionally discarded `raw_info` jump/image URLs and
   internal UIDs appear in `omitted_fields`; both numbered spool records reached
   contiguous Core watermarks;
-- at the 21:09 final snapshot, Lily/Core watermark is 1097/1097 and Nekro/Core
+- at the 21:09 rollout snapshot, Lily/Core watermark is 1097/1097 and Nekro/Core
   is 124/124. Production has 14 Lily poke rows, one Lily recall row and one
   Nekro poke row; all action records have receipt ordering
-  `captured_at <= received_at <= committed_at`. No natural reaction arrived in
-  this short canary window, so reaction coverage is established by fixtures
-  copied from the local NapCat log rather than by a synthesized production
-  event;
+  `captured_at <= received_at <= committed_at`. The initial short canary had no
+  natural reaction, so its first reaction evidence came from fixtures copied
+  from the local NapCat log rather than a synthesized production event;
+- from 21:14:48 through 21:15:32 CST, group `708309706` then produced 14 natural
+  `group_msg_emoji_like` observations against platform message `391219067`.
+  Thirteen came from one member and one from the Lily command account; all 14
+  preserved the platform emoji ID and count, have numbered receipts, and are
+  `complete`. The target remains honestly `unresolved` in Core because the
+  11:25 target message predates its captured history; the local target ID was
+  not guessed or cross-account merged;
 - no action observation entered the claim table. Production still has zero
   descriptors, providers, Provider credentials, inventory entries or capture
   profile overrides. Provider token count remains zero and Registry execution
@@ -121,13 +128,46 @@ Production rollout evidence:
   or gap. It is retained as honest transient-retry evidence rather than reset;
 - Tool Registry remains `execution.mode=off` with zero descriptors, providers,
   active descriptors and eligible tools. No C0-A archive profile or tool
-  authority was enabled.
+  authority was enabled;
+- the controlled Core outage began at 21:35:15 CST from a clean baseline of
+  Lily/Core `1500/1500` and Nekro/Core `199/199`. While Core was unavailable,
+  Lily retained sequences `1508-1522` and Nekro retained `200-201`; the first
+  record on each bridge accumulated real connection failures while every later
+  record remained durably pending in strict sequence. Core was ready again at
+  21:36:15. All 17 records received matching Core receipts with byte-identical
+  stored hashes, both spools returned to zero pending, and the 21:36:48
+  watermarks were contiguous at Lily `1534/1534` and Nekro `201/201`;
+- the controlled PostgreSQL outage began at 21:37:36 CST from a clean baseline
+  of Lily/Core `1540/1540` and Nekro/Core `201/201`. Core stayed live while
+  `/health/ready` correctly returned `503 database unavailable`. Lily retained
+  sequences `1544-1545` and Nekro retained `204`; the first record on each
+  bridge recorded the real Core HTTP 500 and later work remained ordered.
+  PostgreSQL restarted at 21:38:21 and Core was ready at 21:38:28. All three
+  records received matching receipts with their original hashes, both spools
+  returned to zero pending, and the 21:39:08 watermarks were contiguous at
+  Lily `1558/1558` and Nekro `208/208`;
+- the fault drills intentionally increased cumulative `replay_failures` to 15
+  on Lily and 14 on Nekro. These counters are retained as honest evidence;
+  current `last_error` is empty and no test record is pending or quarantined;
+- the explicit post-rollout behavior pair is independently attributable in
+  Core. At 21:31:51, `今日老婆` received a 95-confidence
+  `command_exact:今日老婆` decision for `lily-command` and a successful response
+  at 21:32:00. At 21:31:49, `莉莉 这是刘维尔定理吗` was observed by both accounts,
+  received a 90-confidence `summons_talk_bot` decision for `nekro-agent`, and
+  produced successful image and text responses at 21:33:17-21:33:18;
+- the 21:52 final check found Core and PostgreSQL healthy, both bot instances
+  online, Alembic at `0013_collection_reliability` with no pending upgrade,
+  Lily local/Core at `1672/1672` and Nekro at `223/223`, zero pending,
+  capture failure, quota rejection or quarantine, and an empty current
+  `last_error`. Registry descriptors, providers, credentials, inventories and
+  heartbeats remain zero; capture-profile overrides and action-linked claims
+  also remain zero.
 
-The controlled Core/PostgreSQL outage trials and an explicit post-rollout
-command/Nekro-reply behavior pair remain C0-D5 work; the production service was
-not intentionally faulted merely to manufacture evidence during this rollout.
+The operator authorized the production fault drills and C0 close-out. Core and
+PostgreSQL were restored healthy after each bounded outage; Lily, Nekro and
+NapCat were not restarted during C0-D5.
 
-## Remaining release gates
+## Signed release gates
 
 ### C0-D2: bridge durability
 
@@ -159,13 +199,13 @@ not intentionally faulted merely to manufacture evidence during this rollout.
 
 ### C0-D5: end-to-end faults and rollout
 
-- [ ] Controlled Core outage loses no numbered records.
-- [ ] Controlled PostgreSQL outage loses no numbered records.
+- [x] Controlled Core outage loses no numbered records.
+- [x] Controlled PostgreSQL outage loses no numbered records.
 - [x] Bridge crash/restart, duplicate replay, out-of-order delivery, corrupt
   spool tail and full-quota behavior have deterministic evidence.
 - [x] Images remain placeholders/metadata rather than PostgreSQL byte payloads.
 - [x] Claim traffic and Tool Registry authority are unchanged after rollout.
-- [ ] An explicit post-rollout command/Nekro-reply pair confirms both behavior
+- [x] An explicit post-rollout command/Nekro-reply pair confirms both behavior
   paths beyond process and adapter health.
 - [x] Production migration, canary observation and rollback evidence are
   recorded before C0-D is signed complete.
@@ -177,3 +217,10 @@ exports, reconstruction, retention/deletion propagation and old-history import
 belong to C0-A. Once all C0-D gates above pass, those archival capabilities may
 proceed independently of Phase 3b and cannot block the invocation ledger on
 rare nested-forward cases.
+
+## Sign-off
+
+C0-D was signed complete at 2026-07-18 21:39 CST. Phase 3b may begin with the
+shared Provider SDK and separately reviewed `status.inspect` authority. C0-A
+may proceed independently and does not reopen this reliability gate unless a
+regression violates one of the signed invariants above.

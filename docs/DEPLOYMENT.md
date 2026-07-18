@@ -239,3 +239,13 @@ OneBot reconnect backlog is not repaired by rewriting timestamps. Preserve
 adapter `occurred_at`, bridge `captured_at`, Core `received_at`, and receipt
 `committed_at` separately; use native message identity, idempotency key and
 spool sequence for replay/order diagnostics.
+
+C0-D5 was signed complete on 2026-07-18 after bounded production Core and
+PostgreSQL outage drills. The Core drill replayed Lily sequences `1508-1522`
+and Nekro `200-201`; the PostgreSQL drill replayed Lily `1544-1545` and Nekro
+`204`. Every record retained its original hash, received an exact receipt and
+closed without a watermark gap. The drills deliberately remain visible in the
+cumulative replay-failure counters; an empty current `last_error`, zero
+pending/quarantine and matching local/Core watermarks distinguish recovered
+evidence from an active incident. Exact times and behavior checks are in
+`C0D_ACCEPTANCE.md`.
