@@ -108,3 +108,8 @@ Core 在排队前校验输入 schema 和精确输入字节数，在完成时再�
 截至 2026-07-19，SQLite 与 PostgreSQL 17 全量套件各 313 项通过。覆盖范围包括四种模式、精确 canary/enforce、三个 stop、并发领取、单活动 lease、单调 fence、secret/Provider 绑定、迟到与重放、取消竞态、预算取消、非法输出、append-only trigger、reaper、管理 CLI 的真实模式回报、空闲轮询退避/日志保真与真实 `status.inspect` 子进程端到端路径。
 
 这些结果授权部署“仍为 `ledger_only` 的 0015 底座”，不等于已经签署生产 canary，也不等于 Phase 3b/3c 整体完成。
+
+`0015` 的生产 `ledger_only` 签署已于 2026-07-19 02:35 CST 完成：head/no
+drift、Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 与备份实际
+恢复均通过。精确镜像、配置和备份证据见 `DEPLOYMENT.md` 第 9 节。descriptor
+activation 与 canary 仍受 ADR 0005 的 mutation 治理门约束。

@@ -31,9 +31,14 @@ PostgreSQL 17 各通过 313 项测试。可执行候选升级为不可变的
 `status.inspect@1.0.1`，其独立子进程执行器硬性限制 wall-time 和输出字节，且不接收
 Provider secret 或平台发送能力。详细边界见 `docs/PHASE3B_EXECUTION.md`。
 
-当前发布顺序是先把 `0015` 与新 Provider 以 `ledger_only` 上线，确认生产没有产生
-attempt；再另行评审 descriptor 激活和一个 `admin_api` 精确 canary。生产 canary、
-中断/恢复演练和稳定窗口尚未签署，自然语言 tool loop 仍属 Phase 5。
+`0015` 与新 Provider 已在生产以 `ledger_only` 安全空转：迁移 head/no drift、
+Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot 心跳均已
+形成证据。生产 canary、中断/恢复演练和稳定窗口尚未签署。
+
+下一门不是直接改数据库激活 descriptor，而是补齐 ADR 0005 规定的最小控制面
+mutation 基础：角色/短会话、重认证、preview、CAS、幂等、append-only 审计和可测
+回滚。该门通过后，才评审一个 `admin_api` 精确 canary；自然语言 tool loop 仍属
+Phase 5。
 
 ## Sequencing rules
 

@@ -150,6 +150,24 @@ Provider SDK -> Core -> 子进程 -> Core 的成功路径。
 这些是实现与发布前证据。生产仍需先以 `ledger_only` 部署并证明零 attempt，随后
 另行签署 descriptor 激活、精确 canary、停止开关和中断恢复演练。
 
+### `0015` 生产 `ledger_only` 证据
+
+2026-07-19 02:35 CST，`0015_tool_attempts` 与 `status.inspect@1.0.1` 执行
+Provider 已按 `ledger_only` 部署。Core/Provider 镜像分别为
+`sha256:3a5cf91b314e5a1bf79bf24266f572b0ba8bb7a806cecd8842f3c2e44d3d7d57`
+与
+`sha256:7b47646823c24041f9c3e34481ae0496d37c2cccbb67c0fc40b93c073d66f13f`。
+备份、隔离恢复、完整镜像/配置哈希和回滚顺序见 `DEPLOYMENT.md` 第 9 节。
+
+生产为 `0015_tool_attempts` head 且无 drift；`1.0.1` descriptor 仍为
+`reviewed`，Provider 报告 hard wall-time/output-bytes、健康 heartbeat 和最大并发
+1。认证 lease 返回 204，attempt/event/active attempt 均为 0，原
+`recorded_only` invocation 未改变。Lily/Nekro 心跳与正常 event/claim 流量持续。
+
+因此“执行底座在 `ledger_only` 下安全空转”已签署。精确 canary 仍未签署：ADR
+0005 禁止在角色/会话、重认证、CAS、幂等、append-only 审计和回滚测试通过前执行
+activation/suspension/quarantine/canary mutation。直接 SQL 不可作为绕过方案。
+
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
   enforce uses its own exact allowlist.

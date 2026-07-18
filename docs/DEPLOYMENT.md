@@ -335,3 +335,55 @@ NapCat、PostgreSQL 和 Provider 未重启。
 但保留不可变审计记录。如果 bridge 出现回归，只恢复对应的备份包并重启
 该 bot，不删除 durable spool。只有确认必须破坏性撤回 schema 时，才在再次备份后
 停止新调用并 downgrade 到 `0013_collection_reliability`；这不是首选事故处置。
+
+## 9. `0015_tool_attempts` 与执行 Provider 上线记录
+
+2026-07-19 02:35 CST，提交 `dd9c375` 的最终 Core 与 status Provider 分别部署为：
+
+- Core 镜像 `sha256:3a5cf91b314e5a1bf79bf24266f572b0ba8bb7a806cecd8842f3c2e44d3d7d57`；
+- Provider 镜像 `sha256:7b47646823c24041f9c3e34481ae0496d37c2cccbb67c0fc40b93c073d66f13f`；
+- Core Compose 配置哈希 `bf9cdc55b6133d8a35a16a53eb7f77a6b0ae7123f7935db3aaadb4ee6085d04e`；
+- Provider Compose 配置哈希 `c0b31124572f6ec6d8735fcaa7c1b34262f7d620e6443a71f3c07e23d9b959d3`。
+
+上线前 PostgreSQL 自定义格式备份为
+`/home/justin/backups/superlily/20260719-phase3b-attempts/superlily-pre-phase3b-attempts-820be5e.dump`，
+大小 149,930,965 字节、权限 `0600`、SHA-256
+`ab93d71e7ded563170fefcffa29309e598e8b611a6351bb05ddbe27d6c5b653e`。
+`pg_restore --list` 通过；同一 PostgreSQL 17 镜像中的隔离恢复保持
+`0014_tool_invocations`，并核对 1 条 invocation、1 份 descriptor、385,837 条
+source event、417,544 条 observation、5,935 条 receipt、89,662 条 claim 与
+16,815 条 response，随后停止临时恢复容器。
+
+Core 启动日志记录 `0014_tool_invocations -> 0015_tool_attempts`；最终
+`alembic current` 为 head，`alembic check` 无 drift。生产环境继续保持：
+
+- `SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`；
+- global stop 为 false；canary/enforce scope 均为空；
+- 旧 `status.inspect@1.0.0` 与新 `status.inspect@1.0.1` 均为 `reviewed`；
+- `1.0.1` 从精确 Git 对象 `820be5ed369d7ef932caaa79e4959605e1eeebee`
+  导入，descriptor SHA-256 为
+  `398fb49dfff2cc76822e68afa305af2a8aee3aa4f4c50a375320f13175117911`；
+- 原 `recorded_only` invocation 保持不变；attempt、attempt event、active attempt
+  均为 0；经过认证的 lease 请求返回 204。
+
+Provider 已从 `report` 切到 `serve`，继续使用只读 root、空 capability、
+`no-new-privileges`、无发布端口的容器边界。最新 inventory 报告实现哈希
+`396798fafb161e13e9348de11d3c29b50068532ec25042536f9fe05a75382c78`，
+hard wall-time/output-bytes；heartbeat 为 healthy、最大并发 1、
+`spawn_hard_deadline`。无工作轮询从 0.25 秒退避到 5 秒，只过滤成功的空 lease
+204 日志，真实 lease 和错误仍保留。
+
+切换后的第一个观察窗口出现一次 `ReadError` 不明确响应；Provider 没有盲目重试
+任何工作，数据库仍为零 attempt，随后在无容器重启的情况下恢复健康 heartbeat，
+后续窗口无重复异常。Lily 与 Nekro 均保持 `online` 且心跳新鲜；普通事件、claim
+和 Core health 在替换前后持续成功。
+
+本次上线只签署“可执行 schema/Provider 在 `ledger_only` 下安全空转”。没有激活
+descriptor，也没有切换 canary。ADR 0005 要求 activation、suspension、Provider
+quarantine 和 canary 变更必须先通过角色/会话、重认证、CAS、幂等、审计和回滚
+测试；在该治理门完成前，不允许用直接 SQL 绕过它。
+
+回滚优先将 Provider 恢复为旧 reporting-only 镜像或停止 Provider，并把 Core 模式
+保持/退回 `ledger_only` 或 `off`。只有无 active attempt、另做新备份并同步回退
+应用时，才考虑 downgrade 到 `0014_tool_invocations`；不得删除 invocation、attempt
+或 append-only 事件来伪造回滚。
