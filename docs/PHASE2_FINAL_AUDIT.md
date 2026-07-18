@@ -1,11 +1,13 @@
 # Phase 2 final production audit
 
 This is the repeatable close-out procedure for the final Phase 2 canary. The
-authoritative policy-v5 window runs from `2026-07-16 21:49:26+08` through
-`2026-07-17 21:49:26+08`. The reviewed code, migration `0011_claim_ack`, Core,
-and bridge 0.3.2 are deployed; clean bridge baselines and the controlled matrix
-are recorded in `ACCEPTANCE.md`. These exact start/end values must be passed to
-`phase2_final_audit.sql`; the script has no stale date defaults.
+completed policy-v5 window from `2026-07-16 21:49:26+08` through
+`2026-07-17 21:49:26+08` is the unchanged-system 24-hour evidence window and is
+passed to both `phase2_final_audit.sql` and `policy_v6_backtest.sql`. Policy v6
+changes only the claim result for deterministic reply-to-other decisions, so
+final acceptance combines that stored-window backtest with a controlled live
+canary pair; it does not discard the completed window or require another fixed
+24-hour wait. Migration `0011_claim_ack` and bridge 0.3.2 remain unchanged.
 
 The completed policy-v4 window (`2026-07-15 10:15:49 CST` through
 `2026-07-16 10:15:49 CST`) is retained as diagnostic evidence, not acceptance.
@@ -40,7 +42,7 @@ evidence remains in `ACCEPTANCE.md`.
 ## Runtime and deployment
 
 At close-out, the evidence must prove every item below. They are acceptance
-criteria, not claims about the not-yet-deployed policy-v5 candidate:
+criteria, not claims about the not-yet-deployed policy-v6 candidate:
 
 - Core container is `healthy`, uses the reviewed image digest, and runs as
   UID/GID 65532.
@@ -73,7 +75,7 @@ For source events first received in the window:
   cannot appear in a database-only query;
 - bot-authored events use `observe_only / bot_message_observed` and never
   produce an actionable claim.
-- every decision uses `qq-v3-policy-v5`; every group decision records exactly
+- every decision uses `qq-v3-policy-v6`; every group decision records exactly
   `command_only`, `conversation_only`, `full`, or `observe_only`. Commands are
   actionable only in command/full modes and target Lily; conversation is
   actionable only in conversation/full modes and targets Nekro.
@@ -104,6 +106,13 @@ must return zero rows.
   `qq:group:708309706`.
 - No enforced claim exists outside that conversation in the window.
 - Every source has at most one enforced allow.
+- A deterministic `reply_to_other_observed` decision without an explicit Lily
+  summon or known-bot mention has no owner: every observed instance must hold
+  an acknowledged enforced deny with `suppression_scope=all_instances`, and no
+  enforced allow may exist. A single-observer source requires that observer's
+  deny; a multi-observer source requires one from every observer. Missing
+  evidence remains fail-open and is a
+  controlled-sample/audit failure rather than proof of silence.
 - A deny is coordination evidence only after the denying bridge acknowledges
   that it installed suppression through `POST /v1/claims/{claim_id}/ack`.
 - For every enforced allow, the audit independently recomputes the set of peer
@@ -183,23 +192,27 @@ authority.
 
 After all violation sets are empty and every exceptional row is explained:
 
-1. deploy policy v5/Core/bridges and `0011_claim_ack`, then record the new
-   baseline; do not reuse a pre-fix hour;
-2. pass controlled samples in `708309706`: Lily command, Nekro summon, reply to
+1. run `phase2_final_audit.sql` against the completed policy-v5 window for all
+   unchanged invariants, then run `policy_v6_backtest.sql` over the same stored
+   sources and review every counterfactual suppression row;
+2. deploy policy v6 Core only while retaining bridge 0.3.2, migration
+   `0011_claim_ack`, and the exact canary allowlist;
+3. pass controlled samples in `708309706`: Lily command, Nekro summon, reply to
    Lily, reply to Nekro with and without QQ's automatic `at`, reply to another
-   user with and without an explicit summon, leading other-user `at`, leading
+   user without an explicit summon (two acknowledged denies and no allow),
+   reply to another user with an explicit summon (Nekro owner), leading
+   other-user `at`, leading
    image/non-text, private recipient routing, two close messages in one Nekro
    chat task sequence, Lily and Nekro claim acknowledgement, Nekro
    `FORCE_TRIGGER`/outbound-guard suppression, prior-send safe abstention,
    simulated lost deny response,
    Core timeout, and ambiguous send timeout;
-3. run an uninterrupted new period of at least 24 hours and execute the SQL
-   with its exact explicit start/end timestamps;
-4. rerun all tests on SQLite and PostgreSQL 17.10;
-5. rerun the fresh PostgreSQL `base -> head -> base -> head` migration chain;
-6. verify production head/drift and the pre-migration backup listing;
-7. update every remaining Phase 2 checkbox and the review conclusion;
-8. run `compileall`, `pip check`, `git diff --check`, and secret-path review;
-9. commit the complete Phase 2 implementation and documentation;
+4. review post-deployment claim/ACK/response rows, bridge failure counters, Core
+   logs, and exact canary scope; no fixed-duration wait replaces these checks;
+5. rerun all tests on SQLite and PostgreSQL 17.10;
+6. rerun the fresh PostgreSQL `base -> head -> base -> head` migration chain;
+7. verify production head/drift and the pre-migration backup listing;
+8. update every remaining Phase 2 checkbox and the review conclusion;
+9. run `compileall`, `pip check`, `git diff --check`, and secret-path review;
 10. only after the operator signs this evidence may Phase 3a contract/hash work
     begin. Phase 3 has not started.

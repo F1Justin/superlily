@@ -132,7 +132,9 @@ Do not jump directly from shadow to enforcement.
    `canary`; every other conversation remains fail-open.
 6. In test group `708309706`, verify a Lily command, explicit Nekro summon,
    reply to each bot with and without QQ's decorative `at`, reply to another
-   user with/without a summon, leading other-user `at`, leading image/non-text,
+   user without a summon (two acknowledged denies and no allow), reply to
+   another user with a summon (Nekro owns it), leading other-user `at`, leading
+   image/non-text,
    two close Nekro triggers across scheduler tasks, and ordinary messages.
    Separately verify private Lily/Nekro recipient routing.
 7. Fault-inject a lost/late deny response, claim-ack failure, Core outage, and
@@ -140,12 +142,12 @@ Do not jump directly from shadow to enforcement.
    persisted acknowledgement. A send timeout is recorded as
    `completion_status=ambiguous` and is not retried blindly.
 8. Record code/image hashes, process starts, instance state, registry hash, and
-   reporter counters only after these tests pass. That timestamp starts a new
-   uninterrupted 24-hour policy-v5 acceptance window; no pre-deployment hour
-   counts.
-9. Run `docs/phase2_final_audit.sql` with explicit `window_start` and
-   `window_end`, review every exception, and sign `docs/ACCEPTANCE.md` before
-   beginning Phase 3.
+   reporter counters after these tests pass. Reuse the completed policy-v5
+   24-hour window for unchanged invariants and run `docs/policy_v6_backtest.sql`
+   over its stored events; do not impose another fixed 24-hour delay for this
+   Core-only policy delta.
+9. Review post-deployment claim/ACK/response rows and failure counters, then
+   sign `docs/ACCEPTANCE.md` before beginning Phase 3.
 10. Roll back by setting both bridge claim flags false or Core mode `off`. No
    token or database rollback is required.
 

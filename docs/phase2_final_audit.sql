@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 \if :{?window_start}
 \else
-\echo 'ERROR: pass window_start explicitly after the policy-v5 deployment baseline is recorded'
+\echo 'ERROR: pass the completed policy-v5 window_start explicitly'
 SELECT 1 / 0 AS missing_required_window_start;
 \endif
 \if :{?window_end}
@@ -388,6 +388,44 @@ WITH window_sources AS (
     JOIN window_sources w ON w.id = allow_claim.source_event_id
     WHERE allow_claim.enforced
       AND allow_claim.action = 'allow'
+), suppress_all_coordination AS (
+    SELECT
+        ed.source_event_id,
+        ARRAY(
+            SELECT DISTINCT observation.instance_id
+            FROM event_observations observation
+            WHERE observation.source_event_id = ed.source_event_id
+            ORDER BY observation.instance_id
+        )::varchar[] AS observed_instance_ids,
+        ARRAY(
+            SELECT DISTINCT deny_claim.instance_id
+            FROM event_claims deny_claim
+            WHERE deny_claim.source_event_id = ed.source_event_id
+              AND deny_claim.enforced
+              AND deny_claim.action = 'deny'
+              AND deny_claim.reason = 'decision_suppress_all:reply_to_other_observed'
+              AND deny_claim.acknowledged_at IS NOT NULL
+              AND deny_claim.acknowledged_at >= deny_claim.created_at
+              AND deny_claim.features_json->'gates'->>'suppression_scope' = 'all_instances'
+            ORDER BY deny_claim.instance_id
+        )::varchar[] AS acknowledged_deny_instance_ids
+    FROM event_decisions ed
+    JOIN source_events source ON source.id = ed.source_event_id
+    JOIN window_sources w ON w.id = ed.source_event_id
+    WHERE w.platform = 'qq'
+      AND w.conversation_type = 'group'
+      AND w.conversation_id = '708309706'
+      AND source.correlation_version = 'qq-message-v3'
+      AND ed.policy_version = 'qq-v3-policy-v6'
+      AND ed.reason = 'reply_to_other_observed'
+      AND ed.features_json->>'reply_target_status' = 'resolved_other'
+      AND coalesce((ed.features_json->>'summons_talk_bot')::boolean, false) IS FALSE
+      AND coalesce((ed.features_json->>'mentions_observing_bot')::boolean, false) IS FALSE
+      AND EXISTS (
+          SELECT 1
+          FROM event_observations observation
+          WHERE observation.source_event_id = ed.source_event_id
+      )
 )
 SELECT 'enforced_outside_canary' AS violation, count(*)
 FROM event_claims ec
@@ -424,6 +462,23 @@ WHERE claim.acknowledged_at IS NOT NULL
       OR claim.enforced IS DISTINCT FROM true
       OR claim.acknowledged_at < claim.created_at
   )
+UNION ALL
+SELECT 'suppress_all_has_allow_or_wrong_enforced_claim', count(*)
+FROM event_claims claim
+JOIN suppress_all_coordination suppression
+  ON suppression.source_event_id = claim.source_event_id
+WHERE claim.enforced
+  AND (
+      claim.action IS DISTINCT FROM 'deny'
+      OR claim.reason IS DISTINCT FROM 'decision_suppress_all:reply_to_other_observed'
+      OR claim.features_json->'gates'->>'suppression_scope' IS DISTINCT FROM 'all_instances'
+  )
+UNION ALL
+SELECT 'suppress_all_without_exact_acknowledged_denies', count(*)
+FROM suppress_all_coordination suppression
+WHERE suppression.observed_instance_ids
+      IS DISTINCT FROM suppression.acknowledged_deny_instance_ids
+   OR cardinality(suppression.observed_instance_ids) = 0
 UNION ALL
 SELECT 'allow_coordination_feature_drift', count(*)
 FROM event_claims allow_claim

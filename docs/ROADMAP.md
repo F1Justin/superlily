@@ -14,8 +14,11 @@ for Phases 4–11 without authorizing those phases to start early.
 Phase 2 is in its final production gate. Correlation v3, runtime command
 inventory, response attribution, exact-conversation claim canary, typed
 platform capabilities, policy v5, migration `0011_claim_ack`, and bridge 0.3.2
-are deployed. Earlier rejected windows remain diagnostic evidence in
-`ACCEPTANCE.md`.
+are deployed. Policy v6 is a reviewed Core-only candidate: a deterministic
+reply to another person without an explicit Lily summon now denies every
+observing bot in claim scope, while an explicit summon still routes to Nekro.
+It does not change bridge code or expand the canary allowlist. Earlier rejected
+windows remain diagnostic evidence in `ACCEPTANCE.md`.
 
 The policy-v4 replacement window reached 24 hours, but the complete row-level
 and code review rejected it as final evidence. It exposed short-message-ID
@@ -24,13 +27,15 @@ leading-segment command false positives, private/reply policy gaps, Nekro
 task-attribution races, a committed-deny/response-loss claim hole, and
 ambiguous send timeouts counted as confirmed failures.
 
-The policy-v5 controlled matrix passed on the deployed candidate. The
-authoritative replacement window runs from 2026-07-16 21:49:26 CST through
-2026-07-17 21:49:26 CST with clean bridge baselines recorded in
-`ACCEPTANCE.md`. Phase 3 has not started. The remaining gate is the exact-window
-SQL audit, counter and log review, exceptional-row review, and operator
-sign-off. No Phase 3 code or production authority begins before that evidence
-is clean and Phase 2 completion is checked.
+The policy-v5 controlled matrix and replacement window remain historical
+evidence, but they do not exercise the newly accepted suppress-all rule. Phase
+3 has not started. The remaining gate is to deploy policy v6 to the unchanged
+test-group canary, replay the stored policy-v5 window through the policy-v6
+counterfactual audit, pass the no-summon/summon controlled pair, review the
+post-deployment counters/logs, and obtain operator sign-off. The unchanged
+24-hour evidence is reused; the policy delta does not require another fixed
+24-hour wait. No Phase 3 code or production authority begins before that
+evidence is clean and Phase 2 completion is checked.
 
 ## Sequencing rules
 

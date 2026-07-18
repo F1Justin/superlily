@@ -143,11 +143,15 @@ response gap.
   samples all exercised this boundary.
 - [x] Decision recomputation is serialized per canonical source across event,
   response, resolver, and claim paths.
-- [x] Only actionable `command`/`talk` decisions can allow or deny;
-  `observe_only` abstains.
-- [x] Missing v3 identity, fewer than two observations, low confidence,
-  stale registry, uncovered runtime trigger, uncertain reply, or offline
-  target each abstains.
+- [x] Only actionable `command`/`talk` decisions can allow. Ordinary
+  `observe_only` decisions abstain; policy v6's narrow, deterministic
+  `reply_to_other_observed` exception can only deny every instance and can
+  never create an owner.
+- [x] Missing v3 identity, low confidence, or an uncertain reply target always
+  abstains. Actionable ownership claims additionally require the configured
+  multi-observer quorum and abstain for stale registry, uncovered runtime
+  trigger, or offline target. No-owner suppress-all needs only the requesting
+  instance's strongly identified observation.
 - [x] Incompletely introspected, sensitive, or non-public commands also
   abstain rather than suppressing the other bot.
 - [x] Shadow claim requests run on both bridges with zero enforced claims.
@@ -162,6 +166,40 @@ response gap.
   policy, task-bound response attribution, and ambiguous completion are
   deployed and covered by controlled samples.
 - [ ] Canary evidence is stable before Phase 3 begins.
+
+### Policy v6 reply-to-other suppression candidate
+
+- [x] A reply to another person without explicit Lily summon/known-bot mention
+  remains `observe_only / reply_to_other_observed`, even when its body matches
+  a Lily command such as `今日老婆`.
+- [x] With strong v3 identity, at least one observation, sufficient confidence,
+  and enabled claim scope, that decision yields an auditable enforced `deny`
+  with `suppression_scope=all_instances` for every requesting observer, with no
+  `allow`. Lily-only command groups therefore do not depend on a Nekro peer.
+- [x] The suppression-only claim bypasses registry freshness and target-online
+  gates that are irrelevant when no bot is permitted to act; identity,
+  confidence, and scope gates remain fail-open.
+- [x] A reply to another person that explicitly contains `莉莉` or mentions a
+  known bot still routes to `talk / nekro-agent` when conversation mode permits.
+- [x] Unit and API tests cover command-shaped reply text, explicit summon,
+  single-observer Lily-only suppression, two-observer denies,
+  acknowledgement, and event-context auditability.
+- [x] On 2026-07-18 the complete suite passed 179 tests on both SQLite and
+  PostgreSQL 17; a fresh disposable PostgreSQL database passed
+  `base -> head -> base -> head`, `alembic check`, and the policy-v6 final-audit
+  SQL with an empty explicit 24-hour syntax-validation window.
+- [x] `policy_v6_backtest.sql` replayed the completed policy-v5 window: all
+  1,689 `reply_to_other_observed` sources had complete features and were
+  eligible for no-owner suppression when their conversation is in enforcement
+  scope, representing 1,879 instance-level denies across 1,499 single-observer
+  and 190 two-observer sources. Integrity violations were zero. The two
+  historical successful Lily responses, both `今日老婆` in group `686922858`,
+  are included in the suppressible set.
+- [ ] Deploy the reviewed Core candidate without changing either bridge or the
+  exact canary allowlist, then run the controlled no-summon/summon pair.
+- [ ] Run `policy_v6_backtest.sql` against the completed policy-v5 window,
+  combine it with the unchanged 24-hour evidence and the live controlled pair,
+  then complete operator sign-off. No new fixed 24-hour wait is required.
 
 ## Phase 1 acceptance
 
@@ -429,11 +467,13 @@ authoritative Phase 2 evidence. The previous aggregate audit did not detect:
   showed the message may already have been delivered.
 
 Policy v5, bridge source identity v2, task-bound trigger attribution, explicit
-ambiguous completion, and `0011_claim_ack` are now deployed. The remaining
-unchecked item is the uninterrupted 24-hour policy-v5 production review below;
-Phase 3 has not started.
+ambiguous completion, and `0011_claim_ack` are deployed. Its 24-hour window has
+elapsed, but it predates the newly accepted reply-to-other suppress-all
+requirement. It remains historical evidence; policy v6 deployment, controlled
+samples, the stored-window counterfactual backtest, and operator sign-off are
+still required. Phase 3 has not started.
 
-## Policy v5 authoritative window in progress
+## Policy v5 window (completed, superseded)
 
 The reviewed Core/bridge transport candidate was deployed on 2026-07-16 CST.
 Core image
@@ -473,7 +513,7 @@ complete.
 
 At 2026-07-16 21:49:26 CST both instances were online on bridge 0.3.2 with
 `queue_depth=0`, `dropped=0`, `claim_failures=0`, and
-`claim_ack_failures=0`. This is the authoritative baseline and starts the new
-window. Its planned endpoint is 2026-07-17 21:49:26 CST. The ending SQL audit,
-counter deltas, exceptional-row review, and operator sign-off remain required;
-until then Phase 2c and Phase 2 completion stay unchecked.
+`claim_ack_failures=0`. That window reached its planned endpoint at
+2026-07-17 21:49:26 CST. Because policy v6 changes claim authority for one
+previously abstaining decision class, this baseline cannot be reused for final
+Phase 2 sign-off; Phase 2c and Phase 2 completion remain unchecked.

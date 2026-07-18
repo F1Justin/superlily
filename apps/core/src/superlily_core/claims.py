@@ -8,6 +8,7 @@ from .correlation import CORRELATION_VERSION
 
 ACTIONABLE_DECISIONS = {"command", "talk"}
 UNSAFE_REPLY_STATUSES = {"unresolved", "ambiguous", "conflict"}
+SUPPRESS_ALL_DECISION_REASONS = {"reply_to_other_observed"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,7 @@ def evaluate_claim(
     mode: str,
     requesting_instance_id: str,
     decision_type: str,
+    decision_reason: str,
     target_instance_id: str | None,
     confidence: int,
     decision_features: dict[str, Any],
@@ -35,13 +37,25 @@ def evaluate_claim(
     runtime = decision_features.get("command_registry_runtime")
     runtime = runtime if isinstance(runtime, dict) else {}
     reply_status = str(decision_features.get("reply_target_status") or "none")
+    suppress_all = (
+        decision_type == "observe_only"
+        and decision_reason in SUPPRESS_ALL_DECISION_REASONS
+        and target_instance_id is None
+        and reply_status == "resolved_other"
+        and decision_features.get("summons_talk_bot") is False
+        and decision_features.get("mentions_observing_bot") is False
+    )
+    effective_required_observations = 1 if suppress_all else required_observations
     gates = {
         "mode": mode,
         "decision_type": decision_type,
+        "decision_reason": decision_reason,
         "target_instance_id": target_instance_id,
+        "suppression_scope": "all_instances" if suppress_all else None,
         "correlation_version": correlation_version,
         "observation_count": observation_count,
         "required_observations": required_observations,
+        "effective_required_observations": effective_required_observations,
         "confidence": confidence,
         "minimum_confidence": minimum_confidence,
         "registry_error": decision_features.get("command_registry_error"),
@@ -54,14 +68,21 @@ def evaluate_claim(
 
     if mode == "off":
         return ClaimEvaluation("abstain", "claim_mode_off", False, gates)
-    if decision_type not in ACTIONABLE_DECISIONS or not target_instance_id:
+    if not suppress_all and (decision_type not in ACTIONABLE_DECISIONS or not target_instance_id):
         return ClaimEvaluation("abstain", "non_actionable_decision", False, gates)
     if correlation_version != CORRELATION_VERSION:
         return ClaimEvaluation("abstain", "strong_correlation_required", False, gates)
-    if observation_count < required_observations:
+    if observation_count < effective_required_observations:
         return ClaimEvaluation("abstain", "insufficient_observations", False, gates)
     if confidence < minimum_confidence:
         return ClaimEvaluation("abstain", "confidence_below_threshold", False, gates)
+    if suppress_all:
+        return ClaimEvaluation(
+            "deny",
+            f"decision_suppress_all:{decision_reason}",
+            True,
+            gates,
+        )
     if decision_features.get("command_registry_error"):
         return ClaimEvaluation("abstain", "command_registry_unavailable", False, gates)
     if runtime.get("status") != "fresh":

@@ -16,7 +16,7 @@ The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
 **Status:** design only. Phase 3 implementation has not started and remains
-blocked by the signed policy-v5 Phase 2 gate in `PHASE2_FINAL_AUDIT.md`.
+blocked by the signed policy-v6 Phase 2 gate in `PHASE2_FINAL_AUDIT.md`.
 `PHASE3_ACCEPTANCE.md` is the executable release checklist; this document
 defines the architecture.
 

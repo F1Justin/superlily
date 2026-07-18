@@ -87,12 +87,15 @@ embedding QQ assumptions in the tool itself.
   attribution; a later message cannot overwrite it. Send timeouts are recorded
   as ambiguous completion rather than confirmed non-delivery.
 - Phase 2c records per-instance `event_claims`. Only actionable `command` and
-  `talk` decisions can produce allow/deny. Enforcement requires correlation
-  v3, two observations, sufficient confidence, a fresh runtime registry, no
-  unregistered runtime match, deterministic reply routing, and an online
-  target. Command enforcement additionally requires a fully introspected,
-  public, non-sensitive matcher. `observe_only` never becomes a destructive
-  deny in this canary.
+  `talk` decisions can produce an allow. Ownership enforcement requires
+  correlation v3, two observations, sufficient confidence, a fresh runtime
+  registry, no unregistered runtime match, deterministic reply routing, and
+  an online target. Command enforcement additionally requires a fully
+  introspected, public, non-sensitive matcher. Policy v6 adds one no-owner
+  exception: deterministic `reply_to_other_observed` without an explicit Lily
+  summon may deny each requesting instance after the identity/confidence gates,
+  but can never allow one. It needs no multi-observer ownership quorum, so the
+  same rule works in a Lily-only command group.
 - An enforced `allow` additionally requires every other instance that observed
   the canonical source to have acknowledged an already committed enforced
   `deny` after installing local suppression. This closes the response-loss

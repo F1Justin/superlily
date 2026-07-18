@@ -351,7 +351,7 @@ async def test_command_event_records_shadow_decision_for_lily(client, app) -> No
         decision = await session.scalar(select(EventDecision))
         assert decision is not None
         assert decision.source_event_id == response.json()["source_event_id"]
-        assert decision.policy_version == "qq-v3-policy-v5"
+        assert decision.policy_version == "qq-v3-policy-v6"
         assert decision.decision_type == "command"
         assert decision.target_instance_id == "lily-command"
         assert decision.confidence == 95
@@ -2321,7 +2321,7 @@ async def test_known_bot_sender_is_observed_without_retriggering(client, app) ->
             )
         )
         assert decision is not None
-        assert decision.policy_version == "qq-v3-policy-v5"
+        assert decision.policy_version == "qq-v3-policy-v6"
         assert decision.decision_type == "observe_only"
         assert decision.reason == "bot_message_observed"
         assert decision.features_json["sender_bot_instance_id"] == "nekro-agent"

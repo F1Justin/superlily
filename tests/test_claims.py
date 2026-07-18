@@ -15,6 +15,8 @@ def _features(**overrides):
             "runtime_introspection": "strict",
         },
         "reply_target_status": "none",
+        "summons_talk_bot": False,
+        "mentions_observing_bot": False,
     }
     value.update(overrides)
     return value
@@ -25,6 +27,7 @@ def test_claim_routes_only_actionable_deterministic_decisions() -> None:
         mode="canary",
         requesting_instance_id="lily-command",
         decision_type="command",
+        decision_reason="command_prefix:wf",
         target_instance_id="lily-command",
         confidence=95,
         decision_features=_features(),
@@ -38,6 +41,7 @@ def test_claim_routes_only_actionable_deterministic_decisions() -> None:
         mode="canary",
         requesting_instance_id="nekro-agent",
         decision_type="command",
+        decision_reason="command_prefix:wf",
         target_instance_id="lily-command",
         confidence=95,
         decision_features=_features(),
@@ -51,6 +55,7 @@ def test_claim_routes_only_actionable_deterministic_decisions() -> None:
         mode="canary",
         requesting_instance_id="lily-command",
         decision_type="observe_only",
+        decision_reason="bot_message_observed",
         target_instance_id=None,
         confidence=100,
         decision_features=_features(),
@@ -77,6 +82,7 @@ def test_claim_abstains_on_every_fail_open_gate() -> None:
         "mode": "canary",
         "requesting_instance_id": "nekro-agent",
         "decision_type": "talk",
+        "decision_reason": "summons_talk_bot",
         "target_instance_id": "nekro-agent",
         "confidence": 95,
         "decision_features": _features(),
@@ -185,6 +191,7 @@ def test_claim_deterministic_talk_reply_outranks_unregistered_lily_command() -> 
         mode="canary",
         requesting_instance_id="lily-command",
         decision_type="talk",
+        decision_reason="reply_to_talk_response",
         target_instance_id="nekro-agent",
         confidence=95,
         decision_features=features,
@@ -198,6 +205,7 @@ def test_claim_deterministic_talk_reply_outranks_unregistered_lily_command() -> 
         mode="canary",
         requesting_instance_id="nekro-agent",
         decision_type="talk",
+        decision_reason="reply_to_talk_response",
         target_instance_id="nekro-agent",
         confidence=95,
         decision_features=features,
@@ -244,6 +252,7 @@ def test_claim_allows_explicitly_reviewed_incomplete_runtime_match() -> None:
         mode="canary",
         requesting_instance_id="nekro-agent",
         decision_type="command",
+        decision_reason="command_prefix:随机莉莉",
         target_instance_id="lily-command",
         confidence=95,
         decision_features=features,
@@ -258,6 +267,91 @@ def test_claim_allows_explicitly_reviewed_incomplete_runtime_match() -> None:
         "deny",
         "decision_target:lily-command",
         True,
+    )
+
+
+def test_claim_suppresses_all_instances_for_deterministic_reply_to_other() -> None:
+    features = _features(
+        reply_target_status="resolved_other",
+        command_registry_error="not needed for no-owner suppression",
+        command_registry_runtime={"status": "stale"},
+    )
+
+    for instance_id in ("lily-command", "nekro-agent"):
+        result = evaluate_claim(
+            mode="canary",
+            requesting_instance_id=instance_id,
+            decision_type="observe_only",
+            decision_reason="reply_to_other_observed",
+            target_instance_id=None,
+            confidence=95,
+            decision_features=features,
+            correlation_version="qq-message-v3",
+            observation_count=1,
+            required_observations=2,
+            minimum_confidence=85,
+            target_status="offline",
+        )
+
+        assert (result.action, result.reason, result.ready) == (
+            "deny",
+            "decision_suppress_all:reply_to_other_observed",
+            True,
+        )
+        assert result.gates["suppression_scope"] == "all_instances"
+        assert result.gates["effective_required_observations"] == 1
+
+
+def test_claim_suppress_all_retains_fail_open_identity_quorum_and_confidence_gates() -> None:
+    base = {
+        "mode": "canary",
+        "requesting_instance_id": "lily-command",
+        "decision_type": "observe_only",
+        "decision_reason": "reply_to_other_observed",
+        "target_instance_id": None,
+        "confidence": 95,
+        "decision_features": _features(reply_target_status="resolved_other"),
+        "correlation_version": "qq-message-v3",
+        "observation_count": 2,
+        "required_observations": 2,
+        "minimum_confidence": 85,
+        "target_status": None,
+    }
+    cases = [
+        ({"mode": "off"}, "claim_mode_off"),
+        ({"correlation_version": None}, "strong_correlation_required"),
+        ({"observation_count": 0}, "insufficient_observations"),
+        ({"confidence": 80}, "confidence_below_threshold"),
+    ]
+
+    for changes, reason in cases:
+        result = evaluate_claim(**{**base, **changes})
+        assert (result.action, result.reason, result.ready) == ("abstain", reason, False)
+
+
+def test_claim_does_not_suppress_reply_to_other_with_explicit_bot_summon() -> None:
+    result = evaluate_claim(
+        mode="canary",
+        requesting_instance_id="lily-command",
+        decision_type="observe_only",
+        decision_reason="reply_to_other_observed",
+        target_instance_id=None,
+        confidence=95,
+        decision_features=_features(
+            reply_target_status="resolved_other",
+            summons_talk_bot=True,
+        ),
+        correlation_version="qq-message-v3",
+        observation_count=2,
+        required_observations=2,
+        minimum_confidence=85,
+        target_status=None,
+    )
+
+    assert (result.action, result.reason, result.ready) == (
+        "abstain",
+        "non_actionable_decision",
+        False,
     )
 
 

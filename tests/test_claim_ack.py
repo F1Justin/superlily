@@ -10,8 +10,13 @@ def _event_payload(
     event_label: str,
     real_seq: str,
     occurred_at: datetime,
+    text: str = "wf 1+1",
+    sender_id: str = "789",
+    references: list[dict] | None = None,
+    segments: list[dict] | None = None,
 ) -> dict:
     bot_id = "985393579" if instance_id == "lily-command" else "2022692714"
+    message_id = f"short-{event_label}-{instance_id}"
     return {
         "schema_version": "1.0",
         "source_event_id": f"qq:source:v2:{event_label}:{instance_id}",
@@ -24,22 +29,26 @@ def _event_payload(
         },
         "event_type": "message",
         "conversation": {"id": "123", "type": "group", "name": "Claim Ack Test"},
-        "sender": {"id": "789", "name": "Tester", "roles": []},
+        "sender": {"id": sender_id, "name": "Tester", "roles": []},
         "message": {
-            "id": f"short-{event_label}-{instance_id}",
-            "text": "wf 1+1",
-            "segments": [{"type": "text", "data": {"text": "wf 1+1"}}],
+            "id": message_id,
+            "text": text,
+            "segments": (
+                segments
+                if segments is not None
+                else [{"type": "text", "data": {"text": text}}]
+            ),
             "attachments": [],
         },
-        "references": [],
+        "references": references or [],
         "occurred_at": occurred_at.isoformat(),
         "metadata": {
             "native_identity": {
                 "schema": "onebot_v11.qq.native_identity.v1",
-                "message_id": f"short-{event_label}-{instance_id}",
+                "message_id": message_id,
                 "real_seq": real_seq,
                 "group_id": "123",
-                "user_id": "789",
+                "user_id": sender_id,
                 "time": str(int(occurred_at.timestamp())),
             }
         },
@@ -99,7 +108,8 @@ async def _ready_claim_runtime(client, app, observed_at: datetime) -> None:
     )
     assert created.status_code == 201, created.text
 
-    for instance_id, token in (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret")):
+    instances = (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret"))
+    for instance_id, token in instances:
         heartbeat = await client.post(
             "/v1/heartbeats",
             json={
@@ -261,3 +271,183 @@ async def test_enforced_allow_requires_acknowledged_peer_suppression(client, app
     )
     assert summary.status_code == 200
     assert summary.json()["acknowledged"] == {"deny": 1}
+
+
+async def test_reply_to_other_without_summon_enforces_acknowledged_denies_for_both_bots(
+    client,
+    app,
+) -> None:
+    observed_at = datetime.now(timezone.utc)
+    await _ready_claim_runtime(client, app, observed_at)
+    instances = (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret"))
+
+    parent_by_instance: dict[str, dict] = {}
+    for instance_id, token in instances:
+        parent = _event_payload(
+            instance_id,
+            event_label="human-parent",
+            real_seq="882001",
+            occurred_at=observed_at,
+            text="需要被引用解释的内容",
+            sender_id="456",
+        )
+        response = await client.post(
+            "/v1/events",
+            json=parent,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"human-parent-{instance_id}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        parent_by_instance[instance_id] = parent
+
+    child_by_instance: dict[str, dict] = {}
+    for instance_id, token in instances:
+        parent_message_id = parent_by_instance[instance_id]["message"]["id"]
+        child = _event_payload(
+            instance_id,
+            event_label="reply-other-command-looking",
+            real_seq="882002",
+            occurred_at=observed_at,
+            text="今日老婆",
+            references=[
+                {
+                    "type": "reply_to",
+                    "platform_message_id": parent_message_id,
+                    "conversation_id": "123",
+                    "conversation_type": "group",
+                    "sender_id": "456",
+                }
+            ],
+            segments=[
+                {"type": "reply", "data": {"id": parent_message_id}},
+                {"type": "at", "data": {"qq": "456"}},
+                {"type": "text", "data": {"text": " 今日老婆"}},
+            ],
+        )
+        response = await client.post(
+            "/v1/events",
+            json=child,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"reply-other-event-{instance_id}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        child_by_instance[instance_id] = child
+
+    claims: dict[str, dict] = {}
+    for instance_id, token in instances:
+        response = await client.post(
+            "/v1/claims/evaluate",
+            json=child_by_instance[instance_id],
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"reply-other-claim-{instance_id}",
+            },
+        )
+        assert response.status_code == 200, response.text
+        claim = response.json()
+        assert (claim["action"], claim["reason"], claim["ready"], claim["enforced"]) == (
+            "deny",
+            "decision_suppress_all:reply_to_other_observed",
+            True,
+            True,
+        )
+        assert claim["features"]["gates"]["suppression_scope"] == "all_instances"
+
+        acknowledged = await client.post(
+            f"/v1/claims/{claim['claim_id']}/ack",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"reply-other-ack-{instance_id}",
+            },
+        )
+        assert acknowledged.status_code == 200, acknowledged.text
+        assert acknowledged.json()["acknowledged_at"] is not None
+        claims[instance_id] = claim
+
+    context = await client.get(
+        f"/v1/events/{claims['lily-command']['source_event_id']}/context",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert context.status_code == 200, context.text
+    context_claims = {item["instance_id"]: item for item in context.json()["claims"]}
+    assert set(context_claims) == {"lily-command", "nekro-agent"}
+    assert all(item["action"] == "deny" for item in context_claims.values())
+    assert all(item["acknowledged_at"] is not None for item in context_claims.values())
+
+
+async def test_reply_to_other_suppresses_single_observer_lily_only_group(client, app) -> None:
+    observed_at = datetime.now(timezone.utc)
+    await _ready_claim_runtime(client, app, observed_at)
+
+    parent = _event_payload(
+        "lily-command",
+        event_label="single-observer-human-parent",
+        real_seq="883001",
+        occurred_at=observed_at,
+        text="只有 Lily 收到的普通人消息",
+        sender_id="456",
+    )
+    parent_response = await client.post(
+        "/v1/events",
+        json=parent,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "single-observer-human-parent",
+        },
+    )
+    assert parent_response.status_code == 201, parent_response.text
+
+    parent_message_id = parent["message"]["id"]
+    child = _event_payload(
+        "lily-command",
+        event_label="single-observer-reply-other",
+        real_seq="883002",
+        occurred_at=observed_at,
+        text="今日老婆",
+        references=[
+            {
+                "type": "reply_to",
+                "platform_message_id": parent_message_id,
+                "conversation_id": "123",
+                "conversation_type": "group",
+                "sender_id": "456",
+            }
+        ],
+        segments=[
+            {"type": "reply", "data": {"id": parent_message_id}},
+            {"type": "at", "data": {"qq": "456"}},
+            {"type": "text", "data": {"text": " 今日老婆"}},
+        ],
+    )
+    response = await client.post(
+        "/v1/claims/evaluate",
+        json=child,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "single-observer-reply-other-claim",
+        },
+    )
+    assert response.status_code == 200, response.text
+    claim = response.json()
+    assert (claim["action"], claim["reason"], claim["ready"], claim["enforced"]) == (
+        "deny",
+        "decision_suppress_all:reply_to_other_observed",
+        True,
+        True,
+    )
+    assert claim["features"]["gates"]["observation_count"] == 1
+    assert claim["features"]["gates"]["effective_required_observations"] == 1
+
+    acknowledged = await client.post(
+        f"/v1/claims/{claim['claim_id']}/ack",
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "single-observer-reply-other-ack",
+        },
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["acknowledged_at"] is not None

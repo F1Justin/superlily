@@ -536,6 +536,41 @@ def test_reply_to_lily_takes_precedence_over_command_or_summon(text: str) -> Non
     assert decision.reason == "reply_to_command_response_observed"
 
 
+def test_reply_to_other_without_summon_suppresses_command_routing() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="今日老婆",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_status="resolved_other",
+        command_registry=load_command_registry(),
+    )
+
+    assert decision.decision_type == "observe_only"
+    assert decision.target_instance_id is None
+    assert decision.reason == "reply_to_other_observed"
+    assert decision.confidence == 95
+    assert decision.features["matched_command"]["rule_id"] == "external.today_waifu.public"
+
+
+def test_reply_to_other_with_lily_summon_routes_to_nekro() -> None:
+    decision = decide_event(
+        source_event_type="message",
+        conversation_type="group",
+        text="莉莉，解释一下这段话",
+        attachments=[],
+        metadata={},
+        has_reply_link=True,
+        reply_target_status="resolved_other",
+    )
+
+    assert decision.decision_type == "talk"
+    assert decision.target_instance_id == "nekro-agent"
+    assert decision.reason == "summons_talk_bot_with_reply"
+
+
 def test_command_only_group_allows_commands_but_not_conversation() -> None:
     registry = load_command_registry()
     command = decide_event(

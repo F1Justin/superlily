@@ -5,9 +5,10 @@
 Phase 3 has not started. Every item below is unchecked until evidence is
 recorded; design prose is not implementation evidence.
 
-- [ ] `ACCEPTANCE.md` contains the signed policy-v5 Phase 2 controlled samples,
-  fresh 24-hour audit, acknowledged claim coordination, response attribution,
-  SQLite/PostgreSQL tests, `0011_claim_ack` migration/drift, backup and rollback.
+- [ ] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
+  reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
+  acknowledged claim coordination, response attribution, SQLite/PostgreSQL
+  tests, `0011_claim_ack` migration/drift, backup and rollback.
 - [ ] Phase 3 ADRs approve descriptor/JCS authority, provider identity,
   transitions/recovery, artifact storage, credentials and control-plane auth.
 

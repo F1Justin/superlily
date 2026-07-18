@@ -1633,6 +1633,7 @@ async def evaluate_event_claim(
             mode=settings.claim_mode,
             requesting_instance_id=payload.instance.instance_id,
             decision_type=decision.decision_type,
+            decision_reason=decision.reason,
             target_instance_id=decision.target_instance_id,
             confidence=decision.confidence,
             decision_features=decision.features_json,

@@ -4,7 +4,7 @@ from typing import Any
 
 from .command_registry import CommandRegistry
 
-POLICY_VERSION = "qq-v3-policy-v5"
+POLICY_VERSION = "qq-v3-policy-v6"
 TALK_TARGET_INSTANCE = "nekro-agent"
 COMMAND_TARGET_INSTANCE = "lily-command"
 TALK_ENABLED_MODES = {"conversation_only", "full"}
@@ -118,7 +118,7 @@ def decide_event(
                 )
             return Decision("talk", TALK_TARGET_INSTANCE, 90, "summons_talk_bot_with_reply", features)
         if reply_target_status == "resolved_other":
-            return Decision("observe_only", None, 75, "reply_to_other_observed", features)
+            return Decision("observe_only", None, 95, "reply_to_other_observed", features)
         return Decision("observe_only", None, 60, "reply_reference_observed", features)
 
     if command_match and (

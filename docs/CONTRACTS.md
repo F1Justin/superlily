@@ -127,20 +127,29 @@ sensitive status. Candidate completeness also records whether the matcher has
 extra rule or permission checkers that cannot be represented by the trigger.
 
 Claim enforcement is narrower than decision generation. Only `command` and
-`talk` are actionable. `observe_only`, missing v3 identity, a single
-observation, stale/missing runtime inventory, an uncovered runtime trigger,
-uncertain reply target, low confidence, or an offline target returns
-`abstain`. Incomplete matcher introspection, sensitive commands, and commands
-whose permission is not `public` also abstain. `shadow` never enforces;
-`canary` enforces only exact configured `platform:type:id` conversations.
+`talk` may produce an `allow`. Ordinary `observe_only` decisions abstain. The
+single suppression-only exception is a strongly correlated, deterministic
+`reply_to_other_observed` decision with no explicit Lily summon or known-bot
+mention: Core returns `deny` to every requesting instance and never elects an
+owner. This prevents command-shaped text in a reply to another person from
+escaping through a local matcher. It still requires correlation v3, at least
+one observation, the claim confidence threshold, and exact canary/enforce
+scope; it does not require the multi-observer ownership quorum, a
+command-registry match, or an online target because no execution target exists.
+This lets a Lily-only command group suppress its own local matcher. Missing
+identity, an uncertain reply target, or low confidence remains fail-open.
+Incomplete matcher introspection, sensitive commands, and commands whose
+permission is not `public` also abstain. `shadow` never enforces; `canary`
+enforces only exact configured `platform:type:id` conversations.
 An `allow` is enforced only after all other instances observed on that source
 have acknowledged their enforced `deny` claims. A committed deny without an
 acknowledgement is insufficient because its HTTP response may have been lost
 while the peer failed open. Otherwise the target becomes
 `abstain / claim_peer_suppressions_not_acknowledged`; the coordination snapshot
 is retained in claim features. Actual response outcomes remain the final
-behavioral evidence. Claim gates always include the canonical `decision_type`
-and `target_instance_id`. A bridge may use those two fields to correlate a
+behavioral evidence. Claim gates always include the canonical `decision_type`,
+`decision_reason`, `target_instance_id`, and optional `suppression_scope`. A
+bridge may use the decision and target fields to correlate a
 legacy response after fail-open abstention, but they do not grant execution
 authority; only `ready`, `action`, and `enforced` control suppression or
 ownership.
