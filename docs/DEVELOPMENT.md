@@ -47,6 +47,23 @@ The descriptor under `vectors/` is a test vector, not an active registry entry.
 The CLI performs offline verification only and cannot import, activate, or run
 a tool.
 
+Phase 3a persistence and Core API regression tests are isolated with:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_tool_registry_contracts.py \
+  tests/test_tool_registry_api.py \
+  tests/test_migrations.py
+```
+
+After `0012_tool_registry` is applied, the initial admin read must report zero
+descriptors/providers and execution `off`. The local administration CLI has
+only `import-descriptor` and `register-provider`; it reads descriptor bytes
+from the exact `--source-commit` Git object and never activates a tool. For the
+initial one-descriptor bundle, obtain `--bundle-hash` from
+`superlily-tool-registry verify-descriptor`. Do not import the shared
+`status.inspect` test vector as production authority.
+
 Historical imports start with a write-free dry run. Candidate records should be
 normalized to EventIn-shaped JSONL first, then inspected with:
 

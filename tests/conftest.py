@@ -17,6 +17,7 @@ async def app(tmp_path):
         database_url=database_url,
         admin_token="admin-secret",
         ingest_tokens={"lily-command": "lily-secret", "nekro-agent": "nekro-secret"},
+        provider_tokens={"provider-status-primary": "provider-status-secret"},
         stale_after_seconds=90,
         raw_enabled=True,
         raw_max_bytes=8_192,

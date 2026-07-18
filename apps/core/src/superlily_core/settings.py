@@ -13,6 +13,23 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _token_map(value: str | None, *, variable: str) -> dict[str, str]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{variable} must be valid JSON") from exc
+    if not isinstance(parsed, dict) or not all(
+        isinstance(key, str) and key and isinstance(token, str) and token
+        for key, token in parsed.items()
+    ):
+        raise ValueError(
+            f"{variable} must be an object of non-empty string IDs to non-empty string tokens"
+        )
+    return parsed
+
+
 def _string_set(value: str | None, *, variable: str) -> frozenset[str]:
     if not value:
         return frozenset()
@@ -56,12 +73,15 @@ class Settings:
     database_url: str = DEFAULT_DATABASE_URL
     admin_token: str = ""
     ingest_tokens: dict[str, str] = field(default_factory=dict)
+    provider_tokens: dict[str, str] = field(default_factory=dict)
     stale_after_seconds: int = 90
     correlation_window_seconds: int = 2
     raw_enabled: bool = False
     raw_max_bytes: int = 32_768
     command_registry_path: str = DEFAULT_COMMAND_REGISTRY_PATH
     command_registry_snapshot_stale_seconds: int = 600
+    provider_inventory_stale_seconds: int = 600
+    provider_heartbeat_stale_seconds: int = 90
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
@@ -72,10 +92,18 @@ class Settings:
 
     def __post_init__(self) -> None:
         active_ingest_tokens = [token for token in self.ingest_tokens.values() if token]
+        active_provider_tokens = [token for token in self.provider_tokens.values() if token]
         if len(active_ingest_tokens) != len(set(active_ingest_tokens)):
             raise ValueError("ingest tokens must be unique per instance")
+        if len(active_provider_tokens) != len(set(active_provider_tokens)):
+            raise ValueError("provider tokens must be unique per provider")
         if self.admin_token and self.admin_token in active_ingest_tokens:
             raise ValueError("admin and ingest tokens must be unrelated")
+        all_bot_admin_tokens = set(active_ingest_tokens)
+        if self.admin_token:
+            all_bot_admin_tokens.add(self.admin_token)
+        if set(active_provider_tokens) & all_bot_admin_tokens:
+            raise ValueError("provider, admin, and ingest tokens must be unrelated")
         if not 1 <= self.stale_after_seconds <= 86_400:
             raise ValueError("stale_after_seconds must be between 1 and 86400")
         if not 0 <= self.correlation_window_seconds <= 60:
@@ -92,6 +120,10 @@ class Settings:
             raise ValueError("claim_coalesce_milliseconds must be between 0 and 5000")
         if self.command_registry_snapshot_stale_seconds < 1:
             raise ValueError("command_registry_snapshot_stale_seconds must be positive")
+        if not 1 <= self.provider_inventory_stale_seconds <= 86_400:
+            raise ValueError("provider_inventory_stale_seconds must be between 1 and 86400")
+        if not 1 <= self.provider_heartbeat_stale_seconds <= 86_400:
+            raise ValueError("provider_heartbeat_stale_seconds must be between 1 and 86400")
         valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
         if self.group_default_mode not in valid_group_modes:
             raise ValueError(
@@ -115,13 +147,14 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        tokens_raw = os.getenv("SUPERLILY_INGEST_TOKENS_JSON", "{}")
-        try:
-            tokens = json.loads(tokens_raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError("SUPERLILY_INGEST_TOKENS_JSON must be valid JSON") from exc
-        if not isinstance(tokens, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tokens.items()):
-            raise ValueError("SUPERLILY_INGEST_TOKENS_JSON must be an object of string tokens")
+        tokens = _token_map(
+            os.getenv("SUPERLILY_INGEST_TOKENS_JSON", "{}"),
+            variable="SUPERLILY_INGEST_TOKENS_JSON",
+        )
+        provider_tokens = _token_map(
+            os.getenv("SUPERLILY_PROVIDER_TOKENS_JSON", "{}"),
+            variable="SUPERLILY_PROVIDER_TOKENS_JSON",
+        )
         claim_mode = os.getenv("SUPERLILY_CLAIM_MODE", "off").strip().lower()
         if claim_mode not in {"off", "shadow", "canary", "enforce"}:
             raise ValueError("SUPERLILY_CLAIM_MODE must be off, shadow, canary, or enforce")
@@ -129,6 +162,7 @@ class Settings:
             database_url=os.getenv("SUPERLILY_DATABASE_URL", DEFAULT_DATABASE_URL),
             admin_token=os.getenv("SUPERLILY_ADMIN_TOKEN", ""),
             ingest_tokens=tokens,
+            provider_tokens=provider_tokens,
             stale_after_seconds=int(os.getenv("SUPERLILY_STALE_AFTER_SECONDS", "90")),
             correlation_window_seconds=int(os.getenv("SUPERLILY_CORRELATION_WINDOW_SECONDS", "2")),
             raw_enabled=_as_bool(os.getenv("SUPERLILY_RAW_ENABLED")),
@@ -136,6 +170,12 @@ class Settings:
             command_registry_path=os.getenv("SUPERLILY_COMMAND_REGISTRY_PATH", DEFAULT_COMMAND_REGISTRY_PATH),
             command_registry_snapshot_stale_seconds=int(
                 os.getenv("SUPERLILY_COMMAND_REGISTRY_SNAPSHOT_STALE_SECONDS", "600")
+            ),
+            provider_inventory_stale_seconds=int(
+                os.getenv("SUPERLILY_PROVIDER_INVENTORY_STALE_SECONDS", "600")
+            ),
+            provider_heartbeat_stale_seconds=int(
+                os.getenv("SUPERLILY_PROVIDER_HEARTBEAT_STALE_SECONDS", "90")
             ),
             group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
             group_modes=_group_modes(

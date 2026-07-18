@@ -227,3 +227,26 @@ verification using exactly these contracts. Shared acceptance and rejection
 vectors live in `packages/contracts/vectors/tool_registry`. The bundled
 `status.inspect` descriptor is only a golden vector: it is not imported,
 reviewed, active, eligible, or executable production authority.
+
+Migration `0012_tool_registry` adds immutable descriptor authority, descriptor
+and provider lifecycle audit, stable provider/credential references,
+append-only inventory snapshots/entries, and separate heartbeat observations.
+It deliberately adds no invocation, attempt, lease, confirmation, artifact, or
+execution table.
+
+- `POST /v1/provider-inventory/snapshots` requires a separately configured
+  Provider bearer token and `Idempotency-Key`. The payload provider must match
+  that credential; Core verifies the inventory content hash before append.
+- `POST /v1/providers/heartbeats` uses the same Provider identity and must bind
+  to an inventory hash already accepted for that provider. A heartbeat never
+  refreshes or replaces inventory.
+- `GET /v1/tools` and `GET /v1/tools/{tool_id}` are admin-only read surfaces
+  that keep desired, reported, and effective state separate and return stable
+  ineligibility reasons.
+
+Descriptor content and stable provider registration have no HTTP mutation
+route. `superlily-tool-registry-admin` is a local deployment CLI: descriptor
+content is read from an exact full Git commit, canonicalized again, and stored
+only as `reviewed`; the initial single-descriptor bundle hash must equal its
+canonical descriptor hash. The CLI has no activation command. Every effective
+tool remains ineligible with `execution_off`, and no invocation route exists.

@@ -66,6 +66,23 @@ SUPERLILY_CLAIM_REQUIRED_OBSERVATIONS=2
 SUPERLILY_CLAIM_COALESCE_MILLISECONDS=200
 ```
 
+Phase 3a Provider credentials are a third, unrelated token class. Keep the map
+empty for the first schema deployment; an empty map makes both Provider write
+endpoints return 401 and leaves the Registry with zero reported providers.
+
+```dotenv
+SUPERLILY_PROVIDER_TOKENS_JSON={}
+SUPERLILY_PROVIDER_INVENTORY_STALE_SECONDS=600
+SUPERLILY_PROVIDER_HEARTBEAT_STALE_SECONDS=90
+```
+
+When a reviewed Provider is introduced later, generate a new token that is not
+equal to any admin or bot-ingest token, add only its provider-ID mapping, and
+create the stable registration through the local
+`superlily-tool-registry-admin` command. Do not place Provider tokens in a
+descriptor, inventory, heartbeat metadata, logs, browser storage, or exported
+evidence.
+
 ## 2. Lily bridge
 
 The existing Lily process runs in the `nb` tmux session managed by the enabled
@@ -161,10 +178,12 @@ Do not jump directly from shadow to enforcement.
 
 ## 6. Phase 3 deployment boundary
 
-Phase 3a contract work has started after the Phase 2 signature, but no Phase 3
-schema, endpoint, provider credential, active descriptor, or execution path is
-deployed. Follow `PHASE3_ACCEPTANCE.md` and `PHASE3_TOOL_REGISTRY.md`. Deploy
-future descriptor/runtime registry work with zero active descriptors and
-execution `off`; the future control panel described in `CONTROL_PLANE.md` is
+Phase 3a contract/schema/API work exists on its development branch after the
+Phase 2 signature, but no Phase 3 schema, endpoint, provider credential, active
+descriptor, or execution path is deployed. Follow `PHASE3_ACCEPTANCE.md` and
+`PHASE3_TOOL_REGISTRY.md`. The first `0012_tool_registry` deployment must keep
+`SUPERLILY_PROVIDER_TOKENS_JSON={}`, import no descriptor, expose only the
+admin read surface, and prove `active_descriptors=0`, `eligible_tools=0`, and
+execution `off`. The future control panel described in `CONTROL_PLANE.md` is
 read-only until its own authentication, authorization, preview, audit, and
 mutation gates pass.

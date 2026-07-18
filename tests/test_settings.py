@@ -22,6 +22,31 @@ def test_settings_reject_reused_authentication_tokens() -> None:
         Settings(ingest_tokens={"lily-command": "same", "nekro-agent": "same"})
     with pytest.raises(ValueError, match="admin and ingest"):
         Settings(admin_token="same", ingest_tokens={"lily-command": "same"})
+    with pytest.raises(ValueError, match="unique per provider"):
+        Settings(provider_tokens={"provider-a": "same", "provider-b": "same"})
+    with pytest.raises(ValueError, match="provider, admin, and ingest"):
+        Settings(ingest_tokens={"lily-command": "same"}, provider_tokens={"provider-a": "same"})
+
+
+def test_settings_reject_empty_environment_token(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_PROVIDER_TOKENS_JSON", '{"provider-a":""}')
+    with pytest.raises(ValueError, match="non-empty string tokens"):
+        Settings.from_env()
+
+
+def test_provider_tokens_and_freshness_load_from_separate_environment(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SUPERLILY_PROVIDER_TOKENS_JSON",
+        '{"provider-status-primary":"provider-only-secret"}',
+    )
+    monkeypatch.setenv("SUPERLILY_PROVIDER_INVENTORY_STALE_SECONDS", "321")
+    monkeypatch.setenv("SUPERLILY_PROVIDER_HEARTBEAT_STALE_SECONDS", "45")
+
+    settings = Settings.from_env()
+
+    assert settings.provider_tokens == {"provider-status-primary": "provider-only-secret"}
+    assert settings.provider_inventory_stale_seconds == 321
+    assert settings.provider_heartbeat_stale_seconds == 45
 
 
 def test_group_modes_are_explicit_and_private_messages_stay_full(monkeypatch) -> None:

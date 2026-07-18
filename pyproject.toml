@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 superlily-tool-registry = "superlily_contracts.tool_registry_cli:main"
+superlily-tool-registry-admin = "superlily_core.tool_registry_admin:main"
 
 [tool.setuptools]
 packages = ["superlily_core", "superlily_contracts"]

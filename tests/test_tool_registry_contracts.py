@@ -241,6 +241,31 @@ def test_provider_inventory_hash_is_order_independent_and_verified() -> None:
         )
 
 
+def test_provider_inventory_rejects_two_versions_of_the_same_tool() -> None:
+    first = _inventory_tool("status.inspect", "1" * 64, "a" * 64)
+    second = first.model_copy(
+        update={
+            "descriptor_version": "2.0.0",
+            "descriptor_hash": "2" * 64,
+            "implementation_hash": "b" * 64,
+        }
+    )
+    snapshot_hash = provider_inventory_snapshot_hash(
+        provider_id="provider-status-primary",
+        protocol_version="superlily-provider-pull-v1",
+        tools=[first, second],
+    )
+
+    with pytest.raises(ValidationError, match="tool IDs must be unique"):
+        ProviderInventorySnapshotIn(
+            provider_id="provider-status-primary",
+            snapshot_hash=snapshot_hash,
+            observed_at=datetime.now(timezone.utc),
+            protocol_version="superlily-provider-pull-v1",
+            tools=[first, second],
+        )
+
+
 def test_provider_heartbeat_is_bound_to_inventory_and_capacity() -> None:
     heartbeat = ProviderHeartbeatIn(
         provider_id="provider-status-primary",

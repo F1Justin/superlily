@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Annotated, Any, Literal, TypeAlias
 
@@ -138,6 +139,20 @@ def _bounded_integer(value: Any, *, label: str, minimum: int, maximum: int) -> i
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise SchemaProfileError(f"{label} must be an integer between {minimum} and {maximum}")
     return value
+
+
+def _wire_aware_datetime(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if value != value.strip():
+        raise ValueError("datetime must not contain surrounding whitespace")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("datetime must be ISO 8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("datetime must include a timezone")
+    return parsed
 
 
 def _schema_type_matches(value: Any, schema_type: str) -> bool:
@@ -563,6 +578,11 @@ class ProviderInventorySnapshotIn(AuthorityModel):
     protocol_version: Literal["superlily-provider-pull-v1"]
     tools: list[ProviderInventoryTool] = Field(max_length=1_024)
 
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def validate_observed_at(cls, value: Any) -> Any:
+        return _wire_aware_datetime(value)
+
     @field_validator("provider_id")
     @classmethod
     def validate_provider_id(cls, value: str) -> str:
@@ -571,9 +591,9 @@ class ProviderInventorySnapshotIn(AuthorityModel):
     @field_validator("tools")
     @classmethod
     def validate_tools(cls, value: list[ProviderInventoryTool]) -> list[ProviderInventoryTool]:
-        identities = [(item.tool_id, item.descriptor_version, item.descriptor_hash) for item in value]
+        identities = [item.tool_id for item in value]
         if len(identities) != len(set(identities)):
-            raise ValueError("provider inventory tools must be unique")
+            raise ValueError("provider inventory tool IDs must be unique")
         return value
 
     @model_validator(mode="after")
@@ -598,6 +618,11 @@ class ProviderHeartbeatIn(AuthorityModel):
     max_concurrency: int = Field(ge=1, le=10_000)
     oldest_work_age_ms: int | None = Field(default=None, ge=0, le=86_400_000)
     metadata: dict[str, Any] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def validate_observed_at(cls, value: Any) -> Any:
+        return _wire_aware_datetime(value)
 
     @field_validator("provider_id")
     @classmethod

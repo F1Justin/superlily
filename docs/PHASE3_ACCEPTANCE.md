@@ -25,10 +25,10 @@ artifact, and execution items remain unchecked until their own evidence exists.
   CLI and provider SDK; semantic Wolfram/LaTeX whitespace is preserved.
 - [ ] Migration `0012_tool_registry` passes SQLite/PostgreSQL fresh upgrade,
   downgrade/re-upgrade, concurrency and production drift tests.
-- [ ] Provider identity/credential is separate from bot ingest/admin identity;
+- [x] Provider identity/credential is separate from bot ingest/admin identity;
   inventory snapshots are immutable/hash-verified and heartbeat freshness is
   separate.
-- [ ] Desired, reported and effective state plus stable ineligibility reasons
+- [x] Desired, reported and effective state plus stable ineligibility reasons
   are independently testable. Unknown/stale/mismatched inventory or heartbeat
   never grants authority.
 - [ ] First deployment has zero active descriptors and execution `off`; runtime

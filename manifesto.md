@@ -298,9 +298,9 @@ Phase 2c 先运行 shadow claim，再只对一个明确测试群启用 canary。
 
 8.1 当前 Phase 3a 状态（2026-07-18）
 
-Phase 3a 已经完成第一笔契约基线提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。当前全量测试为 200 项通过。
+继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。包含 Registry 持久化/API 的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 211 项通过。
 
-这些代码只是 authority contract，不是生产 authority。`status.inspect-1.0.0.json` 只是 golden vector；数据库里尚未建立 `0012_tool_registry`，Core 尚未导入 descriptor bundle，也没有 Provider 认证端点、活动描述符、eligible tool、invocation 或 lease。下一步必须先实现 `0012_tool_registry` 和 desired/reported/effective 的零活动 Registry，并保持 execution `off`，通过 SQLite/PostgreSQL 迁移、并发、漂移和回滚测试后，才算完成 3a 的持久化与只读面。
+这些代码只是 authority contract，不是生产 authority。`status.inspect-1.0.0.json` 只是 golden vector。Phase 3a 分支现已增加 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图，并已通过 SQLite/PostgreSQL fresh migration、downgrade/re-upgrade、drift、并发和全量回归，但尚未部署，也没有活动描述符、eligible tool、invocation 或 lease。下一步是在单独获得上线授权后，以空 Provider token map、零 descriptor 和 execution `off` 部署并核验生产 drift；之后才导入并审阅真正的 `status.inspect` authority。
 
 9. 第四阶段：统一 Renderer
 
@@ -372,9 +372,9 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 当前近期优先级已经推进到 Phase 3a 的持久化与只读 Registry：
 
-1. 实现迁移 `0012_tool_registry`，保存 Git 来源、不可变 canonical descriptor/JCS hash、生命周期、导入结果和 reviewer audit；首个部署保持零活动描述符与 execution `off`。
-2. 建立与 bot ingest/admin 身份分离的 Provider registration、inventory、heartbeat 认证入口，以及 desired/reported/effective 与稳定 ineligibility reason 的只读 Core 视图。
-3. 让 Core、CLI 和后续 Provider SDK 共同消费同一组接受/拒绝与 JCS golden vectors，完成 SQLite/PostgreSQL 新建、升级、降级/再升级、并发、漂移和回滚证据，签署 Phase 3a gate。
+1. 在生产备份后只部署已冻结的 `0012_tool_registry`、Git-bound import、独立 Provider 认证和 desired/reported/effective 只读 Core 视图；该步骤需要单独的上线授权。
+2. 首个部署保持空 Provider token map、零描述符与 execution `off`，并核验 migration head/drift、`active_descriptors=0`、`eligible_tools=0`、无 invocation/lease 路由以及旧 bot 行为不变。
+3. 让后续 Provider SDK 与 Core/CLI 共同消费同一组接受/拒绝及 JCS golden vectors，再导入并审阅真正的 `status.inspect` authority，签署 Phase 3a gate。
 4. 3a 通过后再实现 3b invocation ledger、attempt、confirmation、provider lease/fencing、deadline、budget 和 artifact，不接自然语言模型。
 5. 依次迁移 status.inspect、文本模式 wolfram.run、具备安全 artifact 生命周期后的 latex.render；每个工具单独经过 off、ledger-only、shadow、精确 canary 和回滚。
 6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置到 Phase 5。

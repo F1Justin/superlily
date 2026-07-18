@@ -26,6 +26,18 @@ async def ingest_identity(
     raise _unauthorized()
 
 
+async def provider_identity(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise _unauthorized()
+    for provider_id, expected in request.app.state.settings.provider_tokens.items():
+        if expected and secrets.compare_digest(credentials.credentials, expected):
+            return provider_id
+    raise _unauthorized()
+
+
 async def require_admin(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -38,4 +50,3 @@ async def require_admin(
         or not secrets.compare_digest(credentials.credentials, expected)
     ):
         raise _unauthorized()
-

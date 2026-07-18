@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from superlily_contracts import CommandRegistrySnapshotIn, EventIn, HeartbeatIn, ResponseIn
+from superlily_contracts import (
+    CommandRegistrySnapshotIn,
+    EventIn,
+    HeartbeatIn,
+    ProviderHeartbeatIn,
+    ProviderInventorySnapshotIn,
+    ResponseIn,
+)
 
 from .audit import classify_decision_outcome
-from .auth import ingest_identity, require_admin
+from .auth import ingest_identity, provider_identity, require_admin
 from .command_registry import (
     load_command_registry,
     runtime_candidate_trigger_reviewed,
@@ -38,10 +45,16 @@ from .service import (
     ingest_response,
     resolve_pending_links,
 )
+from .tool_registry_service import (
+    ingest_provider_heartbeat,
+    ingest_provider_inventory,
+    tool_registry_view,
+)
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
 Identity = Annotated[str, Depends(ingest_identity)]
+ProviderIdentity = Annotated[str, Depends(provider_identity)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=256)]
 
 
@@ -158,6 +171,42 @@ async def post_command_registry_snapshot(
     if duplicate:
         response.status_code = status.HTTP_200_OK
     return {"snapshot_id": record.id, "snapshot_hash": record.snapshot_hash, "duplicate": duplicate}
+
+
+@router.post("/v1/provider-inventory/snapshots", status_code=status.HTTP_201_CREATED)
+async def post_provider_inventory_snapshot(
+    payload: ProviderInventorySnapshotIn,
+    response: Response,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict[str, str | bool]:
+    _verify_identity(authenticated_provider, payload.provider_id)
+    record, duplicate = await ingest_provider_inventory(session, payload, idempotency_key)
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return {
+        "provider_id": record.provider_id,
+        "snapshot_id": record.id,
+        "snapshot_hash": record.snapshot_hash,
+        "duplicate": duplicate,
+    }
+
+
+@router.post("/v1/providers/heartbeats", status_code=status.HTTP_200_OK)
+async def post_provider_heartbeat(
+    payload: ProviderHeartbeatIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict[str, str | bool]:
+    _verify_identity(authenticated_provider, payload.provider_id)
+    record, duplicate = await ingest_provider_heartbeat(session, payload)
+    return {
+        "provider_id": record.provider_id,
+        "heartbeat_id": record.id,
+        "inventory_hash": record.inventory_hash,
+        "duplicate": duplicate,
+    }
 
 
 @router.get("/v1/events/recent", dependencies=[Depends(require_admin)])
@@ -878,3 +927,21 @@ async def instances(request: Request, session: Session) -> list[dict]:
         }
         for item in rows
     ]
+
+
+@router.get("/v1/tools", dependencies=[Depends(require_admin)])
+async def tools(request: Request, session: Session) -> dict:
+    return await tool_registry_view(session, request.app.state.settings)
+
+
+@router.get("/v1/tools/{tool_id}", dependencies=[Depends(require_admin)])
+async def tool_detail(tool_id: str, request: Request, session: Session) -> dict:
+    result = await tool_registry_view(session, request.app.state.settings, tool_id=tool_id)
+    if not result["tools"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tool_id not found")
+    return {
+        "schema_version": result["schema_version"],
+        "execution": result["execution"],
+        "tool_id": tool_id,
+        "versions": result["tools"],
+    }

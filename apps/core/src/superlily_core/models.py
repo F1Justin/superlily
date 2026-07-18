@@ -5,10 +5,12 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -269,4 +271,215 @@ class EventClaim(Base):
         Index("ix_event_claims_source_event", "source_event_id"),
         Index("ix_event_claims_created_at", "created_at"),
         Index("ix_event_claims_action", "action"),
+    )
+
+
+class ToolDescriptorRecord(Base):
+    __tablename__ = "tool_descriptors"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_plugin: Mapped[str] = mapped_column(String(512), nullable=False)
+    review_status: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
+    lifecycle: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
+    source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(256), nullable=False)
+    canonical_json: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    descriptor_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    import_outcome: Mapped[str] = mapped_column(String(32), default="accepted", nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tool_id", "version", name="uq_tool_descriptor_identity"),
+        UniqueConstraint("descriptor_hash", name="uq_tool_descriptor_hash"),
+        CheckConstraint("review_status IN ('reviewed')", name="ck_tool_descriptor_review_status"),
+        CheckConstraint(
+            "lifecycle IN ('draft', 'reviewed', 'active', 'suspended', 'retired', 'revoked')",
+            name="ck_tool_descriptor_lifecycle",
+        ),
+        CheckConstraint("import_outcome IN ('accepted')", name="ck_tool_descriptor_import_outcome"),
+        Index("ix_tool_descriptors_tool_id", "tool_id"),
+        Index("ix_tool_descriptors_lifecycle", "lifecycle"),
+    )
+
+
+class ToolDescriptorLifecycleEvent(Base):
+    __tablename__ = "tool_descriptor_lifecycle_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    descriptor_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_descriptors.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
+    lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("descriptor_id", "sequence", name="uq_tool_descriptor_lifecycle_sequence"),
+        CheckConstraint(
+            "lifecycle IN ('draft', 'reviewed', 'active', 'suspended', 'retired', 'revoked')",
+            name="ck_tool_descriptor_event_lifecycle",
+        ),
+        Index("ix_tool_descriptor_lifecycle_created", "descriptor_id", "created_at"),
+    )
+
+
+class ToolProvider(Base):
+    __tablename__ = "tool_providers"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(256), nullable=False)
+    lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
+    allowed_protocols_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    tool_selectors_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle IN ('registered', 'active', 'quarantined', 'retired', 'revoked')",
+            name="ck_tool_provider_lifecycle",
+        ),
+        Index("ix_tool_providers_lifecycle", "lifecycle"),
+    )
+
+
+class ToolProviderCredential(Base):
+    __tablename__ = "tool_provider_credentials"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    lifecycle: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    last_authenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("source IN ('environment')", name="ck_tool_provider_credential_source"),
+        CheckConstraint(
+            "lifecycle IN ('active', 'revoked')", name="ck_tool_provider_credential_lifecycle"
+        ),
+        Index("ix_tool_provider_credentials_provider", "provider_id"),
+    )
+
+
+class ToolProviderLifecycleEvent(Base):
+    __tablename__ = "tool_provider_lifecycle_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
+    lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "sequence", name="uq_tool_provider_lifecycle_sequence"),
+        CheckConstraint(
+            "lifecycle IN ('registered', 'active', 'quarantined', 'retired', 'revoked')",
+            name="ck_tool_provider_event_lifecycle",
+        ),
+        Index("ix_tool_provider_lifecycle_created", "provider_id", "created_at"),
+    )
+
+
+class ToolProviderInventorySnapshot(Base):
+    __tablename__ = "tool_provider_inventory_snapshots"
+
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), default=new_id, unique=True, nullable=False)
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    protocol_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "idempotency_key", name="uq_tool_inventory_idempotency"),
+        Index("ix_tool_inventory_provider_received", "provider_id", "received_at"),
+        Index("ix_tool_inventory_provider_hash", "provider_id", "snapshot_hash"),
+    )
+
+
+class ToolProviderInventoryEntry(Base):
+    __tablename__ = "tool_provider_inventory_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_provider_inventory_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    protocol_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    budget_enforcement_json: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "tool_id", name="uq_tool_inventory_entry_tool"),
+        Index("ix_tool_inventory_entries_tool", "tool_id"),
+    )
+
+
+class ToolProviderHeartbeat(Base):
+    __tablename__ = "tool_provider_heartbeats"
+
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), default=new_id, unique=True, nullable=False)
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
+    )
+    inventory_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    health: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
+    oldest_work_age_ms: Mapped[int | None] = mapped_column(Integer)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "observed_at", name="uq_tool_provider_heartbeat_observed"),
+        CheckConstraint(
+            "health IN ('starting', 'healthy', 'degraded', 'unavailable', 'unknown')",
+            name="ck_tool_provider_heartbeat_health",
+        ),
+        CheckConstraint(
+            "current_concurrency >= 0 AND current_concurrency <= max_concurrency",
+            name="ck_tool_provider_heartbeat_capacity",
+        ),
+        Index("ix_tool_provider_heartbeat_received", "provider_id", "received_at"),
     )

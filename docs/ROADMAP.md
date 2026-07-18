@@ -30,11 +30,14 @@ ambiguous send timeouts counted as confirmed failures.
 The completed policy-v5 window, policy-v6 counterfactual replay, live
 no-summon/summon pair, post-deployment claim/ACK/response checks, long-task
 attribution repair, and operator sign-off are recorded in `ACCEPTANCE.md`.
-Earlier rejected windows remain diagnostic evidence. The next implementation
-work is migration `0012_tool_registry` and the zero-active-descriptor Core
-registry. The accepted ADRs, descriptor/provider models, restricted JSON
-Schema profile, RFC 8785 verifier CLI, and shared vectors do not themselves
-grant production authority or enable tool execution.
+Earlier rejected windows remain diagnostic evidence. Migration
+`0012_tool_registry`, local Git-bound imports, separately authenticated
+provider inventory/heartbeat endpoints, and the admin-only
+desired/reported/effective view are implemented on the Phase 3a branch. They
+pass the complete SQLite/PostgreSQL 17 suite plus fresh migration,
+downgrade/re-upgrade, and drift checks, but are not deployed. The next gate is
+a separately authorized zero-active-descriptor, execution-off deployment and
+production drift proof. No invocation or lease surface exists.
 
 ## Sequencing rules
 
