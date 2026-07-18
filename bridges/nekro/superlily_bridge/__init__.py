@@ -32,6 +32,7 @@ from .identity import (
     conversation,
     native_identity_cache_key,
 )
+from .platform_actions import platform_action_event_payload
 from .payloads import (
     content_parts,
     message_references,
@@ -42,7 +43,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.4.0"
+BRIDGE_VERSION = "0.5.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -398,6 +399,7 @@ def _event_dict(event: Any) -> dict[str, Any]:
 
 _NATIVE_IDENTITY_CACHE_ATTR = "_superlily_native_identity_cache_v1"
 _NATIVE_IDENTITY_HOOK_ATTR = "_superlily_native_identity_hook_v1"
+_PLATFORM_ACTION_HOOK_ATTR = "_superlily_platform_action_hook_v1"
 
 
 def _native_identity_cache() -> NativeIdentityCache:
@@ -500,6 +502,41 @@ if not getattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, False):
             logger.exception("Lily Core native identity capture failed open")
 
     setattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, True)
+
+
+if not getattr(nonebot_message, _PLATFORM_ACTION_HOOK_ATTR, False):
+
+    @event_preprocessor
+    async def observe_platform_action(bot: OneBotBot, event: OneBotEvent) -> None:
+        try:
+            raw = _event_dict(event)
+            conv = _onebot_conversation(raw)
+            payload = platform_action_event_payload(
+                raw,
+                conv,
+                instance(bot.self_id),
+                event_type=(
+                    event.get_event_name()
+                    if hasattr(event, "get_event_name")
+                    else f"notice.{raw.get('notice_type', 'unknown')}"
+                ),
+                fallback_occurred_at=utc_iso(),
+                to_me=bool(getattr(event, "to_me", False)),
+            )
+            if payload is None:
+                return
+            source_id = payload["source_event_id"]
+            reporter.enqueue(
+                ReportItem(
+                    "/v1/events",
+                    payload,
+                    stable_key(config.INSTANCE_ID, source_id),
+                )
+            )
+        except Exception:
+            logger.exception("Lily Core platform-action observation failed open")
+
+    setattr(nonebot_message, _PLATFORM_ACTION_HOOK_ATTR, True)
 
 
 if not getattr(nonebot_message, "_superlily_suppression_cleanup_hook_v1", False):

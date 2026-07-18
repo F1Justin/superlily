@@ -2,7 +2,8 @@
 
 This is a Nekro 2.2.1 local plugin. It uses the public plugin callback for
 normalized human messages and the public NoneBot event hook for confirmed
-OneBot `message_sent` events. Failed send API calls are recorded separately.
+OneBot `message_sent` and supported platform-action events. Failed send API
+calls are recorded separately.
 
 Copy or symlink `superlily_bridge/` to:
 
@@ -27,6 +28,15 @@ panel:
 
 The container must join the `superlily_bus` network; see
 `deploy/nekro-compose.override.yml`.
+
+Bridge 0.5.0 reports the same factual reaction, group/friend recall and poke
+mapping as Lily. The two packages contain an identical, dependency-free action
+normalizer and fixture suite. Reaction count is stored as platform-observed
+state, not inferred add/remove intent or human-feedback meaning. Poke display
+text and numeric action/effect IDs are bounded; jump/image URLs and internal QQ
+UIDs are not retained and their omission is explicit. Missing required fields
+remain `partial`/`unavailable`. Action notices never enter the claim path and
+do not trigger Nekro's agent.
 
 Do not hot-reload this plugin during the first smoke test. Its global NoneBot
 hooks are guarded against duplicate registration, but a clean process restart

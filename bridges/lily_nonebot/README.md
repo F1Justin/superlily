@@ -28,6 +28,16 @@ LILY_CORE_REPORT_RETRY_BACKOFF_SECONDS=0.1
 Raw OneBot payload capture is off by default. Set `LILY_CORE_INCLUDE_RAW=true`
 only for a short diagnostic window; Core still redacts and size-limits it.
 
+Bridge 0.5.0 also normalizes the action notices actually emitted by the local
+OneBot/NapCat stack: `group_msg_emoji_like`, group/friend recall and poke.
+Reaction rows preserve the observer-local target message ID, actor, emoji ID
+and platform count as `observed_state`; they carry no positive/negative or
+feedback interpretation. Recall keeps operator and message author separate.
+Poke keeps actor, target and bounded display/action facts while recording the
+omission of jump URLs, image URLs and internal QQ UIDs in capture evidence.
+Missing actor/value/target fields become `partial` or `unavailable`; they are
+never guessed. These notice reports use the same durable spool as messages.
+
 When a canary claim returns an enforced deny, the bridge suppresses outgoing
 `send_*` API calls for that event. It does not ignore the event, so
 chatrecorder, wordcloud collection, and other observation matchers continue to

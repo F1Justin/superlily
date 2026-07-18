@@ -13,6 +13,7 @@ from nonebot.matcher import current_event
 from nonebot.message import event_postprocessor, event_preprocessor
 from pydantic import BaseModel, BeforeValidator, Field, SecretStr
 
+from .platform_actions import platform_action_event_payload
 from .payloads import (
     conversation_from_api,
     conversation_from_event,
@@ -28,7 +29,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.4.0"
+BRIDGE_VERSION = "0.5.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -112,6 +113,18 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, 
     if raw.get("post_type") == "message_sent":
         return None
     conversation = conversation_from_event(event)
+    event_name = event.get_event_name() if hasattr(event, "get_event_name") else "event"
+    action_payload = platform_action_event_payload(
+        raw,
+        conversation,
+        instance(bot.self_id),
+        event_type=event_name,
+        fallback_occurred_at=utc_iso(),
+        to_me=bool(getattr(event, "to_me", False)),
+    )
+    if action_payload is not None:
+        event_id = action_payload["source_event_id"]
+        return action_payload, stable_key(plugin_config.lily_core_instance_id, event_id)
     event_id = source_event_id(event, conversation, raw)
     message = None
     if hasattr(event, "get_message"):
@@ -142,7 +155,7 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, 
         "schema_version": "1.0",
         "source_event_id": event_id,
         "instance": instance(bot.self_id),
-        "event_type": event.get_event_name() if hasattr(event, "get_event_name") else "event",
+        "event_type": event_name,
         "conversation": conversation,
         "sender": sender,
         "message": message,
