@@ -1,8 +1,4 @@
-"""Bounded local implementation of ``status.inspect``.
-
-The Phase 3a process only invokes this as a local self-test. Core cannot create
-an invocation or lease yet, and this module has no platform delivery surface.
-"""
+"""``status.inspect`` 的有界本地实现；本模块没有平台发送能力。"""
 
 from __future__ import annotations
 
@@ -24,9 +20,16 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def status_implementation_hash() -> str:
-    """Identify the exact installed source of the bounded status operation."""
+    """绑定本地工具、硬超时监督器与 Provider 协议编排的确切源码。"""
 
-    return sha256(Path(__file__).read_bytes()).hexdigest()
+    digest = sha256()
+    for name in ("executor.py", "main.py", "status.py"):
+        source = Path(__file__).with_name(name).read_bytes()
+        digest.update(len(name).to_bytes(4, "big"))
+        digest.update(name.encode("utf-8"))
+        digest.update(len(source).to_bytes(8, "big"))
+        digest.update(source)
+    return digest.hexdigest()
 
 
 class StatusInspector:
@@ -39,8 +42,11 @@ class StatusInspector:
         implementation_hash: str | None = None,
     ) -> None:
         descriptor = loaded_descriptor.descriptor
-        if descriptor.tool_id != "status.inspect" or descriptor.version != "1.0.0":
-            raise ValueError("StatusInspector requires the status.inspect 1.0.0 descriptor")
+        if descriptor.tool_id != "status.inspect" or descriptor.version not in {
+            "1.0.0",
+            "1.0.1",
+        }:
+            raise ValueError("StatusInspector requires a reviewed status.inspect 1.0.x descriptor")
         if descriptor.source_plugin != "superlily_status_provider.status":
             raise ValueError("status descriptor is not bound to this implementation")
         if PROVIDER_ID not in descriptor.provider_selector.provider_ids:

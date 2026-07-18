@@ -29,19 +29,25 @@ from superlily_core.models import (
 from superlily_core.settings import ToolRolloutScope
 from superlily_core.tool_execution_service import reap_expired_attempts
 from superlily_core.tool_registry_service import import_tool_descriptor, register_tool_provider
+from superlily_provider_sdk import ProviderExecutionClient
+from superlily_status_provider.executor import StatusProcessSupervisor
+from superlily_status_provider.main import StatusProviderConfig, _execute_lease, _load_runtime
 
 
 DESCRIPTOR_PATH = (
     Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.0.json"
 )
+EXECUTABLE_DESCRIPTOR_PATH = (
+    Path(__file__).parents[1] / "registry/descriptors/status.inspect/1.0.1.json"
+)
 PROVIDER_HEADERS = {"Authorization": "Bearer provider-status-secret"}
 
 
-def invocation_payload(descriptor_hash: str) -> dict:
+def invocation_payload(descriptor_hash: str, *, descriptor_version: str = "1.0.0") -> dict:
     return {
         "schema_version": "1.0",
         "tool_id": "status.inspect",
-        "descriptor_version": "1.0.0",
+        "descriptor_version": descriptor_version,
         "descriptor_hash": descriptor_hash,
         "input": {"scope": "provider_runtime"},
         "principal": {
@@ -57,8 +63,14 @@ def invocation_payload(descriptor_hash: str) -> dict:
     }
 
 
-async def prepare_canary(client, app) -> tuple[ToolDescriptorRecord, str]:
-    source = DESCRIPTOR_PATH.read_bytes()
+async def prepare_canary(
+    client,
+    app,
+    *,
+    implementation_hash: str = "a" * 64,
+    descriptor_path: Path = DESCRIPTOR_PATH,
+) -> tuple[ToolDescriptorRecord, str]:
+    source = descriptor_path.read_bytes()
     authority = load_tool_descriptor(source).authority
     async with app.state.database.sessions() as session:
         descriptor, duplicate = await import_tool_descriptor(
@@ -100,10 +112,10 @@ async def prepare_canary(client, app) -> tuple[ToolDescriptorRecord, str]:
         assert duplicate is False
     tool = ProviderInventoryTool(
         tool_id="status.inspect",
-        descriptor_version="1.0.0",
+        descriptor_version=descriptor.version,
         descriptor_hash=descriptor.descriptor_hash,
         protocol_version="superlily-provider-pull-v1",
-        implementation_hash="a" * 64,
+        implementation_hash=implementation_hash,
         budget_enforcement={"output_bytes": "hard", "wall_time": "hard"},
     )
     snapshot_hash = provider_inventory_snapshot_hash(
@@ -145,7 +157,7 @@ async def prepare_canary(client, app) -> tuple[ToolDescriptorRecord, str]:
     assert heartbeat.status_code == 200, heartbeat.text
     scope = ToolRolloutScope(
         tool_id="status.inspect",
-        descriptor_version="1.0.0",
+        descriptor_version=descriptor.version,
         descriptor_hash=descriptor.descriptor_hash,
         canonical_conversation="qq:group:1080353942",
         caller="admin_api",
@@ -163,7 +175,10 @@ async def prepare_canary(client, app) -> tuple[ToolDescriptorRecord, str]:
 async def create_queued(client, descriptor: ToolDescriptorRecord, *, key: str) -> dict:
     response = await client.post(
         "/v1/tool-invocations",
-        json=invocation_payload(descriptor.descriptor_hash),
+        json=invocation_payload(
+            descriptor.descriptor_hash,
+            descriptor_version=descriptor.version,
+        ),
         headers={
             "Authorization": "Bearer admin-secret",
             "Idempotency-Key": key,
@@ -274,7 +289,12 @@ async def test_exact_canary_lease_start_heartbeat_and_complete(client, app) -> N
         headers={"Authorization": "Bearer admin-secret"},
     )
     assert view.status_code == 200
-    assert view.json()["state"] == "succeeded"
+    evidence = view.json()
+    assert evidence["state"] == "succeeded", (
+        evidence["reason_code"],
+        evidence["attempts"][0]["error_code"],
+        evidence["attempts"][0]["usage"],
+    )
     assert [item["event"] for item in view.json()["transitions"]] == [
         "propose",
         "queue",
@@ -606,3 +626,61 @@ async def test_attempt_events_are_database_append_only(client, app) -> None:
         event.reason_code = "tampered"
         with pytest.raises(DBAPIError, match="append-only"):
             await session.commit()
+
+
+async def test_real_status_supervisor_completes_through_core_lease_protocol(
+    client, app
+) -> None:
+    _, implementation = _load_runtime(
+        EXECUTABLE_DESCRIPTOR_PATH,
+        execution_enabled=True,
+    )
+    implementation_hash = implementation.inventory_entry.implementation_hash
+    descriptor, inventory_hash = await prepare_canary(
+        client,
+        app,
+        implementation_hash=implementation_hash,
+        descriptor_path=EXECUTABLE_DESCRIPTOR_PATH,
+    )
+    invocation = await create_queued(client, descriptor, key="attempt-real-status-e2e-1")
+    execution_client = ProviderExecutionClient(
+        base_url="http://test",
+        provider_id="provider-status-primary",
+        token="provider-status-secret",
+        client=client,
+    )
+    lease = await execution_client.request_lease(inventory_hash)
+    assert lease is not None
+    supervisor = StatusProcessSupervisor(
+        EXECUTABLE_DESCRIPTOR_PATH.read_bytes(),
+        implementation_hash=implementation_hash,
+    )
+    config = StatusProviderConfig(
+        core_url="http://test",
+        token="provider-status-secret",
+        descriptor_path=EXECUTABLE_DESCRIPTOR_PATH,
+        execution_heartbeat_seconds=0.1,
+    )
+
+    await _execute_lease(
+        execution_client,
+        supervisor,
+        implementation,
+        lease,
+        config,
+        inventory_hash=inventory_hash,
+    )
+
+    view = await client.get(
+        f"/v1/tool-invocations/{invocation['invocation_id']}",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+    assert view.status_code == 200
+    evidence = view.json()
+    assert evidence["state"] == "succeeded", (
+        evidence["reason_code"],
+        evidence["attempts"][0]["error_code"],
+        evidence["attempts"][0]["usage"],
+    )
+    assert evidence["attempts"][0]["state"] == "succeeded"
+    assert evidence["attempts"][0]["output"]["implementation_hash"] == implementation_hash
