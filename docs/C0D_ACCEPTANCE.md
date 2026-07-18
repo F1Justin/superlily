@@ -1,16 +1,16 @@
 # C0-D collection reliability acceptance
 
 This document tracks the release gate for the authority-neutral C0-D packet.
-It deliberately separates the implemented collection foundation from complete
-platform-action coverage and production fault evidence. C0-D is not complete,
-and Phase 3b remains gated, until the remaining C0-D4/D5 gates below pass.
+It deliberately separates the implemented collection foundation from
+production fault evidence. C0-D is not complete, and Phase 3b remains gated,
+until the remaining C0-D5 gates below pass.
 
 ## Current implementation snapshot
 
-As of 2026-07-18 20:08 CST, C0-D1 through C0-D3 are deployed in production.
-Core is at `0013_collection_reliability`; Lily and Nekro run bridge `0.4.0`
-with independent durable spools. C0-D remains open at C0-D4 and the controlled
-fault/behavior items in C0-D5.
+As of 2026-07-18 21:09 CST, C0-D1 through C0-D4 are deployed in production.
+Core is at `0013_collection_reliability`; Lily and Nekro run bridge `0.5.0`
+with independent durable spools and real action capture. C0-D remains open at
+the controlled fault/behavior items in C0-D5.
 
 Implemented:
 
@@ -24,6 +24,11 @@ Implemented:
 - normalized factual action observations whose unresolved target remains
   explicit and whose local target ID is resolved only within observer and
   conversation scope;
+- identical Lily/Nekro normalization of the locally observed NapCat
+  `group_msg_emoji_like`, group/friend recall and poke payloads: reactions keep
+  actor, local message target, emoji and count as `observed_state`; recall keeps
+  operator and author separate; poke keeps actor, target and bounded display
+  facts while omitting URL/internal-UID fields with explicit capture evidence;
 - atomic event/observation/action/receipt persistence, exact replay binding and
   conflict rejection for reused `instance + spool_id + sequence` identities;
 - highest-seen and highest-contiguous Core watermarks plus an authenticated
@@ -39,21 +44,23 @@ Implemented:
 - linear Alembic migration `0013_collection_reliability`, with no C0-A tables
   and no tool execution authority.
 
-C0-D2/D3 have production evidence. Real OneBot action mapping remains C0-D4.
+C0-D2/D3/D4 have production evidence. Only C0-D5 remains open.
 
 ## Verification evidence
 
 The current workspace passes:
 
-- the complete SQLite suite: `233 passed`;
+- the complete SQLite suite: `244 passed`;
 - the complete PostgreSQL 17 suite against the disposable
-  `superlily_test` database: `233 passed`;
+  `superlily_test` database: `244 passed`;
 - fresh Alembic upgrade to `0013_collection_reliability`, schema drift check,
   downgrade to `0012_tool_registry`, and re-upgrade to head;
 - targeted Core-offline restart replay, strict pending order, corrupt database
   evidence preservation, receipt mismatch, out-of-order gap closure, sequence
   collision, late action target resolution, exact capture-policy snapshot,
-  claim-path receipt and real Core API delivery tests.
+  claim-path receipt, real Core API delivery, real NapCat action fixtures,
+  missing actor/target/value observations, cross-bridge identity parity and
+  two-instance action persistence tests.
 
 Production rollout evidence:
 
@@ -80,6 +87,38 @@ Production rollout evidence:
   local/Core sequence 231/231 and Nekro 21/21: both collectors online,
   healthy, reconciled, zero pending, zero capture/replay failures and zero
   quarantine;
+- commit `d8ed047` deployed bridge 0.5.0 at 20:59 CST (Lily) and 21:00 CST
+  (Nekro). NapCat, Core and PostgreSQL retained their prior start times. Both
+  bridge packages loaded cleanly, reconnected to OneBot and reported online,
+  healthy heartbeats with zero pending/capture failure/quarantine;
+- the pre-C0-D4 bridge 0.4.0 sources are archived under
+  `/home/justin/backups/superlily/20260718-c0d4` (directory `0700`, files
+  `0600`). Lily's tar SHA-256 is
+  `94e65adff3aa26f01ffa64c3fe91dd0502302f83499da3a94a87353bcc20b4ea`;
+  Nekro's is
+  `8d9831e6018a43b5505ce9a73855ba7566ffe83fb3440062108071b2d819fc04`;
+- at 21:01:24 CST, both accounts observed the same real poke. Their distinct
+  observations carry the same bridge-reported `qq:action:v1` identity and the
+  same factual value (`action_id=8`, display text `揉了揉的小猫`), but remain
+  separately bound to `lily-command` and `nekro-agent`. Each action is
+  `complete`; the intentionally discarded `raw_info` jump/image URLs and
+  internal UIDs appear in `omitted_fields`; both numbered spool records reached
+  contiguous Core watermarks;
+- at the 21:09 final snapshot, Lily/Core watermark is 1097/1097 and Nekro/Core
+  is 124/124. Production has 14 Lily poke rows, one Lily recall row and one
+  Nekro poke row; all action records have receipt ordering
+  `captured_at <= received_at <= committed_at`. No natural reaction arrived in
+  this short canary window, so reaction coverage is established by fixtures
+  copied from the local NapCat log rather than by a synthesized production
+  event;
+- no action observation entered the claim table. Production still has zero
+  descriptors, providers, Provider credentials, inventory entries or capture
+  profile overrides. Provider token count remains zero and Registry execution
+  remains hard-coded off;
+- Lily's cumulative spool metric contains one recovered replay retry for
+  sequence 520. It was captured at 20:36:07 and committed at 20:36:11, before
+  the 0.5.0 restart; current `last_error` is empty and the spool has no pending
+  or gap. It is retained as honest transient-retry evidence rather than reset;
 - Tool Registry remains `execution.mode=off` with zero descriptors, providers,
   active descriptors and eligible tools. No C0-A archive profile or tool
   authority was enabled.
@@ -112,10 +151,10 @@ not intentionally faulted merely to manufacture evidence during this rollout.
 
 ### C0-D4: real platform actions
 
-- [ ] Lily maps supported OneBot/NapCat reaction, recall and poke notices into
+- [x] Lily maps supported OneBot/NapCat reaction, recall and poke notices into
   the shared action contract.
-- [ ] Nekro maps the same observable facts without assigning feedback meaning.
-- [ ] Both paths have fixtures for missing actor/target/value fields and for
+- [x] Nekro maps the same observable facts without assigning feedback meaning.
+- [x] Both paths have fixtures for missing actor/target/value fields and for
   ambiguous or unavailable target observations.
 
 ### C0-D5: end-to-end faults and rollout

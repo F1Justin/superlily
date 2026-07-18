@@ -40,12 +40,13 @@ Earlier rejected windows remain diagnostic evidence. Migration
 provider inventory/heartbeat endpoints, and the admin-only
 desired/reported/effective view are deployed in zero-authority mode. The
 authority-neutral `0013_collection_reliability` migration and C0-D1 through
-C0-D3 bridge durability/diagnostics are also deployed. The complete
+C0-D4 bridge durability, diagnostics and factual platform actions are also
+deployed. The complete
 SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
 backup and production drift checks pass. Production has zero Provider
 credentials, descriptors, active or eligible tools, and execution remains
-off. C0-D4 platform-action mapping and C0-D5 controlled fault/behavior evidence
-remain before Phase 3b. The next Phase 3 gate is the shared Provider SDK plus
+off. Only C0-D5 controlled fault/behavior evidence remains before Phase 3b.
+The next Phase 3 gate is the shared Provider SDK plus
 the separately reviewed real `status.inspect` authority and runtime evidence;
 no invocation or lease surface exists.
 

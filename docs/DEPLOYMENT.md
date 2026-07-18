@@ -190,9 +190,10 @@ authorization, preview, audit, and mutation gates pass.
 
 ## 7. C0-D durable ingress rollout and rollback
 
-C0-D1 through C0-D3 deployed on 2026-07-18. Core migration head is
-`0013_collection_reliability`; Lily and Nekro bridge `0.4.0` own independent
-SQLite `synchronous=FULL` spools:
+C0-D1 through C0-D3 deployed on 2026-07-18 with bridge `0.4.0`; C0-D4 then
+deployed the same day with bridge `0.5.0`. Core migration head remains
+`0013_collection_reliability`; Lily and Nekro own independent SQLite
+`synchronous=FULL` spools:
 
 - Lily: `/home/justin/lily/data/superlily-core/ingress-spool.sqlite3`;
 - Nekro: `/home/justin/nekro/plugin_data/Superlily.core_bridge/ingress-spool.sqlite3`.
@@ -216,9 +217,19 @@ the old Nekro package is
 `949938cb7f8c74e64e02bc8691602a6d7ff87662815bd699581a99831740e4b8`.
 All three files are mode `0600`.
 
+The C0-D4 bridge-only rollback directory is
+`/home/justin/backups/superlily/20260718-c0d4` (mode `0700`). Its 0.4.0 source
+archives are `lily-core-bridge-0.4.0-d8ed047-parent.tar` (SHA-256
+`94e65adff3aa26f01ffa64c3fe91dd0502302f83499da3a94a87353bcc20b4ea`)
+and `nekro-superlily-bridge-0.4.0-d8ed047-parent.tar` (SHA-256
+`8d9831e6018a43b5505ce9a73855ba7566ffe83fb3440062108071b2d819fc04`);
+both are mode `0600`. Restore only the affected 0.4.0 package and restart that
+bot to roll back action mapping; do not touch either durable spool.
+
 Prefer a bridge-only rollback: preserve both spool directories, restore bridge
-0.3.x, restart only the affected bot, and leave Core at 0013 because the old
-wire contract remains compatible. If Core itself must return to 0012, first
+0.4.0 for C0-D4 (or 0.3.x for the earlier durable-ingress rollout), restart
+only the affected bot, and leave Core at 0013 because both old wire contracts
+remain compatible. If Core itself must return to 0012, first
 stop new durable submissions or restore both old bridges, prove both spools
 have zero pending records, take another database backup, and only then run the
 0013 downgrade and rebuild Core from commit `4069d9d`. Downgrading destroys the

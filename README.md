@@ -31,8 +31,9 @@ The durable product consensus for archive-oriented event collection, nested
 merged forwards, platform actions, progressive tool disclosure, fast-path
 chat behavior, and cost-aware model routing is in
 [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md).
-The implemented C0-D1 through C0-D3 boundary and the still-open action/rollout gates
-are tracked separately in [`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md).
+The deployed C0-D1 through C0-D4 boundary and the still-open C0-D5 fault and
+behavior gates are tracked separately in
+[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md).
 Renderer, agent, Watchdog, platform, memory, event, avatar, and optional
 runtime-replacement plans are decomposed in
 [`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md).
