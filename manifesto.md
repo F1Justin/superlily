@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 已落下第一个安全切片 `0014_tool_invocations`：调用可以在 `ledger_only` 中被校验和记账，但生产仍无 attempt、lease、fence、工具执行或自然语言调用权。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 的 `0014_tool_invocations` 已在 `ledger_only` 中上线；后续 `0015_tool_attempts`、Provider 拉取协议和 `status.inspect@1.0.1` 硬边界执行器已完成实现与双数据库测试，正按“先部署执行底座、保持零 lease，再单独评审精确 canary”的顺序推进。自然语言调用权仍未开放。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -316,9 +316,11 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 8.1 当前第三阶段状态（2026-07-19）
 
-五份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期和控制面认证边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。描述符仍为 `reviewed`，Provider 如实报告 `budget_unenforceable`，运行时发现没有自动扩大 authority。
+五份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期和控制面认证边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
 
-2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用，生产没有 `tool_attempts` 表和 lease 路由。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。SQLite 与 PostgreSQL 17 全量测试均为 279 项通过。下一个 authority 提升点是 `0015_tool_attempts` 和真正的 lease/fence/硬预算执行器，不是自然语言 tool loop。
+2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
+
+同日完成的下一实现切片是 `0015_tool_attempts`、Provider execution SDK、数据库时间 lease/fence/reaper 和独立 `status.inspect@1.0.1` 执行器。四种执行模式、精确范围、三个 stop、并发领取、旧 fence、取消竞态、预算/输出校验、只追加事件和真实子进程端到端路径已在 SQLite 与 PostgreSQL 17 各通过 310 项测试。子进程不接收 lease secret、Provider token 或平台发送能力；父进程硬性执行 wall-time 和输出字节边界。该实现只授权先以 `ledger_only` 部署，生产 descriptor 激活与精确 canary 仍是下一次独立 authority 提升点，不是自然语言 tool loop。
 
 9. 第四阶段：统一 Renderer
 
@@ -388,13 +390,13 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经推进到 Phase 3b 的执行安全底座：
+当前近期优先级已经从“实现执行底座”推进到“用最小 authority 签署执行底座”：
 
-1. 实现 `0015_tool_attempts`：单活动 lease、单调 fence、attempt secret、数据库时间和超时恢复，并在 SQLite/PostgreSQL 上覆盖并发竞态。
-2. 建立真正的 `status.inspect` 执行器，先硬性执行 wall-time/输入/输出字节预算，再让 descriptor 从 `reviewed` 进入可执行的精确 canary。
-3. 分别验证 global stop、按 tool/version suspension 和 Provider quarantine；任何一个开关都必须能独立阻止新 lease。
-4. 完成过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core 中断和 `unknown_completion` 的故障演练，再考虑放大 canary。
-5. `status.inspect` 签署后，才继续 `0016_tool_confirmations_artifacts`、文本模式 `wolfram.run` 和 `latex.render`。
+1. 将 `0015_tool_attempts` 和 `status.inspect@1.0.1` Provider 以 `ledger_only` 上线，验证迁移、drift、零 attempt、inventory/heartbeat 与旧命令不变。
+2. 在生产边界分别演练 global stop、精确 descriptor suspension、Provider quarantine 和 scope withdrawal；任何一个开关都必须能独立阻止新 lease。
+3. 只为一个明确会话、`admin_api` caller、一个 descriptor hash 和一个 Provider 开放首个无平台发送 canary，记录真实 lease/start/heartbeat/complete 与资源使用。
+4. 完成过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core 中断和 `unknown_completion` 的生产故障演练，再考虑稳定窗口或扩大 canary。
+5. `status.inspect` 签署后，才继续 `0016_tool_confirmations_artifacts`、文本模式 `wolfram.run` 和 `latex.render`；通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。
 6. 旧命令入口始终保留为回滚路径；自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。

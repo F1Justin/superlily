@@ -1,18 +1,14 @@
 # Superlily 执行路线图
 
-This document is the authoritative implementation sequence after the Phase 2
-event-routing foundation. `manifesto.md` remains the architectural vision;
-phase-specific design documents define implementable contracts and acceptance
-gates.
+本文是 Phase 2 事件路由底座之后的权威实施顺序。`manifesto.md` 保留架构愿景，
+分阶段设计文档负责可实施合同与验收门。
 
-Detailed post-Tool-Registry design: `docs/FUTURE_PHASES_DESIGN.md`. It defines
-the shared boundaries, internal work packets, failure models, and exit gates
-for Phases 4–11 without authorizing those phases to start early.
+Tool Registry 之后的详细设计见 `docs/FUTURE_PHASES_DESIGN.md`。它定义 Phase
+4–11 的共享边界、内部工作包、故障模型和退出门，但不授权提前启动这些阶段。
 
-The durable product decisions behind collection completeness, progressive
-tool disclosure, Unix-style resource exploration, natural-language command
-compatibility, fast-path chat behavior, and cost-aware model routing are
-recorded in `docs/COLLECTION_AND_AGENT_CONSENSUS.md`.
+采集完整性、渐进式工具披露、Unix 风格资源探索、自然语言命令兼容、快速聊天路径
+和成本感知模型路由等长期产品共识，记录在
+`docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
 
 ## 当前位置
 
@@ -22,18 +18,22 @@ typed platform capability 和 durable ingress 的验收证据分别见
 不是 Phase 3b 的 correctness 前置。
 
 Phase 3a 已签署真实 `status.inspect@1.0.0` authority、独立 Provider 身份、
-共享 Provider SDK 和只报告的运行时。描述符仍为 `reviewed`，Provider 运行时
-如实报告 `budget_unenforceable`，因此当前没有 eligible tool。
+共享 Provider SDK 和只报告的运行时。该描述符继续保留为不可变历史 authority。
 
 Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。execution mode
 为 `ledger_only`：调用提案会冻结 descriptor、input、principal、capability 和 policy
-快照，但只能终止为 `recorded_only` 或 `rejected`。生产尚无 attempt 表、lease
-路由、fence、执行结果或自然语言 caller。Lily/Nekro bridge 0.5.1 已为心跳和两个
-reporter worker 增加监督与自恢复，两个实例生产心跳已恢复新鲜。
+快照，但只能终止为 `recorded_only` 或 `rejected`。Lily/Nekro bridge 0.5.1 已为
+心跳和两个 reporter worker 增加监督与自恢复，两个实例生产心跳已恢复新鲜。
 
-当前工程优先级是 `0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、
-attempt secret、数据库时间、硬 wall-time/字节预算和三个独立 stop。这些通过后，
-才能让 `status.inspect` 进入精确 canary；自然语言 tool loop 仍属 Phase 5。
+`0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、attempt secret、
+数据库时间、恢复 reaper、四种模式和三个独立 stop 已实现，并在 SQLite 与
+PostgreSQL 17 各通过 310 项测试。可执行候选升级为不可变的
+`status.inspect@1.0.1`，其独立子进程执行器硬性限制 wall-time 和输出字节，且不接收
+Provider secret 或平台发送能力。详细边界见 `docs/PHASE3B_EXECUTION.md`。
+
+当前发布顺序是先把 `0015` 与新 Provider 以 `ledger_only` 上线，确认生产没有产生
+attempt；再另行评审 descriptor 激活和一个 `admin_api` 精确 canary。生产 canary、
+中断/恢复演练和稳定窗口尚未签署，自然语言 tool loop 仍属 Phase 5。
 
 ## Sequencing rules
 
@@ -108,9 +108,9 @@ Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`. Phase acceptance is in
 
 ### 3a. Authoritative tool descriptors
 
-Status: completed on 2026-07-18 with the real reviewed `status.inspect`
-authority and a reporting-only Provider. No descriptor is active and no
-invocation or lease surface exists.
+状态：2026-07-18 已完成真实、经审阅的 `status.inspect@1.0.0` authority 与
+只报告的 Provider。此处描述的是当时的 3a 退出门；后续 invocation 与 lease
+表面由 3b 的独立迁移提供，不改变 3a 的历史签署。
 
 - Define versioned input/output JSON Schemas, side-effect class, permission,
   confirmation, timeout, rate, concurrency, resource, privacy, provider, and
@@ -133,6 +133,11 @@ stale providers cannot become callable; schema compatibility and authority are
 covered on SQLite and PostgreSQL.
 
 ### 3b. Invocation ledger and provider lease protocol
+
+状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
+`status.inspect@1.0.1` 已完成实现与双数据库回归，等待以 `ledger_only` 部署。
+这表示执行底座已经可发布，不表示生产 canary 已签署。实施与回滚细节见
+`docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,
   fencing tokens, deadlines, cancellation, structured errors, and artifact

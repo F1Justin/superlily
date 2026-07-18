@@ -47,27 +47,28 @@ contracts package:
   packages/contracts/vectors/tool_registry/status.inspect-1.0.0.json
 ```
 
-The descriptor under `vectors/` is a test vector, not an active registry entry.
-The CLI performs offline verification only and cannot import, activate, or run
-a tool.
+`vectors/` 下的 descriptor 只是测试向量，不是可导入的生产 authority。该 CLI
+命令只做离线校验，不能导入、激活或执行工具。
 
-The reviewed production candidate and its reporting-only implementation are
-verified separately:
+Phase 3a 的历史报告版本与 Phase 3b 的可执行候选应分别验证：
 
 ```bash
 .venv/bin/superlily-tool-registry verify-descriptor \
   registry/descriptors/status.inspect/1.0.0.json
 .venv/bin/superlily-status-provider verify \
   --descriptor registry/descriptors/status.inspect/1.0.0.json
+.venv/bin/superlily-tool-registry verify-descriptor \
+  registry/descriptors/status.inspect/1.0.1.json
+.venv/bin/superlily-status-provider verify \
+  --descriptor registry/descriptors/status.inspect/1.0.1.json
 .venv/bin/pytest -q tests/test_provider_sdk.py tests/test_status_provider.py
 ```
 
-The second command runs only a local schema-bound self-test. The Phase 3a SDK
-can publish inventory and heartbeat, but it has no invocation or lease client.
-The provider intentionally reports wall-time enforcement as `unsupported`
-until the Phase 3b hard-timeout executor exists.
+`verify` 只运行本地、受 schema 约束的自检，不连接 Core，也不领取 lease。
+`1.0.0` 固定代表只报告实现；`1.0.1` 才是带硬 wall-time/输出字节监督的执行候选。
+Provider execution SDK 的网络操作均为单次调用，不对不明确的状态变更响应盲目重试。
 
-Phase 3a persistence and Core API regression tests are isolated with:
+Phase 3a Registry 与 Phase 3b 执行账本的重点回归可分别运行：
 
 ```bash
 .venv/bin/pytest -q \
@@ -76,20 +77,26 @@ Phase 3a persistence and Core API regression tests are isolated with:
   tests/test_status_provider.py \
   tests/test_tool_registry_api.py \
   tests/test_migrations.py
+
+.venv/bin/pytest -q \
+  tests/test_tool_execution_contracts.py \
+  tests/test_tool_execution_api.py \
+  tests/test_provider_sdk.py \
+  tests/test_status_provider.py \
+  tests/test_migrations.py
 ```
 
-C0-D contracts, action ingestion, receipt/watermark idempotency and migration
-round trips are covered by `tests/test_contracts.py`, the `test_c0d_*` cases in
-`tests/test_api.py`, and `tests/test_migrations.py`. Run them on both disposable
-SQLite and PostgreSQL before changing bridge spool behavior.
+C0-D 合同、action ingestion、receipt/watermark 幂等和 migration 往返由
+`tests/test_contracts.py`、`tests/test_api.py` 中的 `test_c0d_*` 用例和
+`tests/test_migrations.py` 覆盖。修改 bridge spool 前必须在一次性 SQLite 与
+PostgreSQL 上都运行。
 
-After `0012_tool_registry` is applied, the initial admin read must report zero
-descriptors/providers and execution `off`. The local administration CLI has
-only `import-descriptor` and `register-provider`; it reads descriptor bytes
-from the exact `--source-commit` Git object and never activates a tool. For the
-initial one-descriptor bundle, obtain `--bundle-hash` from
-`superlily-tool-registry verify-descriptor`. Do not import the shared
-`status.inspect` test vector as production authority.
+应用 `0012_tool_registry` 后，初始 admin 视图必须报告零 descriptor、零 Provider
+和 execution `off`。本机管理 CLI 只有 `import-descriptor` 与
+`register-provider`；它从精确 `--source-commit` Git 对象读取 descriptor 字节，
+不会激活工具。单 descriptor bundle 的 `--bundle-hash` 由
+`superlily-tool-registry verify-descriptor` 给出。不得把共享 `status.inspect`
+测试向量当作生产 authority 导入。
 
 Historical imports start with a write-free dry run. Candidate records should be
 normalized to EventIn-shaped JSONL first, then inspected with:

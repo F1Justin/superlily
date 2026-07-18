@@ -132,16 +132,36 @@ Core 心跳显示两个实例均为 `online`，普通 reporter 和 durable-spool
 
 ## 3b: invocation and execution safety
 
-- [ ] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
-  tested. Canary binds tool/version/hash, conversation, caller and provider.
-- [ ] Global stop, per-tool/version suspension and provider quarantine each
-  independently prevent new leases and have audited rollback.
+### `0015_tool_attempts` 实现期证据
+
+2026-07-19，`0015_tool_attempts`、Provider execution SDK 和
+`status.inspect@1.0.1` 独立子进程执行器完成。SQLite 与 PostgreSQL 17 全量套件
+各 310 项通过；测试覆盖四种模式、canary/enforce 独立精确范围、三个 stop、
+并发领取唯一 lease、单调 fence、secret/Provider 绑定、DB-time 续租与 reaper、
+取消竞态、迟到/重复完成、预算取消、非法输出、attempt 事件只追加，以及真实
+Provider SDK -> Core -> 子进程 -> Core 的成功路径。
+
+`status.inspect@1.0.1` descriptor SHA-256 为
+`398fb49dfff2cc76822e68afa305af2a8aee3aa4f4c50a375320f13175117911`。
+版本升级只改变不可变版本号与按真实 `spawn` 进程峰值测得的内存预算；执行子进程
+不接收 lease secret、Provider token、bot token 或平台发送能力。完整边界和诚实的
+非通用沙箱限制见 `PHASE3B_EXECUTION.md`。
+
+这些是实现与发布前证据。生产仍需先以 `ledger_only` 部署并证明零 attempt，随后
+另行签署 descriptor 激活、精确 canary、停止开关和中断恢复演练。
+
+- [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
+  tested. Canary binds tool/version/hash, conversation, caller and provider;
+  enforce uses its own exact allowlist.
+- [x] Global stop, per-tool/version suspension and provider quarantine each
+  independently prevent new leases in contract/API tests; production drills
+  remain part of the unchecked operations gate below.
 - [x] Migration `0014_tool_invocations` and every legal/illegal transition,
   idempotent create, cancellation, deadline and append-only invariant pass both
   databases. `ledger_only` creates no executable lease.
-- [ ] Migration `0015_tool_attempts` proves one active lease, monotonically new
+- [x] Migration `0015_tool_attempts` proves one active lease, monotonically new
   fences, provider/attempt-secret binding and DB-time authority.
-- [ ] Duplicate, replayed, late and stale-fence start/heartbeat/complete/fail are
+- [x] Duplicate, replayed, late and stale-fence start/heartbeat/complete/fail are
   rejected without mutating the current invocation and remain auditable.
 - [ ] Restart, reaper crash, lease expiry, cancellation race, provider/Core
   outage, clock skew, invalid output, safe retry, unknown completion and queue

@@ -95,3 +95,14 @@ attempt 表与 lease 路由；幂等重放、Provider 越权拒绝和 descriptor
 因此可以开始 `0015` 的设计与实现，但这不等于授权任何工具执行；在
 attempt/lease/fence/硬预算及独立 stop 全部验收前，`canary` 和 `enforce` 仍必须被
 配置层拒绝。
+
+## 后续状态
+
+2026-07-19，`0015_tool_attempts`、Provider execution SDK 与
+`status.inspect@1.0.1` 硬边界执行器已经完成实现，并在 SQLite/PostgreSQL 17 各
+通过 310 项测试。`0014` 本文继续作为“当时生产只有账本、没有执行面”的历史签署，
+不回写成后来能力的说明。
+
+`0015` 的模式、精确范围、lease/fence/secret、恢复语义、执行器限制、部署与回滚
+见 `PHASE3B_EXECUTION.md`。生产升级仍先保持 `ledger_only`；schema 与路由存在不
+代表 descriptor 已激活或 canary 已授权。
