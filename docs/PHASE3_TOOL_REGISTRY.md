@@ -1,4 +1,4 @@
-# Phase 3 design: Tool Registry and execution harness
+# 第三阶段设计：Tool Registry 与执行 harness
 
 ## Purpose
 
@@ -15,16 +15,14 @@ things that old command plugins commonly combine:
 The command interface remains. A command becomes one trusted caller of the
 same tool protocol that future natural-language planning will use.
 
-**Status:** Phase 3a is complete. The signed policy-v6 Phase
-2 gate is recorded in `PHASE2_FINAL_AUDIT.md`; contracts, migration
-`0012_tool_registry`, Git-bound local imports, provider reporting, and
-admin-only effective-state reads are deployed. The real `status.inspect`
-authority, shared Provider SDK, and reporting-only status runtime are also live
-with the descriptor still `reviewed`, honest `budget_unenforceable` reporting,
-no invocation/lease consumer, and execution hard-off. Phase 3b's
-`0014_tool_invocations` ledger is next. `PHASE3_ACCEPTANCE.md` is the executable
-release checklist, the accepted ADRs under `docs/adr/` freeze the implementation
-decisions, and this document defines the architecture.
+**当前状态：** Phase 3a 已签署完成，真实
+`status.inspect@1.0.0` authority、共享 Provider SDK 和只报告的
+Provider 已上线，描述符仍为 `reviewed`。Phase 3b 的第一个切片
+`0014_tool_invocations` 也已于 2026-07-19 以 `ledger_only` 部署：生产可以
+记录严格校验后的调用提案，但仍没有 attempt、lease、fence、工具执行
+或自然语言 caller。下一个 authority 提升点是 `0015_tool_attempts` 和硬预算
+Provider 执行器。`PHASE3_ACCEPTANCE.md` 是可执行的发布清单，`docs/adr/`
+中的 accepted ADR 冻结实现决策，本文定义总体架构。
 
 ## Non-goals
 

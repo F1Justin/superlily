@@ -1,4 +1,4 @@
-# Phase 3 acceptance checklist
+# 第三阶段验收清单
 
 ## Status and entrance gate
 
@@ -97,15 +97,38 @@ lease executor does not exist. `POST /v1/tool-invocations` remains 404,
 execution mode is `off`, and invocation endpoints, leases, and natural-language
 callers are all false.
 
-Production remains at `0013_collection_reliability`; `alembic check` reports no
-drift and no Phase 3b table was added. Only Core was recreated and the new
-Provider was started; PostgreSQL, Lily, Nekro, and NapCat were not restarted.
-Legacy claims/events continued across the Core replacement and Nekro remained
-healthy. Lily's process and message/event capture also continued, but its
-ordinary heartbeat and command snapshot had already stopped refreshing at
-22:14 CST, before the 22:42 Core replacement. The stale observer status is
-therefore not attributed to this rollout and must be diagnosed separately
-before a Phase 3b execution canary; it does not grant any tool authority.
+该 Phase 3a 报告切片完成时，生产仍为 `0013_collection_reliability`，
+`alembic check` 无 drift，且尚未添加 Phase 3b 表。当时只重建 Core 并启动
+新 Provider；PostgreSQL、Lily、Nekro 和 NapCat 均未重启。旧 claim/event 持续
+写入，但 Lily 的普通心跳与命令快照早在 22:14 CST 就已停止刷新，早于
+22:42 的 Core 替换，因此没有把该问题误归因于 Phase 3a 上线。后续 bridge
+0.5.1 已在 `0014` 上线前补上 worker 监督与心跳自恢复，恢复证据见下节。
+
+### `0014_tool_invocations` 生产证据
+
+2026-07-19，提交 `846d93d` 对应的 Core 镜像
+`sha256:ef9abe52d9df2f6f03701b76474afa5d02d751f702a3623b3c0d4e91f9d432fc`
+完成部署。上线前 PostgreSQL 自定义格式备份为
+`/home/justin/backups/superlily/20260719-phase3b-ledger/superlily-pre-phase3b-ledger-846d93d.dump`，
+大小 149,035,505 字节，权限 `0600`，SHA-256 为
+`fd812d0c63af2807b77f3200c0f0b4ccd4830181d344d7dac0089a2c5adfef62`。
+`pg_restore --list` 和隔离数据库实际恢复均通过，恢复库保持
+`0013_collection_reliability` 并在验证后删除。
+
+生产启动日志明确记录 `0013_collection_reliability -> 0014_tool_invocations`；
+`alembic current` 为 head，`alembic check` 无 drift。真实
+`status.inspect` 提案 `9144f816-6814-43e5-84f5-63dcf869e63f`
+只产生一条 `recorded_only` invocation 和 `propose -> record_only` 两条 transition；
+相同幂等键重放返回 HTTP 200、原 invocation 及 `duplicate=true`。Provider 凭据
+创建调用返回 401 且零落行。生产没有 `tool_attempts` 表，
+`/v1/tool-executions/lease` 返回 404，policy snapshot 明确为
+`queue_created=false` 和 `lease_created=false`。描述符仍为 `reviewed`，
+Provider 镜像与启动时间未改变。
+
+同日 Lily 与 Nekro bridge 部署 0.5.1 并只重启两个 bot 运行时。
+Core 心跳显示两个实例均为 `online`，普通 reporter 和 durable-spool reporter
+均为 `running`，重启数和心跳失败数均为零。完整 SQLite 与 PostgreSQL 17
+套件各自 279 项全部通过。
 
 ## 3b: invocation and execution safety
 
@@ -113,7 +136,7 @@ before a Phase 3b execution canary; it does not grant any tool authority.
   tested. Canary binds tool/version/hash, conversation, caller and provider.
 - [ ] Global stop, per-tool/version suspension and provider quarantine each
   independently prevent new leases and have audited rollback.
-- [ ] Migration `0014_tool_invocations` and every legal/illegal transition,
+- [x] Migration `0014_tool_invocations` and every legal/illegal transition,
   idempotent create, cancellation, deadline and append-only invariant pass both
   databases. `ledger_only` creates no executable lease.
 - [ ] Migration `0015_tool_attempts` proves one active lease, monotonically new

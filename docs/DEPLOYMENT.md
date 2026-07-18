@@ -237,8 +237,9 @@ The pre-rollout backup is
 `/home/justin/backups/superlily/20260718-phase3a-status/superlily-pre-phase3a-status-c48aaa1.dump`
 (mode `0600`, SHA-256
 `763f2e33906040a3da3962406d62be6d7b7d448af8c7d09166a2f9e0909741b1`).
-Production migration head remains `0013_collection_reliability`; Phase 3b
-starts with `0014_tool_invocations`, not a renumbered `0013`.
+该报告切片上线时，生产 migration head 仍为
+`0013_collection_reliability`。后续 Phase 3b 已按预定编号从
+`0014_tool_invocations` 开始，见第 8 节。
 
 ## 7. C0-D durable ingress rollout and rollback
 
@@ -301,3 +302,36 @@ cumulative replay-failure counters; an empty current `last_error`, zero
 pending/quarantine and matching local/Core watermarks distinguish recovered
 evidence from an active incident. Exact times and behavior checks are in
 `C0D_ACCEPTANCE.md`.
+
+## 8. Phase 3b `ledger_only` 上线与回滚
+
+2026-07-19，Core 从提交 `846d93d` 构建为镜像
+`sha256:ef9abe52d9df2f6f03701b76474afa5d02d751f702a3623b3c0d4e91f9d432fc`，
+只重建 `lily-core` 后自动将生产库从 `0013_collection_reliability`
+升级到 `0014_tool_invocations`。当前必须保持：
+
+- `SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`；
+- `SUPERLILY_TOOL_GLOBAL_STOP=false`，但开关快照必须进账本；
+- descriptor lifecycle 仍为 `reviewed`；
+- 无 `tool_attempts` 表、无 lease/start/complete 路由；
+- Provider 只能报告 inventory/heartbeat，不能创建 invocation。
+
+上线前备份位于
+`/home/justin/backups/superlily/20260719-phase3b-ledger`（目录权限 `0700`）：
+
+- `superlily-pre-phase3b-ledger-846d93d.dump`：149,035,505 字节，
+  SHA-256 `fd812d0c63af2807b77f3200c0f0b4ccd4830181d344d7dac0089a2c5adfef62`；
+- `lily-core-bridge-pre-restart.tgz`：SHA-256
+  `38e702c6452e7e630c9ac1eac9ba08be7dfff8e0b53804c2f260aa1fdba1c8f0`；
+- `nekro-superlily-bridge-0.5.0.tgz`：SHA-256
+  `945f8e30e6429e9d7629e72b803afccca801f3e6b66ede9eed085c516f4f3137`。
+
+三个文件均为 `0600`。PostgreSQL 备份已通过 `pg_restore --list` 和隔离库
+实际恢复。bridge 0.5.1 只增加后台 worker 监督、延时自恢复和心跳
+异常可见性，不改变 claim、命令或回复语义。部署时只重启 Lily 和 Nekro；
+NapCat、PostgreSQL 和 Provider 未重启。
+
+第一回滚手段是将 execution mode 改回 `off` 并只重建 Core，这会禁止新账本行，
+但保留不可变审计记录。如果 bridge 出现回归，只恢复对应的备份包并重启
+该 bot，不删除 durable spool。只有确认必须破坏性撤回 schema 时，才在再次备份后
+停止新调用并 downgrade 到 `0013_collection_reliability`；这不是首选事故处置。

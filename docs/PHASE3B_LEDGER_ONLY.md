@@ -83,3 +83,15 @@ created、policy evaluated、deadline、terminal 和 transition 时间以数据�
 3. 生产备份、`0014` 升级、drift、真实 `recorded_only` 行和零 queue/lease 证据完成；
 4. descriptor 仍未因 runtime discovery 自动激活；
 5. `0015` 另行实现 attempt secret、单活动 lease、单调 fence、DB-time expiry、硬 wall-time/bytes 预算与三个独立 stop，不能复用 `0014` 的“只记账”进程假装执行。
+
+## 2026-07-19 生产签署
+
+上述前四项已形成生产证据：Core 已到 `0014_tool_invocations` head 且无
+schema drift；真实 `status.inspect` 提案只产生 `propose -> record_only`；生产没有
+attempt 表与 lease 路由；幂等重放、Provider 越权拒绝和 descriptor 仍为 `reviewed`
+均经过验证。Lily/Nekro bridge 0.5.1 心跳显示两个 reporter worker 均在运行、
+重启数与异常数均为零。SQLite 与 PostgreSQL 17 全量套件各 279 项通过。
+
+因此可以开始 `0015` 的设计与实现，但这不等于授权任何工具执行；在
+attempt/lease/fence/硬预算及独立 stop 全部验收前，`canary` 和 `enforce` 仍必须被
+配置层拒绝。

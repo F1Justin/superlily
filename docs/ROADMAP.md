@@ -1,4 +1,4 @@
-# Superlily execution roadmap
+# Superlily 执行路线图
 
 This document is the authoritative implementation sequence after the Phase 2
 event-routing foundation. `manifesto.md` remains the architectural vision;
@@ -14,48 +14,26 @@ tool disclosure, Unix-style resource exploration, natural-language command
 compatibility, fast-path chat behavior, and cost-aware model routing are
 recorded in `docs/COLLECTION_AND_AGENT_CONSENSUS.md`.
 
-## Current position
+## 当前位置
 
-Phase 2 is complete and signed in `ACCEPTANCE.md`; the Phase 3 entrance gate is
-open, and the Phase 3a zero-authority Registry is deployed. Correlation v3,
-runtime command inventory, response attribution, the exact-conversation claim
-canary, typed platform capabilities, policy v6, migration `0011_claim_ack`,
-Lily bridge 0.3.2, and Nekro bridge 0.3.4 are deployed. A deterministic reply to another
-person without an explicit Lily summon denies every observing bot in claim
-scope, while an explicit summon still routes to Nekro. The canary allowlist
-remains exactly `qq:group:708309706`.
+Phase 1、Phase 2 和 C0-D1 至 C0-D5 已签署完成；路由、claim/ACK、响应归因、
+typed platform capability 和 durable ingress 的验收证据分别见
+`ACCEPTANCE.md` 与 `C0D_ACCEPTANCE.md`。C0-A 的长期档案完整性仍可独立推进，
+不是 Phase 3b 的 correctness 前置。
 
-The policy-v4 replacement window reached 24 hours, but the complete row-level
-and code review rejected it as final evidence. It exposed short-message-ID
-collision risk, split strong fingerprints under adapter timestamp skew,
-leading-segment command false positives, private/reply policy gaps, Nekro
-task-attribution races, a committed-deny/response-loss claim hole, and
-ambiguous send timeouts counted as confirmed failures.
+Phase 3a 已签署真实 `status.inspect@1.0.0` authority、独立 Provider 身份、
+共享 Provider SDK 和只报告的运行时。描述符仍为 `reviewed`，Provider 运行时
+如实报告 `budget_unenforceable`，因此当前没有 eligible tool。
 
-The completed policy-v5 window, policy-v6 counterfactual replay, live
-no-summon/summon pair, post-deployment claim/ACK/response checks, long-task
-attribution repair, and operator sign-off are recorded in `ACCEPTANCE.md`.
-Earlier rejected windows remain diagnostic evidence. Migration
-`0012_tool_registry`, local Git-bound imports, separately authenticated
-provider inventory/heartbeat endpoints, and the admin-only
-desired/reported/effective view are deployed in zero-authority mode. The
-authority-neutral `0013_collection_reliability` migration and all C0-D1 through
-C0-D5 gates are also deployed and signed. The complete
-SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
-backup and production drift checks pass. Production has zero Provider
-credentials, descriptors, active or eligible tools, and execution remains
-off. Natural production reaction capture, bounded Core and PostgreSQL outage
-replay, and an explicit Lily-command/Nekro-reply pair are recorded in
-`C0D_ACCEPTANCE.md`; both collectors returned to zero pending and contiguous
-watermarks after the drills.
+Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。execution mode
+为 `ledger_only`：调用提案会冻结 descriptor、input、principal、capability 和 policy
+快照，但只能终止为 `recorded_only` 或 `rejected`。生产尚无 attempt 表、lease
+路由、fence、执行结果或自然语言 caller。Lily/Nekro bridge 0.5.1 已为心跳和两个
+reporter worker 增加监督与自恢复，两个实例生产心跳已恢复新鲜。
 
-The Phase 3b entrance gate is now open. The current operator priority is the
-shared Provider SDK plus the separately reviewed real `status.inspect`
-authority and runtime evidence; no invocation or lease surface exists yet. The
-larger `C0-A` archival packet may proceed independently and is not a Phase 3b
-correctness dependency. Phase 2's signed routing acceptance remains valid, and
-Phase 3a's zero-authority Registry remains deployed; C0-D changed neither bot
-response behavior nor tool authority.
+当前工程优先级是 `0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、
+attempt secret、数据库时间、硬 wall-time/字节预算和三个独立 stop。这些通过后，
+才能让 `status.inspect` 进入精确 canary；自然语言 tool loop 仍属 Phase 5。
 
 ## Sequencing rules
 

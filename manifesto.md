@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-18，Phase 1 与 Phase 2 已完成并由 `docs/ACCEPTANCE.md` 签署。线上基线包含 Correlation v3、引用解析、policy v6 canonical decision、认证运行时命令清单、响应归因、typed platform capability、迁移 `0011_claim_ack` 和单会话 fail-open claim canary；Phase 2 冻结标签为 `phase2-production-accepted-20260718`。Phase 3a 的 ADR、描述符/Provider 契约、受限 JSON Schema、RFC 8785 canonicalization、离线验证 CLI 和共享向量已经进入代码，但尚无生产 Tool Registry 表、Provider 凭据、活动描述符或工具执行路径。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。生产已有经人工审阅但未激活的 `status.inspect@1.0.0` authority、独立 Provider 身份和共享 Provider SDK。Phase 3b 已落下第一个安全切片 `0014_tool_invocations`：调用可以在 `ledger_only` 中被校验和记账，但生产仍无 attempt、lease、fence、工具执行或自然语言调用权。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -314,11 +314,11 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 第三阶段完成时，命令入口仍然存在，自然语言模型仍然没有工具执行权。详细字段、状态机、数据库表、API、迁移顺序和验收标准见 `docs/PHASE3_TOOL_REGISTRY.md`；跨阶段依赖和门禁见 `docs/ROADMAP.md`。
 
-8.1 当前 Phase 3a 状态（2026-07-18）
+8.1 当前第三阶段状态（2026-07-19）
 
-继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。加入已签署 C0-D1 至 C0-D5 后的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 244 项通过。
+五份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期和控制面认证边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。描述符仍为 `reviewed`，Provider 如实报告 `budget_unenforceable`，运行时发现没有自动扩大 authority。
 
-`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署；20:08 CST 的 C0-D 上线把生产 migration head 推进到 `0013_collection_reliability`，但没有改变 Registry 权限。生产无 schema drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，仍没有 invocation、attempt 或 lease 表/路由。C0-D 前置门已经签署关闭，Phase 3 轨道的下一步是共享 Provider SDK 和真正的 `status.inspect` authority；Phase 3b 现在可以开始，C0-A 可分别推进，Registry 在此期间保持 execution `off`。
+2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用，生产没有 `tool_attempts` 表和 lease 路由。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。SQLite 与 PostgreSQL 17 全量测试均为 279 项通过。下一个 authority 提升点是 `0015_tool_attempts` 和真正的 lease/fence/硬预算执行器，不是自然语言 tool loop。
 
 9. 第四阶段：统一 Renderer
 
@@ -388,14 +388,14 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经推进到 Phase 3a 的真实 Provider 与 descriptor 证据：
+当前近期优先级已经推进到 Phase 3b 的执行安全底座：
 
-1. 实现共享 Provider SDK，使它与 Core/CLI 消费同一组接受/拒绝及 JCS golden vectors，并保持 Provider 只能报告 inventory/heartbeat、不能获得执行权。
-2. 准备并代码审阅真正的 `status.inspect` descriptor、Provider registration 和 implementation hash；golden vector 不直接充当生产 authority。
-3. 在另一次明确授权后配置独立 Provider credential、注册 Provider、导入 `status.inspect` 为 `reviewed`，继续保持 execution `off`，收集 desired/reported/effective 与失效原因证据并签署 Phase 3a gate。
-4. 3a 通过后再实现 3b invocation ledger、attempt、confirmation、provider lease/fencing、deadline、budget 和 artifact，不接自然语言模型。
-5. 依次迁移 status.inspect、文本模式 wolfram.run、具备安全 artifact 生命周期后的 latex.render；每个工具单独经过 off、ledger-only、shadow、精确 canary 和回滚。
-6. Phase 3 达标后进入统一 Renderer；自然语言 tool calling 继续后置到 Phase 5。
+1. 实现 `0015_tool_attempts`：单活动 lease、单调 fence、attempt secret、数据库时间和超时恢复，并在 SQLite/PostgreSQL 上覆盖并发竞态。
+2. 建立真正的 `status.inspect` 执行器，先硬性执行 wall-time/输入/输出字节预算，再让 descriptor 从 `reviewed` 进入可执行的精确 canary。
+3. 分别验证 global stop、按 tool/version suspension 和 Provider quarantine；任何一个开关都必须能独立阻止新 lease。
+4. 完成过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core 中断和 `unknown_completion` 的故障演练，再考虑放大 canary。
+5. `status.inspect` 签署后，才继续 `0016_tool_confirmations_artifacts`、文本模式 `wolfram.run` 和 `latex.render`。
+6. 旧命令入口始终保留为回滚路径；自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 
