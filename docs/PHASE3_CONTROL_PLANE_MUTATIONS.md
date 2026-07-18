@@ -11,16 +11,24 @@ Admin、自然语言 tool calling 或写操作工具。控制面不可参与工�
 
 ## 当前实现状态
 
-2026-07-19，M0 已完成代码、双数据库验收和默认禁用的生产部署，但尚未开放任何 mutation。新增服务端短
+2026-07-19，M0 已完成代码、双数据库验收和默认禁用的生产部署。它新增服务端短
 会话、离线 scrypt verifier 生成器、精确 Host/Origin/JSON 边界、Secure/HttpOnly/
 SameSite cookie、内存态 CSRF、数据库时间过期、再认证/退出 CAS、登录限速、scrypt
-并发上限、脱敏 422、安全响应头和 append-only 登录/审计证据。
+并发上限、脱敏 422、安全响应头和只追加登录/审计证据。
 
-SQLite 全量为 323 项通过、1 项 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段
-全量 324 项通过。两种数据库均完成 fresh upgrade、downgrade/re-upgrade、
-`alembic check`、触发器不可变和并发旧 CSRF 最多成功一次验证。控制面 operator
-配置在生产仍为空，4 张新表也均为空，因此这些表和路由不会激活 descriptor、quarantine Provider 或
-创建 canary。M1–M3 仍必须逐包通过后，才可能进入首个精确 canary。
+同日 M1 descriptor lifecycle 已完成实现、审查与发布前回归。新增
+`0015b_descriptor_mutations`、持久 preview、单调资源版本、reviewer 权限、短时
+preview、apply 新鲜再认证、CAS、幂等重放/冲突、运行时重新计算、接受/拒绝审计，
+以及数据库层 descriptor authority、lifecycle event 和 preview 不可变约束。首包只
+允许 `reviewed -> active`、`active -> suspended`、`suspended -> active`；任何直接
+改 lifecycle 但没有同事务匹配 event 的写入都会被数据库拒绝。
+
+SQLite 全量为 334 项通过、1 项 PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段
+全量 335 项通过。两种数据库均完成 fresh upgrade、downgrade/re-upgrade、
+`alembic check`、并发单一 CAS 胜者、角色/CSRF/再认证、preview 过期/漂移、幂等、
+限速、secret 扫描和只追加证据验证。M1 尚未部署；生产 operator 配置仍为空，M0 的
+4 张表也仍为空，因此当前生产不会激活 descriptor、隔离 Provider 或创建 canary。
+M2–M3 及 M1 默认禁用生产签署仍必须完成，才可能进入首个精确 canary。
 
 ## 分包顺序
 

@@ -200,6 +200,27 @@ pepper 均未配置，登录端点返回带完整安全头的 503。
 bot 与 Provider 心跳新鲜。由此只签署 M0 默认禁用上线，不签署任何 mutation 或
 canary authority。
 
+### Descriptor lifecycle M1 发布前证据
+
+2026-07-19，ADR 0009 与 `0015b_descriptor_mutations` 完成实现、审查和发布前回归。
+M1 增加服务端 canonical preview、持久 preview/hash、descriptor 单调资源版本、
+reviewer 角色、新鲜再认证、短时过期、apply CAS、幂等重放/冲突、runtime drift
+重算和接受/拒绝审计。首包只允许 `reviewed -> active`、`active -> suspended`、
+`suspended -> active`；回滚是一条新的反向 mutation，不删除旧证据。
+
+数据库同时禁止 descriptor authority 改写和删除、lifecycle event/preview 的更新和
+删除，并要求每次 lifecycle/resource version 更新恰好加一且同事务已有匹配 event。
+测试覆盖默认禁用、精确目标、角色、CSRF、新鲜再认证、过期、runtime/global stop/
+Provider 漂移、preview 与 mutation 独立限速、幂等、并发单一 CAS 胜者、直接 SQL
+绕过拒绝和 secret 不落 preview/result/audit。SQLite 全量 334 项通过、1 项
+PostgreSQL 专用迁移测试跳过；PostgreSQL 17 分段合计 335 项通过。两种数据库的迁移
+往返与 drift 检查均通过。
+
+这只签署 M1 发布前实现，不签署生产启用。当前生产仍为
+`0015a_control_plane_auth`、operator 配置为空、`ledger_only` 且零 attempt；M1
+默认禁用部署、M2 Provider quarantine、M3 reviewed rollout plan 和精确 canary
+仍是后续门禁。
+
 - [x] `off`, `ledger_only`, exact `canary`, and reviewed `enforce` semantics are
   tested. Canary binds tool/version/hash, conversation, caller and provider;
   enforce uses its own exact allowlist.
@@ -241,21 +262,20 @@ canary authority。
 - [ ] Existing command paths remain rollback until per-tool shadow/canary
   equivalence, latency, errors, budgets and evidence window are signed.
 
-## Control panel, security, and operations
+## 控制面、安全与运维
 
-- [x] M0 short server-side sessions, Secure cookie, CSRF/Origin/Host/content
-  type, DB-time expiry, reauthentication/logout CAS, rate limit, CSP,
-  redacted validation errors and append-only session audit pass both databases.
-- [ ] Read-only panel desired/reported/effective/actual counts and reason codes
-  match direct API/SQL evidence; descriptor content is not edited in Phase 3.
-- [ ] Auditor/operator/reviewer/security-admin/break-glass mutation matrices,
-  idempotency, server preview, rollback, sensitive-read audit and bounded export
-  tests pass before any mutation authority is enabled.
-- [ ] No bearer token is in browser storage, logs, URLs, tool inputs/results,
-  artifacts or exported evidence. Provider/bot/admin credentials are distinct
-  and rotation/revocation is tested.
-- [ ] Production backup/restore, head/drift, image/commit/config hashes,
-  kill-switch drill, provider/Core/database outage and rollback are recorded.
+- [x] M0 服务端短会话、Secure cookie、CSRF/Origin/Host/内容类型、数据库时间过期、
+  再认证/退出 CAS、限速、CSP、脱敏校验错误和只追加会话审计在两种数据库通过。
+- [x] M1 reviewer descriptor lifecycle 的服务端 preview、CAS、幂等、反向回滚、
+  runtime 重算和只追加证据在两种数据库通过；生产默认禁用签署仍待完成。
+- [ ] 只读面板的 desired/reported/effective/actual 数量和 reason code 与直接 API/SQL
+  证据一致；第三阶段不在线编辑 descriptor 内容。
+- [ ] M2/M3 的 security-admin/operator/break-glass 权限矩阵、Provider quarantine、
+  rollout plan、敏感读取审计和有界导出测试在任何 canary authority 启用前通过。
+- [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
+  Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
+- [ ] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、
+  Provider/Core/数据库故障和回滚演练。
 
 ## Phase 3 exit
 

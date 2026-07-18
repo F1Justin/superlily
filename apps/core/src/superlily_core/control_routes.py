@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .control_plane import (
@@ -16,10 +16,29 @@ from .control_plane import (
     verify_control_write_boundary,
 )
 from .dependencies import get_session
+from .descriptor_mutations import (
+    DescriptorLifecycleApplyIn,
+    DescriptorLifecyclePreviewIn,
+    apply_descriptor_lifecycle_mutation,
+    create_descriptor_lifecycle_preview,
+)
 
 
 router = APIRouter(prefix="/v1/control/session", tags=["control-session"])
+descriptor_router = APIRouter(
+    prefix="/v1/control/descriptors",
+    tags=["control-descriptors"],
+)
 Session = Annotated[AsyncSession, Depends(get_session)]
+ControlIdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,255}$",
+    ),
+]
 
 
 def _no_store(response: Response) -> None:
@@ -83,3 +102,45 @@ async def logout(
         response,
         request.app.state.settings,
     )
+
+
+@descriptor_router.post(
+    "/lifecycle/preview",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def descriptor_lifecycle_preview(
+    payload: DescriptorLifecyclePreviewIn,
+    request: Request,
+    response: Response,
+    session: Session,
+) -> dict:
+    _no_store(response)
+    return await create_descriptor_lifecycle_preview(
+        session,
+        request,
+        payload,
+        request.app.state.settings,
+    )
+
+
+@descriptor_router.post(
+    "/lifecycle/apply",
+    dependencies=[Depends(verify_control_write_boundary)],
+)
+async def descriptor_lifecycle_apply(
+    payload: DescriptorLifecycleApplyIn,
+    request: Request,
+    response: Response,
+    session: Session,
+    idempotency_key: ControlIdempotencyKey,
+) -> dict:
+    _no_store(response)
+    result, status_code = await apply_descriptor_lifecycle_mutation(
+        session,
+        request,
+        payload,
+        idempotency_key,
+        request.app.state.settings,
+    )
+    response.status_code = status_code
+    return result

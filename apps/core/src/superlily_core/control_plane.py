@@ -183,7 +183,7 @@ def _client_host(request: Request) -> str:
     return "unknown" if request.client is None else request.client.host
 
 
-async def _append_audit(
+async def append_control_audit(
     session: AsyncSession,
     *,
     event: str,
@@ -308,7 +308,7 @@ async def login_control_session(
                 reason_code="rate_limited",
             )
         )
-        await _append_audit(
+        await append_control_audit(
             session,
             event="session_login",
             outcome="rejected",
@@ -336,7 +336,7 @@ async def login_control_session(
                 reason_code="invalid_credentials",
             )
         )
-        await _append_audit(
+        await append_control_audit(
             session,
             event="session_login",
             outcome="rejected",
@@ -373,7 +373,7 @@ async def login_control_session(
         )
     )
     identity = _identity(record)
-    await _append_audit(
+    await append_control_audit(
         session,
         event="session_login",
         outcome="accepted",
@@ -469,7 +469,7 @@ async def reauthenticate_control_session(
         operator.password_hash,
     )
     if not valid:
-        await _append_audit(
+        await append_control_audit(
             session,
             event="session_reauthenticate",
             outcome="rejected",
@@ -508,7 +508,7 @@ async def reauthenticate_control_session(
         expires_at=identity.expires_at,
         last_reauthenticated_at=now,
     )
-    await _append_audit(
+    await append_control_audit(
         session,
         event="session_reauthenticate",
         outcome="accepted",
@@ -565,7 +565,7 @@ async def logout_control_session(
         expires_at=identity.expires_at,
         last_reauthenticated_at=identity.last_reauthenticated_at,
     )
-    await _append_audit(
+    await append_control_audit(
         session,
         event="session_logout",
         outcome="accepted",

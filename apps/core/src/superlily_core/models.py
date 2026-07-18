@@ -485,6 +485,7 @@ class ToolDescriptorRecord(Base):
     source_plugin: Mapped[str] = mapped_column(String(512), nullable=False)
     review_status: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
     lifecycle: Mapped[str] = mapped_column(String(32), default="reviewed", nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
     bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     reviewer: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -1069,6 +1070,35 @@ class ControlPlaneAuditEvent(Base):
     )
 
 
+class ControlPlanePreview(Base):
+    __tablename__ = "control_plane_previews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("control_plane_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    preview_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    preview_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"role IN ({_CONTROL_ROLES_SQL})", name="ck_control_preview_role"),
+        CheckConstraint("expected_version >= 1", name="ck_control_preview_version"),
+        Index("ix_control_previews_target_created", "target_type", "target_id", "created_at"),
+        Index("ix_control_previews_session_expiry", "session_id", "expires_at"),
+    )
+
+
 _INVOCATION_TRANSITION_SQLITE_UPDATE_TRIGGER = DDL(
     """
     CREATE TRIGGER tool_invocation_transitions_no_update
@@ -1181,6 +1211,179 @@ event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_POSTGRES
 event.listen(ToolAttemptEvent.__table__, "after_drop", _ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP)
 
 
+_DESCRIPTOR_AUTHORITY_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptors_authority_no_update
+    BEFORE UPDATE OF tool_id, version, descriptor_hash, schema_profile, source_plugin,
+        review_status, source_commit, bundle_hash, reviewer, canonical_json,
+        descriptor_json, import_outcome, imported_at
+    ON tool_descriptors
+    BEGIN
+        SELECT RAISE(ABORT, 'descriptor authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_DESCRIPTOR_AUTHORITY_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptors_no_delete
+    BEFORE DELETE ON tool_descriptors
+    BEGIN
+        SELECT RAISE(ABORT, 'descriptor authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_DESCRIPTOR_LIFECYCLE_SQLITE_GUARD = DDL(
+    """
+    CREATE TRIGGER tool_descriptors_lifecycle_guard
+    BEFORE UPDATE OF lifecycle, resource_version ON tool_descriptors
+    WHEN NEW.lifecycle != OLD.lifecycle OR NEW.resource_version != OLD.resource_version
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'descriptor resource version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.lifecycle = 'reviewed' AND NEW.lifecycle = 'active') OR
+            (OLD.lifecycle = 'active' AND NEW.lifecycle = 'suspended') OR
+            (OLD.lifecycle = 'suspended' AND NEW.lifecycle = 'active')
+        ) THEN RAISE(ABORT, 'descriptor lifecycle transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM tool_descriptor_lifecycle_events
+            WHERE descriptor_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_lifecycle = OLD.lifecycle
+              AND lifecycle = NEW.lifecycle
+        ) THEN RAISE(ABORT, 'descriptor lifecycle event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_DESCRIPTOR_AUTHORITY_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_descriptor_authority_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'descriptor authority is immutable';
+        END IF;
+        IF NEW.tool_id IS DISTINCT FROM OLD.tool_id
+           OR NEW.version IS DISTINCT FROM OLD.version
+           OR NEW.descriptor_hash IS DISTINCT FROM OLD.descriptor_hash
+           OR NEW.schema_profile IS DISTINCT FROM OLD.schema_profile
+           OR NEW.source_plugin IS DISTINCT FROM OLD.source_plugin
+           OR NEW.review_status IS DISTINCT FROM OLD.review_status
+           OR NEW.source_commit IS DISTINCT FROM OLD.source_commit
+           OR NEW.bundle_hash IS DISTINCT FROM OLD.bundle_hash
+           OR NEW.reviewer IS DISTINCT FROM OLD.reviewer
+           OR NEW.canonical_json IS DISTINCT FROM OLD.canonical_json
+           OR NEW.descriptor_json::text IS DISTINCT FROM OLD.descriptor_json::text
+           OR NEW.import_outcome IS DISTINCT FROM OLD.import_outcome
+           OR NEW.imported_at IS DISTINCT FROM OLD.imported_at THEN
+            RAISE EXCEPTION 'descriptor authority is immutable';
+        END IF;
+        IF NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+           OR NEW.resource_version IS DISTINCT FROM OLD.resource_version THEN
+            IF NEW.resource_version != OLD.resource_version + 1 THEN
+                RAISE EXCEPTION 'descriptor resource version must increase by one';
+            END IF;
+            IF NOT (
+                (OLD.lifecycle = 'reviewed' AND NEW.lifecycle = 'active') OR
+                (OLD.lifecycle = 'active' AND NEW.lifecycle = 'suspended') OR
+                (OLD.lifecycle = 'suspended' AND NEW.lifecycle = 'active')
+            ) THEN
+                RAISE EXCEPTION 'descriptor lifecycle transition is not allowed';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM tool_descriptor_lifecycle_events
+                WHERE descriptor_id = OLD.id
+                  AND sequence = NEW.resource_version
+                  AND previous_lifecycle = OLD.lifecycle
+                  AND lifecycle = NEW.lifecycle
+            ) THEN
+                RAISE EXCEPTION 'descriptor lifecycle event is required';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_DESCRIPTOR_AUTHORITY_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptors_authority_guard
+    BEFORE UPDATE OR DELETE ON tool_descriptors
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_descriptor_authority_mutation()
+    """
+).execute_if(dialect="postgresql")
+_DESCRIPTOR_AUTHORITY_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_descriptor_authority_mutation()"
+).execute_if(dialect="postgresql")
+
+for _descriptor_guard in (
+    _DESCRIPTOR_AUTHORITY_SQLITE_UPDATE_TRIGGER,
+    _DESCRIPTOR_AUTHORITY_SQLITE_DELETE_TRIGGER,
+    _DESCRIPTOR_LIFECYCLE_SQLITE_GUARD,
+    _DESCRIPTOR_AUTHORITY_POSTGRES_FUNCTION,
+    _DESCRIPTOR_AUTHORITY_POSTGRES_TRIGGER,
+):
+    event.listen(ToolDescriptorRecord.__table__, "after_create", _descriptor_guard)
+event.listen(
+    ToolDescriptorRecord.__table__,
+    "after_drop",
+    _DESCRIPTOR_AUTHORITY_POSTGRES_FUNCTION_DROP,
+)
+
+
+_DESCRIPTOR_EVENT_SQLITE_UPDATE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptor_lifecycle_events_no_update
+    BEFORE UPDATE ON tool_descriptor_lifecycle_events
+    BEGIN
+        SELECT RAISE(ABORT, 'descriptor lifecycle evidence is append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_DESCRIPTOR_EVENT_SQLITE_DELETE_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptor_lifecycle_events_no_delete
+    BEFORE DELETE ON tool_descriptor_lifecycle_events
+    BEGIN
+        SELECT RAISE(ABORT, 'descriptor lifecycle evidence is append-only');
+    END
+    """
+).execute_if(dialect="sqlite")
+_DESCRIPTOR_EVENT_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_descriptor_lifecycle_evidence_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'descriptor lifecycle evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_DESCRIPTOR_EVENT_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_descriptor_lifecycle_events_no_mutation
+    BEFORE UPDATE OR DELETE ON tool_descriptor_lifecycle_events
+    FOR EACH ROW EXECUTE FUNCTION reject_descriptor_lifecycle_evidence_mutation()
+    """
+).execute_if(dialect="postgresql")
+_DESCRIPTOR_EVENT_POSTGRES_FUNCTION_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_descriptor_lifecycle_evidence_mutation()"
+).execute_if(dialect="postgresql")
+
+for _descriptor_event_guard in (
+    _DESCRIPTOR_EVENT_SQLITE_UPDATE_TRIGGER,
+    _DESCRIPTOR_EVENT_SQLITE_DELETE_TRIGGER,
+    _DESCRIPTOR_EVENT_POSTGRES_FUNCTION,
+    _DESCRIPTOR_EVENT_POSTGRES_TRIGGER,
+):
+    event.listen(ToolDescriptorLifecycleEvent.__table__, "after_create", _descriptor_event_guard)
+event.listen(
+    ToolDescriptorLifecycleEvent.__table__,
+    "after_drop",
+    _DESCRIPTOR_EVENT_POSTGRES_FUNCTION_DROP,
+)
+
+
 _CONTROL_EVIDENCE_POSTGRES_FUNCTION = DDL(
     """
     CREATE OR REPLACE FUNCTION reject_control_plane_evidence_mutation()
@@ -1246,6 +1449,7 @@ for _control_evidence_table in (
     ControlPlaneLoginAttempt.__table__,
     ControlPlaneMutation.__table__,
     ControlPlaneAuditEvent.__table__,
+    ControlPlanePreview.__table__,
 ):
     _install_control_evidence_triggers(_control_evidence_table)
 event.listen(

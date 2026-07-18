@@ -241,6 +241,9 @@ class Settings:
     control_reauth_seconds: int = 300
     control_login_attempts: int = 5
     control_login_window_seconds: int = 300
+    control_preview_seconds: int = 60
+    control_mutation_attempts: int = 10
+    control_mutation_window_seconds: int = 60
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
@@ -320,6 +323,12 @@ class Settings:
             raise ValueError("control_login_attempts must be between 1 and 20")
         if not 60 <= self.control_login_window_seconds <= 3_600:
             raise ValueError("control_login_window_seconds must be between 60 and 3600")
+        if not 15 <= self.control_preview_seconds <= 300:
+            raise ValueError("control_preview_seconds must be between 15 and 300")
+        if not 1 <= self.control_mutation_attempts <= 100:
+            raise ValueError("control_mutation_attempts must be between 1 and 100")
+        if not 60 <= self.control_mutation_window_seconds <= 3_600:
+            raise ValueError("control_mutation_window_seconds must be between 60 and 3600")
         valid_group_modes = {"command_only", "conversation_only", "full", "observe_only"}
         if self.group_default_mode not in valid_group_modes:
             raise ValueError(
@@ -421,6 +430,15 @@ class Settings:
             ),
             control_login_window_seconds=int(
                 os.getenv("SUPERLILY_CONTROL_LOGIN_WINDOW_SECONDS", "300")
+            ),
+            control_preview_seconds=int(
+                os.getenv("SUPERLILY_CONTROL_PREVIEW_SECONDS", "60")
+            ),
+            control_mutation_attempts=int(
+                os.getenv("SUPERLILY_CONTROL_MUTATION_ATTEMPTS", "10")
+            ),
+            control_mutation_window_seconds=int(
+                os.getenv("SUPERLILY_CONTROL_MUTATION_WINDOW_SECONDS", "60")
             ),
             group_default_mode=os.getenv("SUPERLILY_GROUP_DEFAULT_MODE", "command_only").strip().lower(),
             group_modes=_group_modes(

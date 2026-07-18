@@ -35,17 +35,18 @@ Provider secret 或平台发送能力。详细边界见 `docs/PHASE3B_EXECUTION.
 Provider hard budget/健康 heartbeat、认证 lease=204、零 attempt 和 bot 心跳均已
 形成证据。生产 canary、中断/恢复演练和稳定窗口尚未签署。
 
-下一门不是直接改数据库激活 descriptor，而是补齐 ADR 0005 规定的最小控制面
-mutation 基础：角色/短会话、重认证、preview、CAS、幂等、append-only 审计和可测
-回滚。该门通过后，才评审一个 `admin_api` 精确 canary；自然语言 tool loop 仍属
-Phase 5。
+直接改数据库激活 descriptor 的路径继续被禁止。ADR 0005 的治理包中，M0 会话/
+审计底座已默认禁用部署；M1 descriptor lifecycle preview/CAS 已完成实现、审查和
+双数据库发布前回归。M1 使用服务端 canonical preview、reviewer 角色、新鲜再认证、
+精确资源版本、幂等键、运行时重算和只追加 before/after 证据；数据库也拒绝 authority
+改写、证据删改和无匹配 lifecycle event 的状态更新。
 
-该治理包的 M0 会话/审计底座已完成实现并以默认禁用状态部署：SQLite 323 项通过、1 项
-PostgreSQL 专用测试跳过，PostgreSQL 17 全量 324 项通过；两端 migration 往返、
-drift、CSRF/CAS、限速、脱敏和 append-only 证据均成立。生产为
-`0015a_control_plane_auth` head、无 drift，4 张新表为空，operator/Host/Origin/
-pepper 均未配置，工具执行仍为 `ledger_only` 且零 attempt。M0 本身不提供 mutation
-端点；下一实现包是 M1 descriptor lifecycle preview/CAS。
+M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，PostgreSQL 17 分段
+合计 335 项通过；迁移往返和 drift 均通过。生产仍是
+`0015a_control_plane_auth`、operator/Host/Origin/pepper 为空、`ledger_only` 且零
+attempt。下一步先把 M1 以默认禁用方式迁移并核验零 mutation，再实现 M2 Provider
+quarantine 与 M3 Git-bound 精确 rollout plan；三包均签署后才评审一个
+`admin_api` 精确 canary。自然语言工具循环仍属 Phase 5。
 
 ## Sequencing rules
 
@@ -148,8 +149,9 @@ covered on SQLite and PostgreSQL.
 
 状态：`0014_tool_invocations` 已生产签署；`0015_tool_attempts`、执行 Provider 和
 `status.inspect@1.0.1` 已完成实现与双数据库回归，并已在生产以 `ledger_only`
-安全空转、零 attempt。M0 控制面底座已完成发布前回归，但 descriptor 仍为
-`reviewed`，生产 canary 尚未签署。实施与回滚细节见
+安全空转、零 attempt。M0 控制面底座已默认禁用部署，M1 descriptor lifecycle 已
+完成发布前回归；descriptor 仍为 `reviewed`，M2/M3 与生产 canary 尚未签署。实施与
+回滚细节见
 `docs/PHASE3B_EXECUTION.md`。
 
 - Add an auditable invocation state machine, attempts, confirmations, leases,

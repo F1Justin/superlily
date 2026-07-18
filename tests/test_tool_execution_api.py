@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import DBAPIError
 import pytest
 
@@ -83,16 +83,21 @@ async def prepare_canary(
         assert duplicate is False
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
         assert stored is not None
-        stored.lifecycle = "active"
         session.add(
             ToolDescriptorLifecycleEvent(
                 descriptor_id=stored.id,
-                sequence=2,
-                previous_lifecycle="reviewed",
+                sequence=stored.resource_version + 1,
+                previous_lifecycle=stored.lifecycle,
                 lifecycle="active",
                 actor="test-reviewer",
                 reason="test-only exact canary activation",
             )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolDescriptorRecord)
+            .where(ToolDescriptorRecord.id == stored.id)
+            .values(lifecycle="active", resource_version=stored.resource_version + 1)
         )
         await session.commit()
     registration = ProviderRegistration(
@@ -359,13 +364,43 @@ async def test_each_stop_independently_prevents_a_new_lease(client, app) -> None
     async with app.state.database.sessions() as session:
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
         assert stored is not None
-        stored.lifecycle = "suspended"
+        session.add(
+            ToolDescriptorLifecycleEvent(
+                descriptor_id=stored.id,
+                sequence=stored.resource_version + 1,
+                previous_lifecycle=stored.lifecycle,
+                lifecycle="suspended",
+                actor="test-reviewer",
+                reason="test-only suspension",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolDescriptorRecord)
+            .where(ToolDescriptorRecord.id == stored.id)
+            .values(lifecycle="suspended", resource_version=stored.resource_version + 1)
+        )
         await session.commit()
     assert (await pull_lease(client, snapshot_hash)).status_code == 204
     async with app.state.database.sessions() as session:
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
         assert stored is not None
-        stored.lifecycle = "active"
+        session.add(
+            ToolDescriptorLifecycleEvent(
+                descriptor_id=stored.id,
+                sequence=stored.resource_version + 1,
+                previous_lifecycle=stored.lifecycle,
+                lifecycle="active",
+                actor="test-reviewer",
+                reason="test-only restoration",
+            )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolDescriptorRecord)
+            .where(ToolDescriptorRecord.id == stored.id)
+            .values(lifecycle="active", resource_version=stored.resource_version + 1)
+        )
         provider = await session.get(ToolProvider, "provider-status-primary")
         assert provider is not None
         provider.lifecycle = "quarantined"

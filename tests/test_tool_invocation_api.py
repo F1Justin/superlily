@@ -87,16 +87,21 @@ async def make_descriptor_and_provider_eligible(client, app, descriptor) -> str:
     async with app.state.database.sessions() as session:
         stored = await session.get(ToolDescriptorRecord, descriptor.id)
         assert stored is not None
-        stored.lifecycle = "active"
         session.add(
             ToolDescriptorLifecycleEvent(
                 descriptor_id=stored.id,
-                sequence=2,
-                previous_lifecycle="reviewed",
+                sequence=stored.resource_version + 1,
+                previous_lifecycle=stored.lifecycle,
                 lifecycle="active",
                 actor="test-reviewer",
                 reason="test-only activation",
             )
+        )
+        await session.flush()
+        await session.execute(
+            update(ToolDescriptorRecord)
+            .where(ToolDescriptorRecord.id == stored.id)
+            .values(lifecycle="active", resource_version=stored.resource_version + 1)
         )
         await session.commit()
     registration = ProviderRegistration(

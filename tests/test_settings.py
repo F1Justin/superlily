@@ -11,6 +11,9 @@ from superlily_core.settings import Settings
         ("raw_max_bytes", 1_023),
         ("claim_mode", "unsafe"),
         ("tool_execution_mode", "unsafe"),
+        ("control_preview_seconds", 14),
+        ("control_mutation_attempts", 0),
+        ("control_mutation_window_seconds", 59),
     ],
 )
 def test_settings_reject_unsafe_control_plane_values(field: str, value: object) -> None:

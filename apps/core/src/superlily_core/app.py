@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .database import Database
-from .control_routes import router as control_router
+from .control_routes import descriptor_router, router as control_router
 from .routes import router
 from .settings import Settings
 from .tool_execution_service import reap_expired_attempts
@@ -100,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(router)
     app.include_router(control_router)
+    app.include_router(descriptor_router)
     return app
 
 
