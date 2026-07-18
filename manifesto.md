@@ -298,6 +298,8 @@ C0-A 随后负责多层合并转发、`archive_full` 正式启用、离线导出
 
 C0-D/C0-A 属于 Phase 1/2 观察基础的完整性回补。Phase 2 已签署结论不回滚，已部署的 Phase 3a 零权限 Registry 也不撤销；实施顺序是在 Phase 3b invocation/lease 之前先完成 C0-D，且不改变命令、Nekro 回复、claim 或工具权限。完整数据模型、此前关于快速回复、模型自主选工具、渐进式披露、Unix 原语、自然语言命令和成本感知模型路由的共识，见 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
 
+截至 2026-07-18 20:08 CST，C0-D1 至 C0-D3 已部署：生产 Core 升至 `0013_collection_reliability`，Lily 与 Nekro bridge 0.4.0 分别使用独立的 SQLite FULL spool，只有匹配 Core receipt 后才提交清理，并通过 heartbeat 暴露 pending、quota、quarantine、watermark、lag 与 gap。两个 spool 的目录权限为 0700，数据库、WAL 和 SHM 均为 0600；首个生产窗口的序号连续、pending/lag/失败/隔离均为零。平台/adapter 报告的 `occurred_at`、bridge 原子落盘的 `captured_at`、Core `received_at` 和数据库 `committed_at` 分开保存。对本机 NapCat 历史日志的只读审计确认，多次启动后 1–5 秒内会补投几十至两百余条事件，所以启动日志时间不能被当作可靠的历史消息发生时间，也不能单独用于去重或排序。C0-D 仍未签署完成：C0-D4 的真实 reaction/recall/poke 映射，以及 C0-D5 的受控 Core/PostgreSQL 故障和显式命令/Nekro 回复实测仍待完成。
+
 8. 第三阶段：Tool Registry 与现有插件迁移
 
 第三阶段目标是把现有命令插件逐步改造成结构化工具。wf 应当成为 wolfram.run，tex 应当成为 latex.render，Markdown 帮助图片应当成为 markdown.render_image，状态图应当成为 status.inspect，历史检索应当成为 history.search。命令入口仍然保留，但它们只是工具的一种调用方式。
@@ -310,9 +312,9 @@ C0-D/C0-A 属于 Phase 1/2 观察基础的完整性回补。Phase 2 已签署结
 
 8.1 当前 Phase 3a 状态（2026-07-18）
 
-继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。包含 Registry 持久化/API 的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 211 项通过。
+继第一笔契约基线提交之后，Phase 3a 已完成持久化与只读 Registry 的实现提交。`docs/adr/` 中五份 accepted ADR 固定了描述符/JCS 权威、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期以及控制面认证边界。`packages/contracts` 已提供严格 UTF-8 JSON 解析、重复键与非有限数拒绝、RFC 8785 canonical bytes/SHA-256、`json-schema-2020-12-superlily-v1` 受限 profile、严格 Tool Descriptor、Provider registration/inventory/heartbeat 模型、离线 verifier CLI 和共享接受/拒绝向量。加入 C0-D1 至 C0-D3 后的当前全量测试在 SQLite 与 PostgreSQL 17 上均为 233 项通过。
 
-`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署。生产 migration head 为 `0012_tool_registry` 且无 drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，没有 invocation、attempt 或 lease 表/路由；Lily、Nekro、NapCat 和 PostgreSQL 均未重启，旧事件、claim、heartbeat 与 command registry 上报继续正常。Phase 3 轨道的下一步仍是共享 Provider SDK 和真正的 `status.inspect` authority，但当前跨阶段实施顺序先插入不增加权限的 C0-D 采集可靠性包；C0-D 完成后即可在另一次明确授权下继续 Phase 3b，C0-A 可分别推进，Registry 在此期间保持 execution `off`。
+`status.inspect-1.0.0.json` 仍然只是 golden vector，不是生产 authority。2026-07-18 14:21 CST，Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、独立 Provider inventory/heartbeat 认证端点和 desired/reported/effective 管理员只读视图已经以零 authority 状态部署；20:08 CST 的 C0-D 上线把生产 migration head 推进到 `0013_collection_reliability`，但没有改变 Registry 权限。生产无 schema drift，Provider token map 为空，八张 Registry 表均为零行，`active_descriptors=0`、`eligible_tools=0`、execution `off`，仍没有 invocation、attempt 或 lease 表/路由。Phase 3 轨道的下一步仍是共享 Provider SDK 和真正的 `status.inspect` authority，但当前跨阶段实施顺序先完成 C0-D4/C0-D5；随后可以继续 Phase 3b，C0-A 可分别推进，Registry 在此期间保持 execution `off`。
 
 9. 第四阶段：统一 Renderer
 

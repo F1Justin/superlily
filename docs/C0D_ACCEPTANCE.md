@@ -7,9 +7,10 @@ and Phase 3b remains gated, until the remaining C0-D4/D5 gates below pass.
 
 ## Current implementation snapshot
 
-As of 2026-07-18, C0-D1 through C0-D3 are implemented in the workspace and are
-awaiting the authorized production rollout. Production remains at
-`0012_tool_registry` until the rollout evidence section is updated.
+As of 2026-07-18 20:08 CST, C0-D1 through C0-D3 are deployed in production.
+Core is at `0013_collection_reliability`; Lily and Nekro run bridge `0.4.0`
+with independent durable spools. C0-D remains open at C0-D4 and the controlled
+fault/behavior items in C0-D5.
 
 Implemented:
 
@@ -38,8 +39,7 @@ Implemented:
 - linear Alembic migration `0013_collection_reliability`, with no C0-A tables
   and no tool execution authority.
 
-C0-D2/D3 are implemented; their production rollout evidence is the remaining
-part of C0-D5. Real OneBot action mapping remains C0-D4.
+C0-D2/D3 have production evidence. Real OneBot action mapping remains C0-D4.
 
 ## Verification evidence
 
@@ -55,8 +55,38 @@ The current workspace passes:
   collision, late action target resolution, exact capture-policy snapshot,
   claim-path receipt and real Core API delivery tests.
 
-These tests establish workspace behavior. They do not replace the controlled
-production rollout and post-restart evidence required by C0-D5.
+Production rollout evidence:
+
+- implementation commits `9dd2b23` and `06ffcc1` are the deployed bridge
+  source; `06ffcc1` also enforces mode `0600` on SQLite, WAL and SHM files;
+- the pre-migration PostgreSQL custom-format backup is
+  `/home/justin/backups/superlily/20260718-c0d/superlily-pre-c0d-20260718T115705Z.dump`,
+  139 MiB, SHA-256
+  `685521e8b28d9903bd5d26a2307f7cae67d669e95f34b83925321308ef2ba872`;
+  `pg_restore -l` validates its catalog. The backup directory is `0700`, all
+  three recovery artifacts are `0600`; redundant container and `/tmp` copies
+  were removed only after the durable copies were verified;
+- production startup applied `0012_tool_registry ->
+  0013_collection_reliability`; `alembic current` reports head and `alembic
+  check` reports no drift;
+- Lily restarted at 20:06 CST and Nekro at 20:07 CST. Both bridge logs report
+  fail-open durable capture, both runtime health checks are green, PostgreSQL
+  and NapCat were not restarted;
+- both spool directories are mode `0700`; database, WAL and SHM files are mode
+  `0600`. At the 20:08:21 snapshot, Lily sequences 1–62 and Nekro sequences
+  1–5 were all distinct and contiguous in Core, with no invalid
+  capture-before-commit ordering;
+- at the 20:15 final check, authenticated ingress diagnostics reported Lily
+  local/Core sequence 231/231 and Nekro 21/21: both collectors online,
+  healthy, reconciled, zero pending, zero capture/replay failures and zero
+  quarantine;
+- Tool Registry remains `execution.mode=off` with zero descriptors, providers,
+  active descriptors and eligible tools. No C0-A archive profile or tool
+  authority was enabled.
+
+The controlled Core/PostgreSQL outage trials and an explicit post-rollout
+command/Nekro-reply behavior pair remain C0-D5 work; the production service was
+not intentionally faulted merely to manufacture evidence during this rollout.
 
 ## Remaining release gates
 
@@ -92,12 +122,13 @@ production rollout and post-restart evidence required by C0-D5.
 
 - [ ] Controlled Core outage loses no numbered records.
 - [ ] Controlled PostgreSQL outage loses no numbered records.
-- [ ] Bridge crash/restart, duplicate replay, out-of-order delivery, corrupt
+- [x] Bridge crash/restart, duplicate replay, out-of-order delivery, corrupt
   spool tail and full-quota behavior have deterministic evidence.
-- [ ] Images remain placeholders/metadata rather than PostgreSQL byte payloads.
-- [ ] Command behavior, Nekro replies, claim decisions and Tool Registry
-  authority are unchanged before and after rollout.
-- [ ] Production migration, canary observation and rollback evidence are
+- [x] Images remain placeholders/metadata rather than PostgreSQL byte payloads.
+- [x] Claim traffic and Tool Registry authority are unchanged after rollout.
+- [ ] An explicit post-rollout command/Nekro-reply pair confirms both behavior
+  paths beyond process and adapter health.
+- [x] Production migration, canary observation and rollback evidence are
   recorded before C0-D is signed complete.
 
 ## Explicitly outside this gate

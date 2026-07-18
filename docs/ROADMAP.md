@@ -39,12 +39,15 @@ Earlier rejected windows remain diagnostic evidence. Migration
 `0012_tool_registry`, local Git-bound imports, separately authenticated
 provider inventory/heartbeat endpoints, and the admin-only
 desired/reported/effective view are deployed in zero-authority mode. The
-complete SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
-backup/restore and production drift checks pass. Production has zero Provider
+authority-neutral `0013_collection_reliability` migration and C0-D1 through
+C0-D3 bridge durability/diagnostics are also deployed. The complete
+SQLite/PostgreSQL 17 suite, fresh migration, downgrade/re-upgrade,
+backup and production drift checks pass. Production has zero Provider
 credentials, descriptors, active or eligible tools, and execution remains
-off. The next Phase 3 gate is the shared Provider SDK plus the separately reviewed
-real `status.inspect` authority and runtime evidence; no invocation or lease
-surface exists.
+off. C0-D4 platform-action mapping and C0-D5 controlled fault/behavior evidence
+remain before Phase 3b. The next Phase 3 gate is the shared Provider SDK plus
+the separately reviewed real `status.inspect` authority and runtime evidence;
+no invocation or lease surface exists.
 
 Before Phase 3b adds invocation or lease authority, the current operator
 priority is the authority-neutral `C0-D` collection-reliability packet. It

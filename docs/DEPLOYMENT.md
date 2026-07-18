@@ -187,3 +187,44 @@ separate rollout authorization are ready. Follow `PHASE3_ACCEPTANCE.md` and
 `PHASE3_TOOL_REGISTRY.md`. The future control panel described in
 `CONTROL_PLANE.md` remains read-only until its own authentication,
 authorization, preview, audit, and mutation gates pass.
+
+## 7. C0-D durable ingress rollout and rollback
+
+C0-D1 through C0-D3 deployed on 2026-07-18. Core migration head is
+`0013_collection_reliability`; Lily and Nekro bridge `0.4.0` own independent
+SQLite `synchronous=FULL` spools:
+
+- Lily: `/home/justin/lily/data/superlily-core/ingress-spool.sqlite3`;
+- Nekro: `/home/justin/nekro/plugin_data/Superlily.core_bridge/ingress-spool.sqlite3`.
+
+Each parent directory must be `0700`; database, `-wal`, and `-shm` files must
+all be `0600`. A bridge appends before Core I/O, retains strict pending order,
+and compacts only after an exact matching receipt. Never delete or replace a
+spool merely to clear an alert. First preserve it, inspect pending/quarantine
+state and reconcile its sequence range with `/v1/ingress/status` and
+`/v1/ingress/watermarks`.
+
+The durable recovery directory is
+`/home/justin/backups/superlily/20260718-c0d` (mode `0700`). The pre-rollout
+PostgreSQL backup is `superlily-pre-c0d-20260718T115705Z.dump` with SHA-256
+`685521e8b28d9903bd5d26a2307f7cae67d669e95f34b83925321308ef2ba872`.
+The old Lily package is archived at
+`lily-core-bridge-pre-c0d-20260718T115705Z.tar` with SHA-256
+`fc2eac8695c54d31c3c8d6975b1be472b355300b76c544adf72216c3296fad05`;
+the old Nekro package is
+`nekro-superlily-bridge-pre-c0d-20260718T115705Z.tar` with SHA-256
+`949938cb7f8c74e64e02bc8691602a6d7ff87662815bd699581a99831740e4b8`.
+All three files are mode `0600`.
+
+Prefer a bridge-only rollback: preserve both spool directories, restore bridge
+0.3.x, restart only the affected bot, and leave Core at 0013 because the old
+wire contract remains compatible. If Core itself must return to 0012, first
+stop new durable submissions or restore both old bridges, prove both spools
+have zero pending records, take another database backup, and only then run the
+0013 downgrade and rebuild Core from commit `4069d9d`. Downgrading destroys the
+C0-D tables, so it is not the first response to a bridge incident.
+
+OneBot reconnect backlog is not repaired by rewriting timestamps. Preserve
+adapter `occurred_at`, bridge `captured_at`, Core `received_at`, and receipt
+`committed_at` separately; use native message identity, idempotency key and
+spool sequence for replay/order diagnostics.
