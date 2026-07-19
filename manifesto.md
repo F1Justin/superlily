@@ -344,8 +344,10 @@ authority。完整 SQLite 为 395 项通过、4 项 PostgreSQL 专用场景跳�
 使用 Provider/attempt/fence 绑定的 reserve、流式 upload、Core 独立 PNG 检查、内容
 寻址 finalize 和 complete 精确引用，upload secret 与 lease secret 均不进入审计。
 SQLite 为 439 项通过、4 项跳过，PostgreSQL 17 为 443 项通过；默认 root/pepper 为空，
-没有新 descriptor、plan、自然语言 caller 或平台发送 authority。生产默认关闭签署后
-才进入文本模式 `wolfram.run`。
+没有新 descriptor、plan、自然语言 caller 或平台发送 authority。生产随后已完成迁移前
+备份、独立 PostgreSQL 17 恢复、`0016` head/no drift、四张新表全零和旧账本不变量
+签署；Core 仍为 `ledger_only`，Artifact 明确关闭，PostgreSQL 未重启。下一实现包现已
+进入文本模式 `wolfram.run`。
 
 9. 第四阶段：统一 Renderer
 
@@ -422,8 +424,8 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 3. M2 Provider quarantine、M3 Git-bound rollout plan、四种独立 stop 和首个单次 `admin_api` canary 已完成生产证明。继续保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚，禁止直接 SQL 代替。
 4. 当前 13 份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
 5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
-6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现与双数据库回归已经完成，下一步是默认关闭的生产迁移、备份恢复和零 authority 签署。
-7. 生产签署后迁移文本模式 `wolfram.run`；图像输出和 `latex.render` 必须先走独立的 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现、双数据库回归、生产备份/恢复、默认关闭迁移和零 authority 签署已经完成。
+7. 当前开始迁移文本模式 `wolfram.run`；图像输出和 `latex.render` 必须先走独立的 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 

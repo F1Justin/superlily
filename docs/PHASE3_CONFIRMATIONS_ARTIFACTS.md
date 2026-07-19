@@ -1,6 +1,6 @@
 # Phase 3：`0016` 确认与 Artifact 实施包
 
-状态：实现与双数据库回归已完成，等待默认关闭的生产迁移签署。
+状态：实现、双数据库回归和默认关闭的生产迁移签署均已完成。
 
 ## 目标与非目标
 
@@ -63,6 +63,30 @@ finalize 与删除共用 digest lock，数据库失败最多留下不可见 orph
   evidence 曾包含 lease secret、reference/cleanup 误刷新 finalized 时间，以及事件行
   存在时仍可能夹带修改其他状态字段。
 
+## 生产签署
+
+2026-07-19 09:36–09:45 CST，部署提交 `cd41026520b4ab88ab7c21bd13b0abd7cae2defd`
+前先创建 0600 PostgreSQL custom-format 备份。备份大小为 151,402,854 字节，
+SHA-256 为 `0ceaa7f4f9b7ca2e4538b9ec9e4d981d2f4a8223e6bcbc9faa8d8ca53bec0962`；
+它在无端口暴露、独立磁盘卷的 PostgreSQL 17 容器中零错误恢复出 `0015d`、
+387,909 条 source event、419,795 条 observation、8,186 条 receipt，以及原有
+3 个 descriptor、1 个 Provider、14 条 invocation、10 个 attempt 和 13 份暂停计划。
+恢复环境随后删除，主备份保留。
+
+Core 线性迁移到 `0016_confirm_artifacts (head)`，`alembic check` 无新操作。两张
+confirmation 当前/事件表和两张 artifact 当前/事件表均为零；4 个数据库保护触发器、
+2 个保护函数齐全。旧的 invocation、attempt、plan 和消耗计数保持 14、10、13、13，
+没有 active plan。Core 仍为 `ledger_only/global_stop=false`，lease 关闭，root/pepper
+均未配置，所以 `artifact_enabled=false`。Compose 只创建了 0700、属主 65532:65532
+的预备命名卷。PostgreSQL 未重启。
+
+新 Core/Provider 镜像分别为
+`sha256:4a3f9143887f27ed0afd9219cca10f649a1423efa689f67a549733ce0c6760e7` 和
+`sha256:7cfd227d244d3e0ef6b59918aacadddb7fbcaa2d2bddf2128766f1be7d860994`；
+两者 `pip check` 均通过。滚动后 Registry 仍只有 `status.inspect@1.0.2` active，
+Provider inventory/heartbeat 新鲜健康，Lily/Nekro spool 均 healthy、pending=0，
+collector watermark 差为 0。完整上线记录见 `docs/DEPLOYMENT.md` 第 16 节。
+
 默认配置仍让 `SUPERLILY_ARTIFACT_ROOT` 与
 `SUPERLILY_ARTIFACT_SECRET_PEPPER` 同时为空。Compose 只准备私有持久卷，不会启用
 artifact authority；没有 artifact descriptor，也没有新增 rollout plan。
@@ -77,6 +101,6 @@ artifact authority；没有 artifact descriptor，也没有新增 rollout plan�
 
 ## 完成后顺序
 
-`0016` 默认关闭生产签署后，先迁移文本模式 `wolfram.run`，验证现有持久 worker 的
+`0016` 默认关闭生产签署完成后，下一步迁移文本模式 `wolfram.run`，验证现有持久 worker 的
 恢复、超时、内存、输出和错误边界。Wolfram 图片继续关闭。随后用专门的一次性
 artifact plan 证明 PNG reserve/upload/finalize/cleanup，最后才开始 `latex.render`。

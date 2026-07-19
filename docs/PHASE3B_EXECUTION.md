@@ -224,5 +224,6 @@ SDK 提交 `2b31c6b` 将空轮询连接隔离后，SQLite 仍为 395 通过、4 
 17 为 399 通过。修正版 Provider 跨过完整 inventory 周期，2 次 inventory、11 次
 healthy heartbeat、零日志异常和零重启；C0-D 两条 spool 也都重新收敛为
 pending/quarantine/gap=0。由此 `status.inspect` 的故障/回滚与稳定窗口签署完成，
-后续 `0016_confirm_artifacts` 已完成实现与双数据库全量回归；生产默认关闭签署后，
-下一实现包转为文本模式 `wolfram.run`。
+后续 `0016_confirm_artifacts` 已完成实现、双数据库全量回归、生产备份/恢复、迁移和
+默认关闭的零 authority 签署。下一实现包转为文本模式
+`wolfram.run`。

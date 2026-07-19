@@ -448,6 +448,8 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
 - [x] Upload secrets are one-use/provider-attempt-fence-bound. Core enforces
   expiry, count, bytes, MIME/hash/dimensions and quarantine before atomic
   finalize; late/failed/orphan cleanup is tested.
+- [x] `0016` 已完成生产备份与独立 PostgreSQL 17 恢复、head/drift、默认关闭开关、
+  四张空表、数据库 guard、旧账本不变量、Provider/Registry 与 C0-D 连续性签署。
 - [x] `status.inspect` passes registry with execution off, then ledger-only,
   exact canary, fault/rollback, stable evidence and old-command compatibility.
 - [ ] Text-only `wolfram.run` passes worker recovery and resource/error gates;

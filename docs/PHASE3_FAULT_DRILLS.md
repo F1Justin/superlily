@@ -9,8 +9,8 @@ Core、Provider SDK、独立 Provider、PostgreSQL 和控制面的执行协议�
 截至本批实现开始时，Provider SDK 和真正的 `status.inspect@1.0.2` 已经完成，并已
 通过一次无平台发送的生产成功 canary；“下一步开始 Provider SDK/status.inspect”是
 历史计划，不再是当前状态。本文件后半同时记录异常路径和稳定窗口现已完成的生产
-证据；`0016_confirm_artifacts` 现已完成实现与双数据库回归，当前等待默认关闭的生产
-迁移签署。
+证据；`0016_confirm_artifacts` 现已完成实现、双数据库回归和默认关闭的生产迁移
+签署。
 
 ## 权限边界
 
@@ -202,6 +202,6 @@ lease 轮询显式关闭连接，真实 start/heartbeat/complete 仍复用连接
 ## 后续顺序
 
 故障矩阵和 `status.inspect` 稳定窗口已签署，但仍不扩大模型 authority。
-`0016_confirm_artifacts` 已完成本地签署，下一步是默认关闭的生产迁移；随后是文本模式
+`0016_confirm_artifacts` 已完成默认关闭的生产签署，下一步是文本模式
 `wolfram.run`，图像输出和 `latex.render` 必须等待内容寻址 artifact 的
 reserve/upload/finalize/cleanup 边界。自然语言工具选择仍在 Phase 5。

@@ -66,8 +66,9 @@ drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active 
 窗口现也已签署。`0016_confirm_artifacts` 随后完成精确请求 confirmation、批准时
 消费 rollout、内容寻址 artifact、Provider reserve/upload/finalize SDK、保留期/
 orphan 清理和字段级数据库 guard。SQLite 全量为 439 通过、4 跳过，PostgreSQL 17
-全量为 443 通过；当前等待默认关闭的生产迁移签署。它仍不扩大 conversation、caller
-或自然语言 authority，工具循环仍属 Phase 5。签署后下一实现包是文本模式
+全量为 443 通过；生产已经备份并在独立 PostgreSQL 17 磁盘卷中恢复验证，随后默认
+关闭迁移到 `0016`，新表全零、旧调用/计划计数不变且无 schema drift。它仍不扩大
+conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。下一实现包是文本模式
 `wolfram.run`，图像输出继续等待单独 artifact canary。
 
 ## Sequencing rules

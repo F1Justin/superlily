@@ -11,7 +11,8 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 发送的生产 canary、八项异常恢复故障矩阵和修正后的稳定窗口均已完成。13 份一次性
 计划全部暂停并耗尽，Core 恢复 `ledger_only`。`0016_confirm_artifacts` 的精确确认、
 内容寻址 artifact、Provider SDK、清理器与数据库防篡改已经完成双数据库全量回归，
-当前等待默认关闭的生产迁移签署；自然语言、conversation、caller 和工具集合均未扩大。
+并已按默认关闭状态完成生产备份/恢复、迁移和零 authority 签署；自然语言、conversation、
+caller 和工具集合均未扩大。下一实现包已经转为文本模式 `wolfram.run`。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。

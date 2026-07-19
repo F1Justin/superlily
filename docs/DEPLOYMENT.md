@@ -724,3 +724,66 @@ operator/Host/Origin/pepper，控制登录仍为带安全头 503。Lily/Nekro �
 均为 healthy/reconciled、pending=0、quarantine=0、gap=null。命令 Registry 快照
 fresh，18 条静态规则全部加载、stale snapshot=0；旧 `/wf`、`/tex` 等命令实现未被
 切换或删除。
+
+## 16. `0016` 确认与 Artifact 默认关闭上线
+
+2026-07-19 09:36–09:45 CST，以提交
+`cd41026520b4ab88ab7c21bd13b0abd7cae2defd` 完成确认挑战与内容寻址 Artifact
+基础设施的默认关闭生产签署。本次不导入新 descriptor/plan，不启用自然语言 caller，
+不执行工具，也不发送平台消息。
+
+迁移前备份为：
+
+- 路径：
+  `/home/justin/backups/superlily/20260719-phase3-confirm-artifacts/superlily-pre-confirm-artifacts-cd41026.dump`；
+- 大小：151,402,854 字节；目录权限 0700、文件权限 0600；
+- SHA-256：`0ceaa7f4f9b7ca2e4538b9ec9e4d981d2f4a8223e6bcbc9faa8d8ca53bec0962`。
+
+`pg_restore --list` 通过后，备份在无端口暴露、独立磁盘卷的 PostgreSQL 17 容器中
+零错误恢复。恢复库为 `0015d_rollout_plans`，包含 387,909 条 source event、419,795
+条 observation、8,186 条 receipt、3 个 descriptor、1 个 Provider、14 条 invocation、
+10 个 attempt 和 13 份 plan；13 份 plan 全部 paused、总消费 13。confirmation 与
+artifact 表当时不存在，证明这是迁移前回滚点。临时恢复容器、容器内副本和临时卷已
+删除，主机备份保留。
+
+新镜像与 Compose 配置身份如下：
+
+- Core 镜像：
+  `sha256:4a3f9143887f27ed0afd9219cca10f649a1423efa689f67a549733ce0c6760e7`，
+  config hash `3275f443aaec0939f772de7551aebbc11a54d70dd1edf739cc948cd8a1da5dcd`；
+- status Provider 镜像：
+  `sha256:7cfd227d244d3e0ef6b59918aacadddb7fbcaa2d2bddf2128766f1be7d860994`，
+  config hash `ea06bcdd92005d0eb2d284c87383c031fb1cccfc83631736f2b9ddc1d9b2b05f`；
+- 两个镜像的 `pip check` 均为 `No broken requirements found`。
+
+只滚动 Core 和 status Provider。Core 启动日志显示线性执行
+`0015d_rollout_plans -> 0016_confirm_artifacts`，随后健康；PostgreSQL 启动时间仍为
+`2026-07-18T23:46:06.121900322Z`，restart count=0，证明数据库未重启。最终
+`alembic current` 为 `0016_confirm_artifacts (head)`，`alembic check` 报告无新操作。
+
+迁移后的数据库签署为：
+
+- `tool_confirmations`、`tool_confirmation_events`、`tool_artifacts`、
+  `tool_artifact_events` 均为 0；
+- confirmation/artifact 当前行保护触发器 2 个、事件禁止变更触发器 2 个、保护函数
+  2 个；
+- 原有 invocation=14、attempt=10、plan=13、active plan=0、paused plan=13、
+  consumed invocation=13，均与迁移前一致。
+
+运行态仍为 `ledger_only/global_stop=false`，`active_rollout_plan=null`、
+`leases_enabled=false`。`SUPERLILY_ARTIFACT_ROOT` 和
+`SUPERLILY_ARTIFACT_SECRET_PEPPER` 均未配置，所以 `artifact_enabled=false`；
+Compose 只创建预备卷 `deploy_superlily_artifacts`，容器内挂载点属主为 65532:65532、
+权限 0700。Registry 仍有 3 版 `status.inspect`，只有 `1.0.2` active/eligible；Provider
+为 active，inventory 与 heartbeat 新鲜健康。
+
+C0-D 在滚动期间继续收敛：签署时 source event=387,994、observation=419,881、
+platform action=412、receipt=8,272；两个 collector watermark 的最大
+`seen-contiguous` 差为 0。Lily 与 Nekro 都 online，两个 SQLite FULL spool 均
+healthy、pending=0、quarantine=0、last_error=null；命令 Registry 快照新鲜。Core、
+Provider 均 restart count=0，启动/运行日志无 warning/error。
+
+当前首选回滚仍是保持 `ledger_only`、不创建新 plan、让 Artifact 配置继续为空；这不
+需要回退 schema。因为 `0016` 四张新表仍为空，若确认应用版本也必须回退，可在先做
+新的生产备份后切回旧 Core，再降级到 `0015d`。不得在表产生确认或 Artifact 证据后
+删除账本来冒充回滚。
