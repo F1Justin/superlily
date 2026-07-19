@@ -14,8 +14,11 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 并已按默认关闭状态完成生产备份/恢复、迁移和零 authority 签署。文本模式
 `wolfram.run@1.0.0` 的 descriptor、独立 Provider、既有 Wolfram 15.0 私有 socket
 边界和中文 ADR 已实现，SQLite 455 项通过、4 项跳过，PostgreSQL 17 为 459 项通过，
-受限容器中的真实 `2+2` 探针返回 `4`；生产 authority 导入和精确 canary 仍待签署。
-自然语言、conversation、平台发送和图片输出权限均未扩大。
+受限容器中的真实 `2+2` 探针返回 `4`。生产随后完成 reviewed 空转、descriptor
+激活和最多一次的 Git-bound canary；唯一 attempt/fence 返回 `4`、artifact=0，旧
+`/wf` data source 串行对比同样返回 `4`。计划已暂停并耗尽，Core 恢复
+`ledger_only`、控制面关闭；完整 inventory 稳定周期也已通过。自然语言、conversation、
+平台发送和图片输出权限均未扩大。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。

@@ -787,3 +787,88 @@ Provider 均 restart count=0，启动/运行日志无 warning/error。
 需要回退 schema。因为 `0016` 四张新表仍为空，若确认应用版本也必须回退，可在先做
 新的生产备份后切回旧 Core，再降级到 `0015d`。不得在表产生确认或 Artifact 证据后
 删除账本来冒充回滚。
+
+## 17. 文本 Wolfram Provider 与首次生产 canary
+
+2026-07-19 10:14–10:50 CST，提交
+`d695213ae4193ebb45e48e44221925135340ad16` 中的
+`wolfram.run@1.0.0`、独立 Provider、合同、测试和 ADR 完成发布；单次 canary plan
+来自后续完整提交 `95ad5c56dd669be40f0905341fe9a725f163a7c7`。本包没有数据库
+迁移，不启用 artifact、图片、自然语言 caller 或平台发送。
+
+发布前证据为 SQLite 455 通过、4 跳过，PostgreSQL 17 为 459 通过；Core 与
+Wolfram Provider 镜像 `pip check` 均为 `No broken requirements found`。最终镜像：
+
+- Core：`sha256:cea5d1496a3828ec4ef9afc96ef043fdaaf10754289c60f1d26318cd26a25efc`；
+- Wolfram Provider：
+  `sha256:77917f9b842924055f42216ab6ffdda6ee5a9d94f4b1313755d99dbee21578b2`；
+- 既有 worker 保持
+  `sha256:9bc73c09d6728be9cc13cea92760dd4b5b6066d6acd5480d8e6b1af11463bb77`，
+  Wolfram 15.0.0，未重建、未重启。
+
+Provider 容器以 uid/gid 1000、只读 rootfs、`cap_drop=ALL`、
+`no-new-privileges` 和只读 socket mount 运行。worker identity 为
+`edaed08c24d55e213f2d005c7a758c46f3ec76641ae2389e74bf0ce13e2ce030`；
+implementation hash 为
+`32996c572eb8f364463666e0126a35b77efa21ae03fe29d710bfa7377645a241`；
+descriptor hash 为
+`aa6e9b1c930406bab11500de6c7653219aa9e8b831ee5fc7d08b1ab3d239ddaa`。
+无网络、只读 rootfs、空 capability 的最终镜像探针返回 `2+2 -> 4`。
+
+上线先为 `provider-wolfram-primary` 生成独立随机 credential，并原子加入 Core token
+map；没有复用 status、ingest、admin 或 bot token，也没有在输出、Git 或文档中记录
+明文。Core 先以 `ledger_only` 重建，新 Provider 注册为 `active/rv1`，descriptor 从
+完整 Git commit 导入为 `reviewed/rv1`。Provider 上报的 inventory hash 为
+`2bb912a8ebe92aa70c11d6843fb89c85fc1c2497d60380e9c939ab829217b775`，
+四项 required budget 均为 hard，heartbeat 健康，worker uid=1000；此时 effective
+reason 只有 `inactive_descriptor`，active plan/attempt 均为 0。
+
+临时启用 localhost-only 控制面时出现两项 fail-closed 运维发现：
+
+1. scrypt verifier 含 `$`，放入 Compose `.env` 必须写成 `$$`，否则 Compose 会把
+   哈希片段当环境变量展开；
+2. `SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON` 只接受精确 HTTPS origin，不能配置本机
+   HTTP origin。
+
+两次错误都在 Core 加载 Settings 时拒绝启动，尚未接受 login、preview、mutation 或
+tool invocation；PostgreSQL 和 worker 未重启，Provider 只留下 02:32–02:34 UTC 的
+预期断连 warning。修正后 Core 恢复健康。后续所有控制请求使用
+`control.superlily.local` 精确 Host、`https://control.superlily.local` 精确 Origin、
+短会话、CSRF、重新认证、server preview、CAS、理由和幂等键。
+
+reviewer 将 descriptor 从 `reviewed/rv1` 激活为 `active/rv2`。随后导入的
+`wolfram-text-success-20260719@1.0.0` plan hash 为
+`3daf4eee0fb0be8915f85e43b70a40d31f7f65289e3aae6310c210ee01631c75`，
+精确绑定 `admin_api + qq:group:1080353942 + wolfram.run@1.0.0 +
+provider-wolfram-primary + descriptor rv2 + Provider rv1`，最多一次。Core 先在无
+active plan 时切到 `canary`，确认 attempt 总数仍为 10，再由 operator 把计划激活。
+
+唯一 canary invocation 为 `27614162-8c70-42e3-af5a-db3f72a2a55e`：
+
+- 只提交精确表达式 `2+2`，状态依次为
+  `proposed -> queued -> leased -> running -> succeeded`；
+- attempt `61eb40af-fb26-4c11-9ff0-7d12a1ae0829`，attempt number=1、fence=1，
+  实现与 inventory hash 精确匹配；
+- 结果为 `{"kind":"text","text":"4"}`，wall=8 ms、input=20 bytes、
+  output=26 bytes、artifact=0；
+- attempt event 只有接受的 `lease/start/complete`，没有重试、取消、不确定完成或
+  非法输出；`tool_confirmations` 与 `tool_artifacts` 仍为 0；
+- 旧 `/wf` 的现有 `data_source.evaluate` 随后在不经过 QQ 发送的串行对比中同样返回
+  文本 `4`，没有图片或音频。
+
+canary 后 plan 立即由 operator 暂停为 `paused/rv3`，counter 为 1/1；Core 恢复
+`ledger_only`，active plan/attempt 均为 0。临时 reviewer 的 1 个会话和 operator 的
+2 个会话全部 revoked；operator/Host/Origin/pepper 已清空，0600 临时明文 credential
+文件已销毁且不可恢复。descriptor 保持 `active/rv2`、Provider 保持 `active/rv1`，
+这不构成执行 authority；重新执行仍需要新的完整 Git-bound plan。
+
+最终 `0016_confirm_artifacts (head)` 且 `alembic check` 无新操作；PostgreSQL 启动
+时间仍为 `2026-07-18T23:46:06.121900322Z`、restart=0。C0-D 最终 source event、
+observation、platform action、receipt 分别为 388,480、420,457、435、8,848，两个
+watermark 的 `seen-contiguous` 差为 0。
+
+02:44:44–02:49:44 UTC 的稳定窗口跨过完整 300 秒 inventory 周期：两份 inventory
+hash 均为 `2bb912a8ebe92aa70c11d6843fb89c85fc1c2497d60380e9c939ab829217b775`，
+期间 10 次 heartbeat 全部 healthy 且只引用该 hash；Wolfram Provider 日志零新增，
+Core、Provider、worker 与 PostgreSQL restart count 均为 0。至此文本
+`wolfram.run@1.0.0` 生产迁移完成签署。

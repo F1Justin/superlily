@@ -452,13 +452,18 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   四张空表、数据库 guard、旧账本不变量、Provider/Registry 与 C0-D 连续性签署。
 - [x] `status.inspect` passes registry with execution off, then ledger-only,
   exact canary, fault/rollback, stable evidence and old-command compatibility.
-- [ ] Text-only `wolfram.run` passes worker recovery and resource/error gates;
+- [x] Text-only `wolfram.run` passes worker recovery and resource/error gates;
   image output waits for finalized artifacts.
   发布前实现已完成：descriptor/provider authority、私有 socket 权限、文本/非文本、
   畸形/超长响应、UTF-8 字节、真实超时、跨初始 lease heartbeat 和取消不发假 ACK
   均有回归；SQLite 为 455 通过、4 跳过，PostgreSQL 17 为 459 通过。镜像
-  `pip check` 与受限容器真实 `2+2 -> 4` 探针通过。此项仍等待生产 reviewed 导入、
-  零 lease 空转、单次 canary、rollback 和稳定窗口后勾选。
+  `pip check` 与受限容器真实 `2+2 -> 4` 探针通过。生产随后从完整 commit 导入，
+  经 reviewer 激活 descriptor、operator 激活最多一次的 Git-bound plan；唯一 canary
+  以一个 attempt/fence 返回文本 `4`，wall=8 ms、artifact=0。旧 `/wf` data source
+  串行对比同样返回 `4`；plan 随即暂停并耗尽，Core 恢复 `ledger_only`，控制面关闭。
+  随后跨过完整 300 秒 inventory 周期，两份 inventory hash 一致、10 次 heartbeat
+  全部 healthy、Provider 零新日志且四个相关容器零重启。精确证据见
+  `DEPLOYMENT.md` 第 17 节。
 - [ ] `latex.render` accepts only finalized content-addressed artifacts and
   passes malicious TeX, timeout, MIME/hash/size, cleanup and renderer-boundary
   tests.

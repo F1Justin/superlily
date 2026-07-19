@@ -95,3 +95,17 @@ implementation hash 只要 `main.py`、`runtime.py` 或 worker identity 改变�
 完成本包后，Phase 3 尚剩 `latex.render` 和至少一个真实 artifact canary。Wolfram 图片、
 TeX/Markdown 渲染成图、夜间主题、进度消息和模型自行选工具分别属于 artifact、Phase 4
 和 Phase 5，不因文本 canary 自动开放。
+
+## 2026-07-19 生产签署
+
+本包已按上述顺序完成。descriptor 为 `active/rv2`、Provider 为 `active/rv1`；唯一
+Git-bound plan 精确消费 1/1 后停在 `paused/rv3`。invocation
+`27614162-8c70-42e3-af5a-db3f72a2a55e` 只用一个 attempt/fence 返回文本 `4`，
+wall=8 ms、input=20 bytes、output=26 bytes、artifact=0；旧 `/wf` data source 串行
+对比也返回 `4`，没有 QQ 发送。
+
+Core 已恢复 `ledger_only`，active plan/attempt 为 0，临时控制面关闭，明文临时凭据
+销毁；PostgreSQL 与既有 worker 均未重启。发布中发现的 Compose scrypt `$ -> $$`
+转义和强制 HTTPS Origin 已写入 `CONTROL_PLANE.md`。完整镜像、提交、账本、回滚与
+C0-D 连续性证据见 `DEPLOYMENT.md` 第 17 节。最后 300 秒窗口收到两份相同 hash 的
+inventory 与 10 次 healthy heartbeat，Provider 零新日志、相关容器零重启。

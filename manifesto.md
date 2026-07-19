@@ -354,8 +354,13 @@ SQLite 为 439 项通过、4 项跳过，PostgreSQL 17 为 443 项通过；默�
 有界文本。worker image/source/version 与 cgroup/network/capability 等隔离配置共同进入
 部署 identity，Provider 源码再进入 implementation hash；旧协议不能证明取消时，账本
 不会伪造 `cancelled`。SQLite 全量为 455 通过、4 项跳过，PostgreSQL 17 为 459 通过，
-受限镜像真实探针返回 `2+2 -> 4`。生产仍是 `ledger_only`，新 authority 尚未导入或
-激活，旧 `/wf` 保持回滚；下一门是 reviewed 空转、精确单次 canary 和稳定窗口。
+受限镜像真实探针返回 `2+2 -> 4`。生产随后完成独立 credential、reviewed 空转、
+descriptor reviewer 激活和最多一次的 Git-bound canary；唯一 attempt/fence 返回
+文本 `4`、wall=8 ms、artifact=0，旧 `/wf` data source 串行对比同样返回 `4`。
+计划已暂停并耗尽，Core 恢复 `ledger_only`、临时控制面关闭，旧 `/wf` 继续保留。
+完整 300 秒 inventory 周期也以相同 hash、10 次 healthy heartbeat、零新日志和零重启
+通过。文本 Wolfram 因而完成迁移签署；下一主要实现包转为 `latex.render` 与真实
+artifact canary。
 
 9. 第四阶段：统一 Renderer
 
@@ -433,7 +438,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 4. 当前 13 份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
 5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
 6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现、双数据库回归、生产备份/恢复、默认关闭迁移和零 authority 签署已经完成。
-7. 文本模式 `wolfram.run@1.0.0` 已完成实现、双数据库全量和受限镜像真实探针；当前只剩生产 reviewed 空转、精确单次 canary 与稳定窗口。图像输出和 `latex.render` 必须先走独立的 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+7. 文本模式 `wolfram.run@1.0.0` 已完成实现、双数据库全量、受限镜像探针、生产 reviewed 空转、精确单次 canary 与旧路径串行对比；计划已暂停并耗尽，Core 恢复 `ledger_only`。下一步是 `latex.render` 与独立 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 

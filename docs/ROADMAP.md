@@ -75,9 +75,15 @@ conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。
 不产生 artifact、不发送平台消息。worker image/source/version/隔离配置进入部署身份，
 取消无法被旧协议证明时保守收敛为 `unknown_completion`。SQLite 全量为 455 通过、
 4 跳过，PostgreSQL 17 全量为 459 通过；受限镜像的真实 `2+2` 探针返回 `4`。
-生产仍为 `ledger_only`，新 descriptor/Provider 尚未导入或激活；下一门是 reviewed
-导入、零 lease 空转、精确单次 `admin_api` canary 和稳定窗口。图像输出继续等待单独
-artifact canary。详细边界与检查表见 `PHASE3_WOLFRAM_TEXT.md` 和 ADR 0013。
+生产随后从完整 Git commit 注册 Provider、导入并通过 reviewer 激活 descriptor；
+一份最多一次的 plan 经 operator 激活后，唯一 `admin_api` canary 用一个 attempt/fence
+返回 `4`、wall=8 ms、artifact=0。旧 `/wf` data source 串行对比同样返回 `4`。
+计划已暂停并耗尽，Core 恢复 `ledger_only`、active plan/attempt 为 0、临时控制面关闭。
+随后两份 300 秒间隔的 inventory hash 一致，10 次 heartbeat 全部 healthy，Provider
+零新日志、相关容器零重启。文本 `wolfram.run` 因而完成迁移签署；图像输出继续等待
+单独 artifact canary，Phase 3
+下一主要实现包是 `latex.render`。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、
+`DEPLOYMENT.md` 第 17 节和 ADR 0013。
 
 ## Sequencing rules
 

@@ -99,3 +99,15 @@ not history deletion.
 
 Panel availability is never a runtime dependency for event ingestion, claims,
 tool leases, emergency CLI stop, or bot fail-open behavior.
+
+## Compose 运维注意
+
+生产临时启用控制面时，scrypt verifier 中的每个 `$` 在 Compose `.env` 里必须写成
+`$$`，否则 Compose 会尝试按环境变量展开并破坏 verifier。应用进程最终收到的仍应是
+单个 `$`。任何配置脚本都必须在容器内用 `Settings.from_env()` 复核角色数量和格式，
+但不得输出 verifier。
+
+`SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON` 只接受精确 HTTPS origin；本机回环 HTTP
+也不能作为 origin 配置。无浏览器的本机操作可以连接回环端口，同时显式提交经审阅的
+HTTPS Origin 与精确 Host，但不能因此放宽服务端 Origin/Host/CSRF/JSON 校验。错误
+verifier 或非 HTTPS origin 应让 Core 启动失败，而不是静默关闭校验。
