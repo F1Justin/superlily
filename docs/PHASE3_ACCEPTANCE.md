@@ -393,7 +393,26 @@ succeeded attempt。descriptor 为 `active/rv4`，Provider 为 `active/rv3`；Co
 `ledger_only/global_stop=false`，operator/Host/Origin/pepper 均为空，控制面路由返回
 带安全头的 503。Core 容器内不存在 Provider token，最终空 lease 只能从
 Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。由此签署“四个独立 stop + 首次
-无平台发送 canary”；不签署剩余中断/恢复故障矩阵或 Phase 3 整体退出。
+无平台发送 canary”；该时点不签署剩余中断/恢复故障矩阵或 Phase 3 整体退出。
+
+### 第二批故障矩阵与 `status.inspect` 稳定窗口
+
+2026-07-19 07:45–07:46 CST，提交 `7f509e9` 的八份单调用计划已全部生产执行并
+暂停。safe retry 使用 fence 1/2；非法输出、快慢时钟、取消确认、取消竞态、取消未
+确认、Core 中断和 PostgreSQL 中断均得到正式矩阵规定的终态。两条
+`unknown_completion` 作为不确定性事实永久保留，旧 fence/重复完成的 3 条拒绝事件
+也未清理。最终无 active plan/invocation/attempt，演练窗口 response 零新增。
+
+演练前 150,886,660 字节备份的 SHA-256 为
+`8dc4f145066a58bf7a633501934814ff15a59cb9e74642d94e8836c4d4bb20ab`，已在独立
+PostgreSQL 17 磁盘卷中完整恢复。八份 plan 均为 `paused/rv3`、1/1；两个临时会话
+均 revoked，16 份 preview、16 笔 mutation、24 条 plan lifecycle event 留存。
+
+稳定窗口又发现并修正空 lease 的 5 秒 keep-alive 竞态。提交 `2b31c6b` 经 SQLite
+395 通过、4 跳过和 PostgreSQL 17 的 399 通过后只重建 Provider；新镜像跨过完整
+inventory 周期，收到 2 个 inventory 和 11 次 healthy heartbeat，零日志异常、零
+重启。最终 C0-D 两条 spool 无 pending/quarantine/gap，旧命令 Registry fresh，
+Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.md` 第 15 节。
 
 - [x] `off`、`ledger_only` 与 Git-bound exact `canary` 权限上限已测试；canary
   精确绑定 tool/version/hash、conversation、caller、provider、资源版本、时间窗口和
@@ -407,14 +426,14 @@ Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。�
   fences, provider/attempt-secret binding and DB-time authority.
 - [x] Duplicate, replayed, late and stale-fence start/heartbeat/complete/fail are
   rejected without mutating the current invocation and remain auditable.
-- [ ] Restart, reaper crash, lease expiry, cancellation race, provider/Core
+- [x] Restart, reaper crash, lease expiry, cancellation race, provider/Core
   outage, clock skew, invalid output, safe retry, unknown completion and queue
   starvation have deterministic tested outcomes.
 - [x] 第二批协议回归明确覆盖第二 fence 成功、旧 worker/重复完成拒绝、非法输出、
   Provider 快慢时钟、取消确认、完成竞态和取消未确认；可复用驱动器输出不含
   credential、lease secret 或请求/结果正文。完整 SQLite 为 395 通过、4 跳过，
   PostgreSQL 17.10 为 399 通过。
-- [ ] 八份单调用故障 plan 完成生产导入、激活/暂停与真实 Core/PostgreSQL 中断；
+- [x] 八份单调用故障 plan 完成生产导入、激活/暂停与真实 Core/PostgreSQL 中断；
   两条预期 `unknown_completion` 均有解释，无 active attempt/plan 和平台发送。
 - [ ] Input/output, rate, concurrency, wall-time, CPU, memory and byte budgets
   are enforced or make the provider ineligible; best-effort is never labeled
@@ -429,7 +448,7 @@ Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。�
 - [ ] Upload secrets are one-use/provider-attempt-fence-bound. Core enforces
   expiry, count, bytes, MIME/hash/dimensions and quarantine before atomic
   finalize; late/failed/orphan cleanup is tested.
-- [ ] `status.inspect` passes registry with execution off, then ledger-only,
+- [x] `status.inspect` passes registry with execution off, then ledger-only,
   exact canary, fault/rollback, stable evidence and old-command compatibility.
 - [ ] Text-only `wolfram.run` passes worker recovery and resource/error gates;
   image output waits for finalized artifacts.
@@ -456,7 +475,7 @@ Provider 容器以其独立凭据发起并返回 204。Lily/Nekro 仍在线。�
   首批生产 authority 已精确消费并暂停，当前无 active plan/lease。
 - [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
   Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
-- [ ] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、
+- [x] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、
   Provider/Core/数据库故障和回滚演练。
 
 ## Phase 3 exit

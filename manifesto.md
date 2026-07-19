@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。Phase 3b 的 invocation/attempt 账本、Provider 拉取协议、硬边界 `status.inspect@1.0.2`、M0–M3 控制面和 Git-bound rollout plan 已完成双数据库回归与生产部署。首批五份精确计划已从完整 Git commit 导入、每份只允许 1 次 `admin_api + qq:group:1080353942 + status.inspect@1.0.2 + provider-status-primary` 调用；生产已直接证明 global stop、descriptor suspension、Provider quarantine 和 rollout plan pause 均在 deadline 前返回空 lease 且零 attempt，成功计划完成了一次无平台发送的只读 canary。所有计划随后暂停，生产已恢复 `ledger_only`、无 active plan/lease；`status.inspect@1.0.2` 保留为 `active/rv4`，Provider 保留为 `active/rv3`。自然语言调用权、`enforce` 和平台发送能力仍未开放。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。Phase 3b 的 invocation/attempt 账本、Provider 拉取协议、硬边界 `status.inspect@1.0.2`、M0–M3 控制面和 Git-bound rollout plan 已完成双数据库回归与生产部署。13 份精确计划每份只允许 1 次 `admin_api + qq:group:1080353942 + status.inspect@1.0.2 + provider-status-primary` 调用；生产已经证明四个独立 stop、成功 canary、safe retry、旧 fence、非法输出、时钟偏移、三种取消路径以及 Core/PostgreSQL 中断。所有计划均暂停并耗尽，生产恢复 `ledger_only`、无 active plan/lease；`status.inspect@1.0.2` 的修正版 Provider 已跨过稳定窗口。自然语言调用权、`enforce` 和平台发送能力仍未开放。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -326,16 +326,17 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 M2 Provider quarantine 随后完成实现与双数据库全量回归。security_admin 通过持久 preview、新鲜再认证、CAS 和幂等证据执行 `active <-> quarantined`；恢复必须重新验证 credential、inventory、heartbeat、协议和 implementation hash。lease 与 quarantine 共用 Provider 行锁，因此接受 quarantine 后不能产生新 lease；quarantined Provider 仍能上报恢复证据。SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计 343 项通过。同期 canary 前审查把 `status.inspect` 升为不可变 `1.0.2`：创建 worker 时不继承父环境，传输有界，并将无裕量的 256 MiB 申报修正为 320 MiB。M2 与 `1.0.2` 已于 2026-07-19 默认禁用部署：生产为 `0015c` head/no drift，三版 descriptor 均为 reviewed，Provider 为 active/rv1 且精确报告 `1.0.2`，控制面五表和 attempt/event 均为零。
 
-M3 随后用 `0015d_rollout_plans` 和 ADR 0011 关闭环境 scope 旁路。首包只允许 Git-reviewed、最长 24 小时、带调用上限且回退到 `ledger_only` 的精确 canary plan，明确拒绝 `enforce`；operator 可激活/暂停，break-glass 只能暂停。调用创建与 lease 都锁定并重验 plan，非匹配和漂移安全降级；计划暂停接受后不能新增 lease。SQLite 最终全量 370 项通过、4 项 PostgreSQL 专用测试跳过，PostgreSQL 17 全量 374 项通过。M3 已部署到生产 `0015d`，前四份 Git-reviewed 单次计划于 06:25–06:26 CST 完成三个独立停止证明和一次只读成功 canary，第五份于 06:43 直接证明 rollout plan pause。成功路径为 `propose -> queue -> lease -> start -> complete_success`，只有一个 attempt/fence；四条受停止保护的队列均在零 attempt 下按既有契约终止为 `timed_out`。当前五份计划均为 `paused/rv3`且无 active plan/lease，Core 已回到 `ledger_only`。
+M3 随后用 `0015d_rollout_plans` 和 ADR 0011 关闭环境 scope 旁路。首包只允许 Git-reviewed、最长 24 小时、带调用上限且回退到 `ledger_only` 的精确 canary plan，明确拒绝 `enforce`；operator 可激活/暂停，break-glass 只能暂停。调用创建与 lease 都锁定并重验 plan，非匹配和漂移安全降级；计划暂停接受后不能新增 lease。SQLite 最终全量 370 项通过、4 项 PostgreSQL 专用测试跳过，PostgreSQL 17 全量 374 项通过。M3 已部署到生产 `0015d`，前四份 Git-reviewed 单次计划于 06:25–06:26 CST 完成三个独立停止证明和一次只读成功 canary，第五份于 06:43 直接证明 rollout plan pause。成功路径为 `propose -> queue -> lease -> start -> complete_success`，只有一个 attempt/fence；四条受停止保护的队列均在零 attempt 下按既有契约终止为 `timed_out`。当时首批五份计划均为 `paused/rv3` 且无 active plan/lease，Core 已回到 `ledger_only`。
 
 同日开始的第二批故障矩阵不再重复建设 Provider SDK 或 status 工具，而是补齐异常
 收敛：短 lease safe retry 与单调 fence、旧 worker/重复完成拒绝、非法输出、快慢
 Provider 时钟、取消确认、取消/完成竞态、取消未确认，以及 Core/PostgreSQL 中断。
-这批实现已有正式、脱敏的单场景驱动器和八份 Git-bound 单调用计划；每次仍只允许
+这批实现使用正式、脱敏的单场景驱动器和八份 Git-bound 单调用计划；每次仍只允许
 `admin_api + qq:group:1080353942 + status.inspect@1.0.2`，不发送 QQ，不扩大模型
 authority。完整 SQLite 为 395 项通过、4 项 PostgreSQL 专用场景跳过；PostgreSQL
-17.10 为 399 项全部通过。生产演练与稳定窗口完成前，Phase 3b 仍不签署整体退出。
-详细边界见 `docs/PHASE3_FAULT_DRILLS.md`。
+17.10 为 399 项全部通过。生产 8/8 场景已得到预期终态；空 lease 的 keep-alive
+边界噪声也已修正并跨过完整 inventory 稳定周期。下一包转为
+`0016_tool_confirmations_artifacts`，详细证据见 `docs/PHASE3_FAULT_DRILLS.md`。
 
 9. 第四阶段：统一 Renderer
 
@@ -405,15 +406,15 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经从“用最小 authority 证明首次执行”推进到“完成恢复故障矩阵，再扩展工具”：
+当前近期优先级已经从“完成恢复故障矩阵”推进到“补齐确认与 artifact 账本，再迁移计算工具”：
 
 1. `0015_tool_attempts`、`status.inspect@1.0.2` 的 `ledger_only` 与 M0 默认禁用生产签署已完成，继续观察零 attempt、inventory/heartbeat 与旧命令不变。
 2. M1 descriptor lifecycle 已完成实现、双数据库回归、生产备份/恢复和默认禁用迁移；继续观察零 mutation、零 attempt 和无 drift。
 3. M2 Provider quarantine、M3 Git-bound rollout plan、四种独立 stop 和首个单次 `admin_api` canary 已完成生产证明。继续保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚，禁止直接 SQL 代替。
-4. 当前五份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
-5. 首个无平台发送 canary 已记录真实 lease/start/complete、implementation hash 和资源使用；接下来不扩大会话或 caller，而是先完成恢复故障矩阵。
-6. 过期 lease、重启、取消竞态、旧 fence、重复完成、Provider/Core/PostgreSQL 中断和 `unknown_completion` 已拆成八份单调用计划并有正式驱动器；完成生产故障演练后，再开始 `status.inspect` 稳定窗口。
-7. `status.inspect` 签署后，才继续 `0016_tool_confirmations_artifacts`、文本模式 `wolfram.run` 和 `latex.render`；通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+4. 当前 13 份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
+5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
+6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；现在开始 `0016_tool_confirmations_artifacts`，仍不扩大会话、caller 或模型 authority。
+7. `0016` 通过后才迁移文本模式 `wolfram.run`；图像输出和 `latex.render` 必须走 finalized artifact。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 

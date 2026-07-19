@@ -8,7 +8,8 @@ Core、Provider SDK、独立 Provider、PostgreSQL 和控制面的执行协议�
 
 截至本批实现开始时，Provider SDK 和真正的 `status.inspect@1.0.2` 已经完成，并已
 通过一次无平台发送的生产成功 canary；“下一步开始 Provider SDK/status.inspect”是
-历史计划，不再是当前状态。当前缺口是异常路径的真实收敛证据和随后的稳定窗口。
+历史计划，不再是当前状态。本文件后半同时记录异常路径和稳定窗口现已完成的生产
+证据；当前下一包已经转为 `0016_tool_confirmations_artifacts`。
 
 ## 权限边界
 
@@ -157,10 +158,49 @@ Core 与数据库中断场景由外层运维编排完成，因为把 `docker sto
 - SQLite 与 PostgreSQL 17 全量回归、迁移 head/drift 和代码审查通过，生产证据写入
   `PHASE3_ACCEPTANCE.md` 与 `DEPLOYMENT.md`。
 
+## 生产结果与稳定窗口
+
+2026-07-19 07:45–07:46 CST，提交
+`7f509e96213a2eefcd9af6fee4aea86115abb71f` 中的八份计划已全部在线执行。计划从
+同一完整 commit 导入为 `reviewed/rv1`，每次只激活一份；结束后均为
+`paused/rv3`、消费 1/1。六个协议场景与两个基础设施中断的实际终态为：
+
+- safe retry：attempt 1=`lease_expired/fence=1`，attempt 2=`succeeded/fence=2`，
+  invocation=`succeeded/provider_completed`；旧 fence 与重复完成留下 3 条
+  `reject/attempt_state_conflict`，没有改变成功终态；
+- 非法输出=`failed/invalid_output`，快慢 Provider 时钟场景=`succeeded`；
+- 明确取消=`cancelled/provider_acknowledged_cancellation`；完成竞态与取消未确认
+  分别为 `unknown_completion/completion_raced_cancellation` 和
+  `unknown_completion/cancellation_unacknowledged`；
+- Core 与 PostgreSQL 各短停一次，恢复后均由 reaper 收敛为 attempt=
+  `lease_expired`、invocation=`timed_out/deadline_expired`，没有第二次执行。
+
+直接 SQL 最终得到 14 条 invocation：1 recorded_only、6 timed_out、3 succeeded、
+1 failed、1 cancelled、2 unknown_completion；10 个 attempt 和 36 条 attempt event，
+无 active plan/invocation/attempt。两条临时控制会话均 logout/revoked；16 份 preview、
+16 笔 lifecycle mutation 和 24 条 plan lifecycle event 全部保留。演练窗口内
+`responses` 为零新增。
+
+演练前备份为
+`/home/justin/backups/superlily/20260719-phase3-fault-matrix/superlily-pre-fault-matrix-7f509e9.dump`，
+大小 150,886,660 字节、权限 0600、SHA-256
+`8dc4f145066a58bf7a633501934814ff15a59cb9e74642d94e8836c4d4bb20ab`。
+它不只通过 `pg_restore --list`，还在独立 PostgreSQL 17 磁盘卷中以零错误完整恢复；
+临时容器和卷已删除，主机备份保留。
+
+恢复后的首轮日志暴露出一个不影响账本、但妨碍稳定签署的噪声：Provider 空 lease
+退避上限和 Uvicorn keep-alive 都为 5 秒，偶发 `ReadError`。提交 `2b31c6b` 让空
+lease 轮询显式关闭连接，真实 start/heartbeat/complete 仍复用连接。修正版 Provider
+镜像 `sha256:b14bdcec3ceb921fa07830016620a5648b116e55e142fcde29c7443f25cc1f9b`
+上线后跨过完整 5 分钟 inventory 周期，得到 2 份 inventory、11 次 healthy heartbeat、
+零 warning/error 和零重启。此时 Core/Provider/PostgreSQL 资源平稳，Lily/Nekro
+均 online，两个 spool 均 pending=0、quarantine=0、gap=null；迁移仍为
+`0015d (head)` 且无 drift，旧命令 Registry 有 1 份 fresh snapshot、18 条静态规则，
+没有 stale snapshot。
+
 ## 后续顺序
 
-故障矩阵签署后仍不立即扩大模型 authority。先观察 `status.inspect` 稳定窗口，确认
-Provider 心跳、Core/reaper、账本查询、旧命令、durable spool、资源和日志无异常。
-稳定窗口通过后，才开始 `0016_tool_confirmations_artifacts`；随后是文本模式
+故障矩阵和 `status.inspect` 稳定窗口已签署，但仍不扩大模型 authority。下一包是
+`0016_tool_confirmations_artifacts`；随后是文本模式
 `wolfram.run`，图像输出和 `latex.render` 必须等待内容寻址 artifact 的
 reserve/upload/finalize/cleanup 边界。自然语言工具选择仍在 Phase 5。

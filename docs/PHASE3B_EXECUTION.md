@@ -182,9 +182,9 @@ logout/revoked；首轮四个未 logout 会话在再次开启控制面前已全�
 现均为 `paused/rv3`、消费数 1/1，无 active plan/lease；descriptor
 为 `active/rv4`，Provider 为 `active/rv3`。
 
-这一证据签署了四个独立 stop 和首次只读 canary，不等于 Phase 3b
+这一证据签署了四个独立 stop 和首次只读 canary，不等于该时点的 Phase 3b
 整体完成。过期 lease、Core/Provider 中断、旧 fence、重复完成、取消竞态、
-safe retry 和 `unknown_completion` 仍要完成生产故障矩阵；在此之前不扩大
+safe retry 和 `unknown_completion` 在该时点仍待生产故障矩阵；在此之前不扩大
 conversation、caller 或工具集合。
 
 ## 第二批故障矩阵实施包
@@ -203,3 +203,25 @@ deadline。生产 authority 仍是一次只激活一份、每份最多 1 次的 
 一次性 PostgreSQL 17.10 上为 399 项全部通过。13 份已提交/待提交的 status 单调用
 authority 均由生产合同逐份解析，并统一验证精确工具、hash、conversation、caller、
 Provider、`max_invocations=1` 和 `rollback_mode=ledger_only`。
+
+## 第二批生产故障矩阵与稳定签署
+
+2026-07-19 07:45–07:46 CST，八份来自提交 `7f509e9` 的单调用计划逐份经过
+operator 激活和 break-glass 暂停，没有直接 SQL mutation。safe retry 真实产生
+fence 1 的 `lease_expired` 与 fence 2 的 `succeeded`；三次旧 fence/重复完成均只追加
+reject。非法输出、快慢时钟、三种取消路径、Core 中断和 PostgreSQL 中断分别得到
+`PHASE3_FAULT_DRILLS.md` 规定的精确终态，两条不确定结果保留为
+`unknown_completion`，没有删除或自动重试。
+
+最终八份计划全部 `paused/rv3`、消费 1/1；全库 14 条 invocation 的分布为
+recorded_only=1、timed_out=6、succeeded=3、failed=1、cancelled=1、
+unknown_completion=2，无 active plan/invocation/attempt。16 次计划变更、16 份
+preview、24 条 lifecycle event 和两个已撤销会话完整留存；故障窗口内 response
+零新增。Core 回到 `ledger_only/global_stop=false/lease=15`，控制面默认 503。
+
+稳定观察最初发现空 lease 的 5 秒退避与服务端 5 秒 keep-alive 边界偶发 ReadError。
+SDK 提交 `2b31c6b` 将空轮询连接隔离后，SQLite 仍为 395 通过、4 跳过，PostgreSQL
+17 为 399 通过。修正版 Provider 跨过完整 inventory 周期，2 次 inventory、11 次
+healthy heartbeat、零日志异常和零重启；C0-D 两条 spool 也都重新收敛为
+pending/quarantine/gap=0。由此 `status.inspect` 的故障/回滚与稳定窗口签署完成，
+下一实现包转为 `0016_tool_confirmations_artifacts`。

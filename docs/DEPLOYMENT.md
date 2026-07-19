@@ -667,3 +667,60 @@ lease，结果为 204、invocation 仍为 queued、attempt=0。Provider 重启�
 plan、preview、mutation、lifecycle、invocation 和 attempt 的只追加生产证据，因此
 不再允许 downgrade 到 `0015c` 或删表伪造回滚。进入下一次故障演练前必须
 创建新的 Git-reviewed 单次计划，不得重置本批 counter 或重开已暂停的权限。
+
+## 15. 第二批故障矩阵、恢复与稳定窗口
+
+2026-07-19 07:45–07:46 CST，提交
+`7f509e96213a2eefcd9af6fee4aea86115abb71f` 中的八份一次性 plan 已从完整 commit
+导入并逐份执行。每份精确绑定 `status.inspect@1.0.2`、
+`qq:group:1080353942`、`admin_api`、`provider-status-primary`、descriptor rv4、
+Provider rv3 和最多 1 次调用。外层编排只使用本机回环控制面；随机 operator 密码、
+break-glass 密码和 audit pepper 只存在内存，未写入 argv、`.env`、日志或 Git。
+
+开放 authority 前的备份为：
+
+- 路径：
+  `/home/justin/backups/superlily/20260719-phase3-fault-matrix/superlily-pre-fault-matrix-7f509e9.dump`；
+- 大小：150,886,660 字节；权限 0600；
+- SHA-256：`8dc4f145066a58bf7a633501934814ff15a59cb9e74642d94e8836c4d4bb20ab`。
+
+`pg_restore --list` 通过后，它在独立 PostgreSQL 17 磁盘卷中零错误恢复出
+`0015d`、387,209 条 source event、419,006 条 observation、7,397 条 receipt、
+16,899 条 response、3 个 descriptor、1 个 Provider、5 份 paused plan、6 条
+invocation、1 个 attempt、3 条 attempt event、6 个控制会话、15 笔 mutation 和
+53 条 audit。临时恢复容器和卷已删除，备份保留。
+
+生产结果如下：
+
+1. 1 秒 lease 的 safe retry 先回收 fence 1，再由 Core 发出 fence 2 并成功；旧
+   worker start/complete 与重复完成共 3 次均以 409 拒绝并留下 attempt event；
+2. 非法 output 终止为 failed，2099/1970 Provider 时间不能延长 DB deadline；
+3. 取消确认终止为 cancelled，取消/完成竞态和取消未确认均保守终止为
+   unknown_completion；
+4. Core 与 PostgreSQL 各在 running attempt 后短停约 6.25 秒，恢复后均由 reaper
+   记录 `lease_expired -> timed_out/deadline_expired`，没有第二次执行；
+5. 每项 finally 都成功暂停 plan；两个临时会话显式 logout，Core 恢复默认配置，
+   常驻 Provider 重启。
+
+最终 13 份计划全部 `paused/rv3`、消费 1/1。14 条 invocation 分布为
+recorded_only=1、timed_out=6、succeeded=3、failed=1、cancelled=1、
+unknown_completion=2；10 个 attempt、36 条 attempt event，无 active
+plan/invocation/attempt。第二批控制面留下 16 份 preview、16 笔接受 mutation、
+24 条 plan lifecycle event、2 次接受 login/logout 和 18 次接受 reauth；两个会话
+均 revoked，无未过期未撤销会话。07:45:30–07:46:15 CST 的 `responses` 增量为 0。
+
+恢复后日志曾每 5 秒整数倍间隔偶发空 lease `ReadError`。定位为 idle poll 与
+Uvicorn keep-alive 同为 5 秒的连接回收竞态；提交 `2b31c6b` 使 lease 轮询发送
+`Connection: close`，真实执行请求保持连接复用。只重建 Provider 后的镜像为
+`sha256:b14bdcec3ceb921fa07830016620a5648b116e55e142fcde29c7443f25cc1f9b`；
+Core 镜像仍为 `sha256:5de28375836bc342840a9a5e8ddbf5f5d9aaf269221f8bac6364e1b6c78a8e7f`，
+没有随构建重建。
+
+修正版稳定窗口跨过完整 5 分钟 inventory 周期，数据库收到 2 个 inventory snapshot、
+11 个 healthy heartbeat；Provider 日志零 warning/error、重启数 0。最终
+Core/Provider/PostgreSQL 内存约 76/34/121 MiB，CPU 空闲；`0015d (head)` 且
+`alembic check` 无新操作。Core 为 `ledger_only/global_stop=false/lease=15`，无
+operator/Host/Origin/pepper，控制登录仍为带安全头 503。Lily/Nekro 在线且 spool
+均为 healthy/reconciled、pending=0、quarantine=0、gap=null。命令 Registry 快照
+fresh，18 条静态规则全部加载、stale snapshot=0；旧 `/wf`、`/tex` 等命令实现未被
+切换或删除。
