@@ -11,8 +11,11 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 发送的生产 canary、八项异常恢复故障矩阵和修正后的稳定窗口均已完成。13 份一次性
 计划全部暂停并耗尽，Core 恢复 `ledger_only`。`0016_confirm_artifacts` 的精确确认、
 内容寻址 artifact、Provider SDK、清理器与数据库防篡改已经完成双数据库全量回归，
-并已按默认关闭状态完成生产备份/恢复、迁移和零 authority 签署；自然语言、conversation、
-caller 和工具集合均未扩大。下一实现包已经转为文本模式 `wolfram.run`。
+并已按默认关闭状态完成生产备份/恢复、迁移和零 authority 签署。文本模式
+`wolfram.run@1.0.0` 的 descriptor、独立 Provider、既有 Wolfram 15.0 私有 socket
+边界和中文 ADR 已实现，SQLite 455 项通过、4 项跳过，PostgreSQL 17 为 459 项通过，
+受限容器中的真实 `2+2` 探针返回 `4`；生产 authority 导入和精确 canary 仍待签署。
+自然语言、conversation、平台发送和图片输出权限均未扩大。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -23,6 +26,7 @@ caller 和工具集合均未扩大。下一实现包已经转为文本模式 `wo
   sanitizer。
 - `apps/core`：FastAPI 采集/查询/工具账本/控制面服务和数据库模型。
 - `apps/status_provider`：独立、受硬边界约束的 `status.inspect` Provider。
+- `apps/wolfram_provider`：文本模式、复用现有隔离 worker 的 `wolfram.run` Provider。
 - `bridges/lily_nonebot`：Lily/NoneBot observer 与 durable reporter。
 - `bridges/nekro`：Nekro observer 与 durable reporter。
 - `registry`：Git-reviewed descriptor、Provider 和短时 rollout plan authority。
@@ -37,6 +41,8 @@ caller 和工具集合均未扩大。下一实现包已经转为文本模式 `wo
 - 第三阶段故障矩阵：[`docs/PHASE3_FAULT_DRILLS.md`](docs/PHASE3_FAULT_DRILLS.md)
 - 确认与 Artifact 实施包：
   [`docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md`](docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md)
+- 文本 Wolfram 实施与上线验收：
+  [`docs/PHASE3_WOLFRAM_TEXT.md`](docs/PHASE3_WOLFRAM_TEXT.md)
 - 采集与 agent 共识：
   [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
 - C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)

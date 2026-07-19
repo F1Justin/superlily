@@ -417,7 +417,7 @@ class ResourceBudget(AuthorityModel):
 class ExecutionPermissions(AuthorityModel):
     network: Literal["deny"]
     filesystem: Literal["deny", "sandbox_only"]
-    subprocess: Literal["deny"]
+    subprocess: Literal["deny", "sandbox_only"]
     secrets: list[str] = Field(max_length=32)
     remote_fetch: Literal["deny"]
     artifacts: list[str] = Field(max_length=32)

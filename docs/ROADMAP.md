@@ -68,8 +68,16 @@ drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active 
 orphan 清理和字段级数据库 guard。SQLite 全量为 439 通过、4 跳过，PostgreSQL 17
 全量为 443 通过；生产已经备份并在独立 PostgreSQL 17 磁盘卷中恢复验证，随后默认
 关闭迁移到 `0016`，新表全零、旧调用/计划计数不变且无 schema drift。它仍不扩大
-conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。下一实现包是文本模式
-`wolfram.run`，图像输出继续等待单独 artifact canary。
+conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。
+
+文本模式 `wolfram.run@1.0.0` 的实现与发布前审查现已完成：它由独立 Provider 通过
+私有 Unix socket 复用既有 Wolfram 15.0 隔离 worker，只返回有界文本，不接收图片、
+不产生 artifact、不发送平台消息。worker image/source/version/隔离配置进入部署身份，
+取消无法被旧协议证明时保守收敛为 `unknown_completion`。SQLite 全量为 455 通过、
+4 跳过，PostgreSQL 17 全量为 459 通过；受限镜像的真实 `2+2` 探针返回 `4`。
+生产仍为 `ledger_only`，新 descriptor/Provider 尚未导入或激活；下一门是 reviewed
+导入、零 lease 空转、精确单次 `admin_api` canary 和稳定窗口。图像输出继续等待单独
+artifact canary。详细边界与检查表见 `PHASE3_WOLFRAM_TEXT.md` 和 ADR 0013。
 
 ## Sequencing rules
 

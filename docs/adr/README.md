@@ -17,3 +17,4 @@
 - `0010-provider-quarantine-evidence.md`
 - `0011-git-bound-rollout-plans.md`
 - `0012-confirmation-artifact-protocol.md`
+- `0013-wolfram-text-provider-boundary.md`

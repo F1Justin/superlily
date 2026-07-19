@@ -112,6 +112,39 @@ services:
     security_opt: [no-new-privileges:true]
     networks: [bus]
 
+  wolfram-provider:
+    profiles: [wolfram]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      SUPERLILY_WOLFRAM_PROVIDER_CORE_URL: http://lily-core:8000
+      SUPERLILY_WOLFRAM_PROVIDER_TOKEN: ${SUPERLILY_WOLFRAM_PROVIDER_TOKEN:-}
+      SUPERLILY_WOLFRAM_PROVIDER_WORKER_IDENTITY_HASH: ${SUPERLILY_WOLFRAM_PROVIDER_WORKER_IDENTITY_HASH:-}
+      SUPERLILY_WOLFRAM_PROVIDER_DESCRIPTOR_PATH: registry/descriptors/wolfram.run/1.0.0.json
+      SUPERLILY_WOLFRAM_PROVIDER_WORKER_SOCKET: /wolfram-ipc/worker.sock
+      SUPERLILY_WOLFRAM_PROVIDER_HEARTBEAT_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_HEARTBEAT_SECONDS:-30}
+      SUPERLILY_WOLFRAM_PROVIDER_INVENTORY_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_INVENTORY_SECONDS:-300}
+      SUPERLILY_WOLFRAM_PROVIDER_HTTP_TIMEOUT_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_HTTP_TIMEOUT_SECONDS:-5}
+      SUPERLILY_WOLFRAM_PROVIDER_CONNECT_TIMEOUT_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_CONNECT_TIMEOUT_SECONDS:-3}
+      SUPERLILY_WOLFRAM_PROVIDER_POLL_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_POLL_SECONDS:-0.25}
+      SUPERLILY_WOLFRAM_PROVIDER_MAX_IDLE_POLL_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_MAX_IDLE_POLL_SECONDS:-5}
+      SUPERLILY_WOLFRAM_PROVIDER_EXECUTION_HEARTBEAT_SECONDS: ${SUPERLILY_WOLFRAM_PROVIDER_EXECUTION_HEARTBEAT_SECONDS:-1}
+    command: ["superlily-wolfram-provider", "serve"]
+    user: "1000:1000"
+    volumes:
+      - ${SUPERLILY_WOLFRAM_WORKER_RUN_DIR:-/home/justin/lily/plugins/wolfram/worker/run}:/wolfram-ipc:ro
+    depends_on:
+      lily-core:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bus]
+
 volumes:
   superlily_postgres_data:
   superlily_artifacts:

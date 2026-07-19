@@ -454,6 +454,11 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   exact canary, fault/rollback, stable evidence and old-command compatibility.
 - [ ] Text-only `wolfram.run` passes worker recovery and resource/error gates;
   image output waits for finalized artifacts.
+  发布前实现已完成：descriptor/provider authority、私有 socket 权限、文本/非文本、
+  畸形/超长响应、UTF-8 字节、真实超时、跨初始 lease heartbeat 和取消不发假 ACK
+  均有回归；SQLite 为 455 通过、4 跳过，PostgreSQL 17 为 459 通过。镜像
+  `pip check` 与受限容器真实 `2+2 -> 4` 探针通过。此项仍等待生产 reviewed 导入、
+  零 lease 空转、单次 canary、rollback 和稳定窗口后勾选。
 - [ ] `latex.render` accepts only finalized content-addressed artifacts and
   passes malicious TeX, timeout, MIME/hash/size, cleanup and renderer-boundary
   tests.

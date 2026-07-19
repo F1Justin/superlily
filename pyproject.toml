@@ -30,12 +30,13 @@ dev = [
 superlily-tool-registry = "superlily_contracts.tool_registry_cli:main"
 superlily-tool-registry-admin = "superlily_core.tool_registry_admin:main"
 superlily-status-provider = "superlily_status_provider.main:main"
+superlily-wolfram-provider = "superlily_wolfram_provider.main:main"
 superlily-control-password = "superlily_core.control_plane_cli:main"
 superlily-phase3-status-fault = "superlily_core.phase3_status_fault_driver:main"
 
 [tool.setuptools]
-packages = ["superlily_core", "superlily_contracts", "superlily_provider_sdk", "superlily_status_provider"]
-package-dir = {superlily_core = "apps/core/src/superlily_core", superlily_contracts = "packages/contracts/src/superlily_contracts", superlily_provider_sdk = "packages/provider_sdk/src/superlily_provider_sdk", superlily_status_provider = "apps/status_provider/src/superlily_status_provider"}
+packages = ["superlily_core", "superlily_contracts", "superlily_provider_sdk", "superlily_status_provider", "superlily_wolfram_provider"]
+package-dir = {superlily_core = "apps/core/src/superlily_core", superlily_contracts = "packages/contracts/src/superlily_contracts", superlily_provider_sdk = "packages/provider_sdk/src/superlily_provider_sdk", superlily_status_provider = "apps/status_provider/src/superlily_status_provider", superlily_wolfram_provider = "apps/wolfram_provider/src/superlily_wolfram_provider"}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -43,6 +44,7 @@ testpaths = ["tests"]
 pythonpath = [
   "apps/core/src",
   "apps/status_provider/src",
+  "apps/wolfram_provider/src",
   "packages/contracts/src",
   "packages/provider_sdk/src",
 ]
