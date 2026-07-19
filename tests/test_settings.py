@@ -11,6 +11,7 @@ from superlily_core.settings import Settings
         ("raw_max_bytes", 1_023),
         ("claim_mode", "unsafe"),
         ("tool_execution_mode", "unsafe"),
+        ("tool_confirmation_seconds", 29),
         ("control_preview_seconds", 14),
         ("control_mutation_attempts", 0),
         ("control_mutation_window_seconds", 59),
@@ -61,6 +62,7 @@ def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> No
 
     assert settings.tool_execution_mode == "ledger_only"
     assert settings.tool_lease_seconds == 15
+    assert settings.tool_confirmation_seconds == 120
     assert settings.tool_reaper_interval_seconds == 1
     assert settings.tool_global_stop is True
 
@@ -75,11 +77,13 @@ def test_enforce_mode_remains_closed_until_reviewed_plan_support(monkeypatch) ->
 def test_canary_ceiling_loads_without_environment_scope(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "canary")
     monkeypatch.setenv("SUPERLILY_TOOL_LEASE_SECONDS", "12")
+    monkeypatch.setenv("SUPERLILY_TOOL_CONFIRMATION_SECONDS", "90")
 
     settings = Settings.from_env()
 
     assert settings.tool_execution_mode == "canary"
     assert settings.tool_lease_seconds == 12
+    assert settings.tool_confirmation_seconds == 90
 
 
 def test_environment_rollout_scope_cannot_create_authority(monkeypatch) -> None:

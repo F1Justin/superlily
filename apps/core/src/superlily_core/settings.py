@@ -160,6 +160,7 @@ class Settings:
     tool_execution_mode: str = "off"
     tool_global_stop: bool = False
     tool_lease_seconds: int = 15
+    tool_confirmation_seconds: int = 120
     tool_reaper_interval_seconds: int = 1
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
@@ -220,6 +221,8 @@ class Settings:
             )
         if not 1 <= self.tool_lease_seconds <= 300:
             raise ValueError("tool_lease_seconds must be between 1 and 300")
+        if not 30 <= self.tool_confirmation_seconds <= 900:
+            raise ValueError("tool_confirmation_seconds must be between 30 and 900")
         if not 1 <= self.tool_reaper_interval_seconds <= 60:
             raise ValueError("tool_reaper_interval_seconds must be between 1 and 60")
         if any(
@@ -322,6 +325,9 @@ class Settings:
             ).strip().lower(),
             tool_global_stop=_as_bool(os.getenv("SUPERLILY_TOOL_GLOBAL_STOP")),
             tool_lease_seconds=int(os.getenv("SUPERLILY_TOOL_LEASE_SECONDS", "15")),
+            tool_confirmation_seconds=int(
+                os.getenv("SUPERLILY_TOOL_CONFIRMATION_SECONDS", "120")
+            ),
             tool_reaper_interval_seconds=int(
                 os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")
             ),

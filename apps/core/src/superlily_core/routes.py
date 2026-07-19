@@ -14,6 +14,7 @@ from superlily_contracts import (
     ProviderInventorySnapshotIn,
     ResponseIn,
     ToolInvocationCancelIn,
+    ToolInvocationConfirmIn,
     ToolInvocationCreateIn,
     ToolExecutionCompleteIn,
     ToolExecutionFailIn,
@@ -69,6 +70,7 @@ from .tool_registry_service import (
 from .tool_invocation_service import (
     cancel_tool_invocation,
     create_tool_invocation,
+    decide_tool_confirmation,
     get_tool_invocation,
     invocation_view,
 )
@@ -1169,6 +1171,31 @@ async def post_tool_invocation_cancel(
     )
     result = await invocation_view(session, invocation)
     result["attempts"] = await attempt_views(session, invocation.id)
+    return result
+
+
+@router.post("/v1/tool-invocations/{invocation_id}/confirm")
+async def post_tool_invocation_confirm(
+    invocation_id: str,
+    payload: ToolInvocationConfirmIn,
+    response: Response,
+    session: Session,
+    authenticated_caller: ToolInvocationIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    invocation, duplicate = await decide_tool_confirmation(
+        session,
+        invocation_id,
+        payload,
+        authenticated_caller,
+        idempotency_key,
+        session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await invocation_view(session, invocation)
+    result["attempts"] = await attempt_views(session, invocation.id)
+    result["duplicate"] = duplicate
     return result
 
 
