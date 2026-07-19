@@ -38,3 +38,11 @@
   provider-wolfram-primary`，精确绑定 descriptor `active/rv2` 与 Provider `active/rv1`；
 - 最多 1 次调用，只返回有界文本，不生成 artifact、不触发 QQ 发送；
 - 固定 `2+2` canary 完成后立即暂停，旧 `/wf` 继续作为回滚入口。
+
+`latex-artifact-success-20260719.json` 是 LaTeX Artifact Provider 的首次生产计划：
+
+- 只允许 `admin_api + qq:group:1080353942 + latex.render@1.0.0 +
+  provider-latex-primary`，精确绑定 descriptor `active/rv2` 与 Provider `active/rv1`；
+- 最多 1 次调用，只接受固定 JSON 字段中的 LaTeX，生成 1 张有界 PNG，不触发 QQ
+  发送；
+- 固定 `x^2+y^2=z^2` canary 完成后立即暂停，旧 `/tex` 继续作为回滚入口。

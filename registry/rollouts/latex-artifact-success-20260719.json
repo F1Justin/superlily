@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "latex-artifact-success-20260719",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-19T11:35:00+08:00",
+  "expires_at": "2026-07-19T12:30:00+08:00",
+  "max_invocations": 1,
+  "rollback_mode": "ledger_only",
+  "reason": "LaTeX Artifact Provider 的单次无平台发送生产验证",
+  "items": [
+    {
+      "item_id": "latex-artifact-admin",
+      "tool_id": "latex.render",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "adad493e24444f8a09215180dc90839102646fe069e2d767f9d1cab9ef826b36",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "admin_api",
+      "provider_id": "provider-latex-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    }
+  ]
+}
