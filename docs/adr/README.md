@@ -15,3 +15,5 @@
 - `0008-phase3-minimum-mutation-governance.md`
 - `0009-descriptor-mutation-evidence.md`
 - `0010-provider-quarantine-evidence.md`
+- `0011-git-bound-rollout-plans.md`
+- `0012-confirmation-artifact-protocol.md`

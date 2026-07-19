@@ -129,8 +129,16 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "AND tbl_name LIKE 'tool_rollout_%'"
             ).fetchall()
         }
+        confirmation_artifact_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name IN ('tool_confirmations', 'tool_confirmation_events', "
+                "'tool_artifacts', 'tool_artifact_events')"
+            ).fetchall()
+        }
 
-    assert version == ("0015d_rollout_plans",)
+    assert version == ("0016_confirm_artifacts",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -153,6 +161,10 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "tool_rollout_plan_items",
         "tool_rollout_plan_lifecycle_events",
         "tool_rollout_plan_counters",
+        "tool_confirmations",
+        "tool_confirmation_events",
+        "tool_artifacts",
+        "tool_artifact_events",
     }
     assert descriptor_count == (0,)
     assert {
@@ -238,6 +250,18 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "tool_rollout_plan_lifecycle_events_no_delete",
         "tool_rollout_plan_counters_update_guard",
         "tool_rollout_plan_counters_no_delete",
+    }
+    assert confirmation_artifact_triggers == {
+        "tool_confirmations_authority_no_update",
+        "tool_confirmations_no_delete",
+        "tool_confirmations_state_guard",
+        "tool_confirmation_events_no_update",
+        "tool_confirmation_events_no_delete",
+        "tool_artifacts_authority_no_update",
+        "tool_artifacts_no_delete",
+        "tool_artifacts_state_guard",
+        "tool_artifact_events_no_update",
+        "tool_artifact_events_no_delete",
     }
     assert collection_tables == {
         "collector_watermarks",
@@ -449,7 +473,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0015d_rollout_plans",)
+    assert version == ("0016_confirm_artifacts",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -591,7 +615,10 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
                                 "'guard_tool_provider_authority_mutation', "
                                 "'guard_tool_rollout_plan_authority_mutation', "
                                 "'reject_rollout_plan_evidence_mutation', "
-                                "'guard_tool_rollout_plan_counter_mutation')"
+                                "'guard_tool_rollout_plan_counter_mutation', "
+                                "'guard_tool_confirmation_mutation', "
+                                "'guard_tool_artifact_mutation', "
+                                "'reject_confirmation_artifact_event_mutation')"
                             )
                         )
                     ).all()
@@ -622,7 +649,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0015d_rollout_plans"
+        assert version == "0016_confirm_artifacts"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -655,6 +682,9 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             "guard_tool_rollout_plan_authority_mutation",
             "reject_rollout_plan_evidence_mutation",
             "guard_tool_rollout_plan_counter_mutation",
+            "guard_tool_confirmation_mutation",
+            "guard_tool_artifact_mutation",
+            "reject_confirmation_artifact_event_mutation",
         }
         alembic("check")
 
@@ -729,6 +759,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0015d_rollout_plans"
+        assert asyncio.run(snapshot())[0] == "0016_confirm_artifacts"
     finally:
         alembic("downgrade", "base", check=False)

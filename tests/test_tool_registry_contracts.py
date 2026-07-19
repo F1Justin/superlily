@@ -137,6 +137,33 @@ def test_state_changing_descriptor_requires_confirmation_and_no_blind_retry() ->
     with pytest.raises(ValidationError):
         ToolDescriptor.model_validate(payload)
 
+
+def test_artifact_descriptor_requires_complete_hard_bounded_policy() -> None:
+    payload = _descriptor_payload()
+    payload["execution_permissions"]["artifacts"] = ["image/png"]
+    with pytest.raises(ValidationError, match="policy"):
+        ToolDescriptor.model_validate(payload)
+
+    payload["artifact_policy"] = {
+        "max_count": 1,
+        "max_single_bytes": 1_048_576,
+        "max_width_pixels": 2048,
+        "max_height_pixels": 2048,
+        "reservation_ttl_seconds": 120,
+    }
+    payload["resource_budget"]["artifact_bytes"] = 1_048_576
+    with pytest.raises(ValidationError, match="hard enforcement"):
+        ToolDescriptor.model_validate(payload)
+
+    payload["required_budget_enforcement"].append("artifact_bytes")
+    descriptor = ToolDescriptor.model_validate(payload)
+    assert descriptor.artifact_policy is not None
+    assert descriptor.artifact_policy.max_count == 1
+
+    payload["artifact_policy"]["max_single_bytes"] = 2_097_152
+    with pytest.raises(ValidationError, match="single artifact"):
+        ToolDescriptor.model_validate(payload)
+
     payload["confirmation"] = "on_write"
     payload["retry_policy"] = "retry_safe"
     with pytest.raises(ValidationError):

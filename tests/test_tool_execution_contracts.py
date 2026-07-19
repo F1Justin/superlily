@@ -7,6 +7,11 @@ import pytest
 
 from superlily_core.app import _EmptyLeaseAccessFilter
 from superlily_contracts import (
+    ToolArtifactFinalizeIn,
+    ToolArtifactReference,
+    ToolArtifactReservationOut,
+    ToolArtifactReserveIn,
+    ToolArtifactUploadOut,
     ToolExecutionCompleteIn,
     ToolExecutionFailIn,
     ToolExecutionHeartbeatIn,
@@ -127,6 +132,103 @@ def test_complete_and_fail_bound_output_and_safe_error() -> None:
                 "provider_result_id": "result-5",
                 "error_code": "execution_failed",
                 "safe_detail": "first line\nsecond line",
+            }
+        )
+
+
+def test_artifact_contracts_bind_exact_metadata_and_dimensions() -> None:
+    reference = ToolArtifactReference.model_validate(
+        {
+            "artifact_id": "artifact-1",
+            "content_sha256": "a" * 64,
+            "mime_type": "image/png",
+            "byte_size": 128,
+            "width_pixels": 16,
+            "height_pixels": 8,
+        }
+    )
+    complete = ToolExecutionCompleteIn.model_validate(
+        {
+            **proof_payload(),
+            "provider_result_id": "result-artifact-1",
+            "output": {"image": "artifact-1"},
+            "usage": {"artifact_bytes": 128},
+            "artifacts": [reference.model_dump(mode="json")],
+        }
+    )
+    assert complete.artifacts == [reference]
+
+    reserve = ToolArtifactReserveIn.model_validate(
+        {
+            **proof_payload(),
+            "mime_type": "image/png",
+            "declared_bytes": 128,
+            "declared_sha256": "a" * 64,
+        }
+    )
+    assert reserve.mime_type == "image/png"
+
+    reservation = ToolArtifactReservationOut.model_validate(
+        {
+            "artifact_id": "artifact-1",
+            "invocation_id": "invocation-1",
+            "attempt_id": "attempt-123",
+            "fencing_token": 7,
+            "upload_secret": "u" * 43,
+            "mime_type": "image/png",
+            "max_bytes": 1024,
+            "max_width_pixels": 64,
+            "max_height_pixels": 64,
+            "expires_at": "2026-07-19T00:00:00+00:00",
+        }
+    )
+    assert reservation.max_bytes == 1024
+
+    uploaded = ToolArtifactUploadOut.model_validate(
+        {
+            "artifact_id": "artifact-1",
+            "state": "uploading",
+            "content_sha256": "a" * 64,
+            "mime_type": "image/png",
+            "byte_size": 128,
+            "width_pixels": 16,
+            "height_pixels": 8,
+        }
+    )
+    finalized = ToolArtifactFinalizeIn.model_validate(
+        {
+            **proof_payload(),
+            **uploaded.model_dump(mode="json", exclude={"state"}),
+        }
+    )
+    assert finalized.artifact_id == "artifact-1"
+
+
+@pytest.mark.parametrize(
+    "mime_type",
+    ["Image/PNG", "image//png", "image/png; charset=utf-8", " image/png", "image/png "],
+)
+def test_artifact_contracts_reject_non_exact_mime(mime_type: str) -> None:
+    with pytest.raises(ValidationError):
+        ToolArtifactReserveIn.model_validate({**proof_payload(), "mime_type": mime_type})
+
+
+@pytest.mark.parametrize(
+    "dimensions",
+    [
+        {"width_pixels": 16, "height_pixels": None},
+        {"width_pixels": None, "height_pixels": 8},
+    ],
+)
+def test_artifact_contracts_require_paired_dimensions(dimensions: dict) -> None:
+    with pytest.raises(ValidationError, match="dimensions"):
+        ToolArtifactReference.model_validate(
+            {
+                "artifact_id": "artifact-1",
+                "content_sha256": "a" * 64,
+                "mime_type": "image/png",
+                "byte_size": 128,
+                **dimensions,
             }
         )
 

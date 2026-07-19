@@ -435,6 +435,14 @@ class ExecutionPermissions(AuthorityModel):
         return _unique(value, label="artifacts")
 
 
+class ArtifactPolicy(AuthorityModel):
+    max_count: int = Field(ge=1, le=32)
+    max_single_bytes: int = Field(ge=1, le=1_073_741_824)
+    max_width_pixels: int = Field(ge=1, le=32_768)
+    max_height_pixels: int = Field(ge=1, le=32_768)
+    reservation_ttl_seconds: int = Field(ge=10, le=900)
+
+
 class ToolDescriptor(AuthorityModel):
     tool_id: ToolId
     version: SemVer
@@ -458,6 +466,7 @@ class ToolDescriptor(AuthorityModel):
     resource_budget: ResourceBudget
     required_budget_enforcement: list[str] = Field(min_length=1, max_length=16)
     execution_permissions: ExecutionPermissions
+    artifact_policy: ArtifactPolicy | None = None
     required_capabilities: list[str] = Field(max_length=64)
     data_classification: Literal["public", "conversation", "sensitive", "administrative"]
     result_retention_seconds: int = Field(ge=0, le=31_536_000)
@@ -505,6 +514,18 @@ class ToolDescriptor(AuthorityModel):
             raise ValueError("state-changing tools require confirmation")
         if self.side_effect in {"write", "admin", "external_message"} and self.retry_policy == "retry_safe":
             raise ValueError("state-changing tools cannot declare unconditional retry safety")
+        artifact_mimes = self.execution_permissions.artifacts
+        artifact_budget = self.resource_budget.artifact_bytes
+        if not artifact_mimes:
+            if self.artifact_policy is not None or artifact_budget is not None:
+                raise ValueError("artifact-free tools cannot declare artifact policy or budget")
+        else:
+            if self.artifact_policy is None or artifact_budget is None:
+                raise ValueError("artifact permissions require policy and total byte budget")
+            if self.artifact_policy.max_single_bytes > artifact_budget:
+                raise ValueError("single artifact bound cannot exceed total artifact budget")
+            if "artifact_bytes" not in self.required_budget_enforcement:
+                raise ValueError("artifact byte budget must require hard enforcement")
         return self
 
 

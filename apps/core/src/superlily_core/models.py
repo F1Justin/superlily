@@ -987,6 +987,130 @@ class ToolInvocationTransition(Base):
     )
 
 
+class ToolConfirmation(Base):
+    __tablename__ = "tool_confirmations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
+    )
+    policy: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    caller_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    caller_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    required_approvals: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("invocation_id", name="uq_tool_confirmation_invocation"),
+        CheckConstraint(
+            "policy IN ('on_write', 'always', 'two_person')",
+            name="ck_tool_confirmation_policy",
+        ),
+        CheckConstraint(
+            "caller_type IN ('command', 'admin_api')",
+            name="ck_tool_confirmation_caller",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'consumed', 'rejected', 'expired')",
+            name="ck_tool_confirmation_state",
+        ),
+        CheckConstraint(
+            "resource_version >= 1", name="ck_tool_confirmation_resource_version"
+        ),
+        CheckConstraint(
+            "required_approvals >= 1 AND required_approvals <= 2",
+            name="ck_tool_confirmation_required_approvals",
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_tool_confirmation_expiry"),
+        CheckConstraint(
+            "((state = 'pending' AND consumed_at IS NULL AND rejected_at IS NULL "
+            "AND expired_at IS NULL) OR "
+            "(state = 'consumed' AND consumed_at IS NOT NULL AND rejected_at IS NULL "
+            "AND expired_at IS NULL) OR "
+            "(state = 'rejected' AND consumed_at IS NULL AND rejected_at IS NOT NULL "
+            "AND expired_at IS NULL) OR "
+            "(state = 'expired' AND consumed_at IS NULL AND rejected_at IS NULL "
+            "AND expired_at IS NOT NULL))",
+            name="ck_tool_confirmation_terminal_time",
+        ),
+        Index("ix_tool_confirmations_state_expiry", "state", "expires_at"),
+    )
+
+
+class ToolConfirmationEvent(Base):
+    __tablename__ = "tool_confirmation_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    confirmation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_confirmations.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "confirmation_id", "sequence", name="uq_tool_confirmation_event_sequence"
+        ),
+        UniqueConstraint(
+            "confirmation_id",
+            "actor_type",
+            "actor_id",
+            "idempotency_key",
+            name="uq_tool_confirmation_event_idempotency",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_tool_confirmation_event_sequence"),
+        CheckConstraint(
+            "event IN ('create', 'approve', 'reject', 'expire')",
+            name="ck_tool_confirmation_event_type",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'consumed', 'rejected', 'expired')",
+            name="ck_tool_confirmation_event_state",
+        ),
+        CheckConstraint(
+            "actor_type IN ('command', 'admin_api', 'reaper', 'system')",
+            name="ck_tool_confirmation_event_actor",
+        ),
+        CheckConstraint(
+            "((event = 'create' AND sequence = 1 AND previous_state IS NULL "
+            "AND state = 'pending') OR "
+            "(event <> 'create' AND sequence > 1 AND previous_state = 'pending'))",
+            name="ck_tool_confirmation_event_initial",
+        ),
+        Index(
+            "ix_tool_confirmation_events_created", "confirmation_id", "created_at"
+        ),
+    )
+
+
 class ToolAttempt(Base):
     __tablename__ = "tool_attempts"
 
@@ -1100,6 +1224,165 @@ class ToolAttemptEvent(Base):
             name="ck_tool_attempt_event_outcome",
         ),
         Index("ix_tool_attempt_events_created", "attempt_id", "created_at"),
+    )
+
+
+class ToolArtifact(Base):
+    __tablename__ = "tool_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False
+    )
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
+    )
+    fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    reservation_request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    producer_tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    producer_descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    producer_descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_classification: Mapped[str] = mapped_column(String(32), nullable=False)
+    canonical_conversation: Mapped[str] = mapped_column(String(512), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    max_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_width_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_height_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    declared_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    declared_sha256: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    upload_secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    quarantine_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    byte_size: Mapped[int | None] = mapped_column(BigInteger)
+    width_pixels: Mapped[int | None] = mapped_column(Integer)
+    height_pixels: Mapped[int | None] = mapped_column(Integer)
+    storage_key: Mapped[str | None] = mapped_column(String(512))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    referenced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id", "idempotency_key", name="uq_tool_artifact_idempotency"
+        ),
+        CheckConstraint("fencing_token >= 1", name="ck_tool_artifact_fencing_token"),
+        CheckConstraint(
+            "data_classification IN ('public', 'conversation', 'sensitive', 'administrative')",
+            name="ck_tool_artifact_classification",
+        ),
+        CheckConstraint(
+            "state IN ('reserved', 'uploading', 'finalized', 'rejected', 'expired')",
+            name="ck_tool_artifact_state",
+        ),
+        CheckConstraint(
+            "resource_version >= 1", name="ck_tool_artifact_resource_version"
+        ),
+        CheckConstraint(
+            "max_bytes >= 1 AND max_width_pixels >= 1 AND max_height_pixels >= 1",
+            name="ck_tool_artifact_bounds",
+        ),
+        CheckConstraint(
+            "declared_bytes IS NULL OR (declared_bytes >= 1 AND declared_bytes <= max_bytes)",
+            name="ck_tool_artifact_declared_bytes",
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_tool_artifact_expiry"),
+        CheckConstraint(
+            "((width_pixels IS NULL AND height_pixels IS NULL) OR "
+            "(width_pixels IS NOT NULL AND height_pixels IS NOT NULL "
+            "AND width_pixels >= 1 AND width_pixels <= max_width_pixels "
+            "AND height_pixels >= 1 AND height_pixels <= max_height_pixels))",
+            name="ck_tool_artifact_dimensions",
+        ),
+        CheckConstraint(
+            "((content_sha256 IS NULL AND byte_size IS NULL) OR "
+            "(content_sha256 IS NOT NULL AND byte_size IS NOT NULL "
+            "AND byte_size >= 1 AND byte_size <= max_bytes))",
+            name="ck_tool_artifact_content",
+        ),
+        CheckConstraint(
+            "((state = 'finalized' AND content_sha256 IS NOT NULL "
+            "AND byte_size IS NOT NULL AND storage_key IS NOT NULL "
+            "AND finalized_at IS NOT NULL AND rejected_at IS NULL AND expired_at IS NULL) OR "
+            "(state = 'rejected' AND rejected_at IS NOT NULL AND finalized_at IS NULL "
+            "AND expired_at IS NULL) OR "
+            "(state = 'expired' AND expired_at IS NOT NULL AND finalized_at IS NULL "
+            "AND rejected_at IS NULL) OR "
+            "(state IN ('reserved', 'uploading') AND finalized_at IS NULL "
+            "AND rejected_at IS NULL AND expired_at IS NULL))",
+            name="ck_tool_artifact_terminal_time",
+        ),
+        Index("ix_tool_artifacts_attempt_state", "attempt_id", "state"),
+        Index("ix_tool_artifacts_state_expiry", "state", "expires_at"),
+        Index("ix_tool_artifacts_content_hash", "content_sha256"),
+    )
+
+
+class ToolArtifactEvent(Base):
+    __tablename__ = "tool_artifact_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id", "sequence", name="uq_tool_artifact_event_sequence"
+        ),
+        CheckConstraint("sequence >= 1", name="ck_tool_artifact_event_sequence"),
+        CheckConstraint("fencing_token >= 1", name="ck_tool_artifact_event_fencing_token"),
+        CheckConstraint(
+            "event IN ('reserve', 'upload_start', 'upload_complete', 'finalize', "
+            "'reference', 'reject', 'expire', 'cleanup')",
+            name="ck_tool_artifact_event_type",
+        ),
+        CheckConstraint(
+            "state IN ('reserved', 'uploading', 'finalized', 'rejected', 'expired')",
+            name="ck_tool_artifact_event_state",
+        ),
+        CheckConstraint(
+            "actor_type IN ('provider', 'reaper', 'system')",
+            name="ck_tool_artifact_event_actor",
+        ),
+        CheckConstraint(
+            "((event = 'reserve' AND sequence = 1 AND previous_state IS NULL "
+            "AND state = 'reserved') OR "
+            "(event <> 'reserve' AND sequence > 1 AND previous_state IS NOT NULL))",
+            name="ck_tool_artifact_event_initial",
+        ),
+        Index("ix_tool_artifact_events_created", "artifact_id", "created_at"),
     )
 
 
@@ -1261,6 +1544,397 @@ class ControlPlanePreview(Base):
         Index("ix_control_previews_target_created", "target_type", "target_id", "created_at"),
         Index("ix_control_previews_session_expiry", "session_id", "expires_at"),
     )
+
+
+_CONFIRMATION_SQLITE_AUTHORITY_UPDATE = DDL(
+    """
+    CREATE TRIGGER tool_confirmations_authority_no_update
+    BEFORE UPDATE OF invocation_id, policy, request_hash, input_hash, principal_hash,
+        policy_hash, caller_type, caller_id, required_approvals, expires_at, created_at
+    ON tool_confirmations
+    BEGIN
+        SELECT RAISE(ABORT, 'tool confirmation authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_CONFIRMATION_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER tool_confirmations_no_delete
+    BEFORE DELETE ON tool_confirmations
+    BEGIN
+        SELECT RAISE(ABORT, 'tool confirmation evidence cannot be deleted');
+    END
+    """
+).execute_if(dialect="sqlite")
+_CONFIRMATION_SQLITE_STATE_GUARD = DDL(
+    """
+    CREATE TRIGGER tool_confirmations_state_guard
+    BEFORE UPDATE OF state, resource_version, consumed_at, rejected_at, expired_at, updated_at
+    ON tool_confirmations
+    WHEN NEW.state IS NOT OLD.state
+      OR NEW.resource_version IS NOT OLD.resource_version
+      OR NEW.consumed_at IS NOT OLD.consumed_at
+      OR NEW.rejected_at IS NOT OLD.rejected_at
+      OR NEW.expired_at IS NOT OLD.expired_at
+      OR NEW.updated_at IS NOT OLD.updated_at
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'tool confirmation resource version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.state = 'pending' AND NEW.state = 'consumed') OR
+            (OLD.state = 'pending' AND NEW.state = 'rejected') OR
+            (OLD.state = 'pending' AND NEW.state = 'expired')
+        ) THEN RAISE(ABORT, 'tool confirmation state transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM tool_confirmation_events
+            WHERE confirmation_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+              AND effective_at IS NEW.updated_at
+              AND ((event = 'approve' AND NEW.state = 'consumed'
+                    AND NEW.consumed_at IS effective_at) OR
+                   (event = 'reject' AND NEW.state = 'rejected'
+                    AND NEW.rejected_at IS effective_at) OR
+                   (event = 'expire' AND NEW.state = 'expired'
+                    AND NEW.expired_at IS effective_at))
+        ) THEN RAISE(ABORT, 'tool confirmation event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_CONFIRMATION_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_confirmation_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'tool confirmation evidence cannot be deleted';
+        END IF;
+        IF NEW.invocation_id IS DISTINCT FROM OLD.invocation_id
+           OR NEW.policy IS DISTINCT FROM OLD.policy
+           OR NEW.request_hash IS DISTINCT FROM OLD.request_hash
+           OR NEW.input_hash IS DISTINCT FROM OLD.input_hash
+           OR NEW.principal_hash IS DISTINCT FROM OLD.principal_hash
+           OR NEW.policy_hash IS DISTINCT FROM OLD.policy_hash
+           OR NEW.caller_type IS DISTINCT FROM OLD.caller_type
+           OR NEW.caller_id IS DISTINCT FROM OLD.caller_id
+           OR NEW.required_approvals IS DISTINCT FROM OLD.required_approvals
+           OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'tool confirmation authority is immutable';
+        END IF;
+        IF NEW.state IS DISTINCT FROM OLD.state
+           OR NEW.resource_version IS DISTINCT FROM OLD.resource_version
+           OR NEW.consumed_at IS DISTINCT FROM OLD.consumed_at
+           OR NEW.rejected_at IS DISTINCT FROM OLD.rejected_at
+           OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
+           OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
+            IF NEW.resource_version != OLD.resource_version + 1 THEN
+                RAISE EXCEPTION 'tool confirmation resource version must increase by one';
+            END IF;
+            IF NOT (
+                (OLD.state = 'pending' AND NEW.state = 'consumed') OR
+                (OLD.state = 'pending' AND NEW.state = 'rejected') OR
+                (OLD.state = 'pending' AND NEW.state = 'expired')
+            ) THEN
+                RAISE EXCEPTION 'tool confirmation state transition is not allowed';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM tool_confirmation_events
+                WHERE confirmation_id = OLD.id
+                  AND sequence = NEW.resource_version
+                  AND previous_state = OLD.state
+                  AND state = NEW.state
+                  AND effective_at IS NOT DISTINCT FROM NEW.updated_at
+                  AND ((event = 'approve' AND NEW.state = 'consumed'
+                        AND NEW.consumed_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'reject' AND NEW.state = 'rejected'
+                        AND NEW.rejected_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'expire' AND NEW.state = 'expired'
+                        AND NEW.expired_at IS NOT DISTINCT FROM effective_at))
+            ) THEN
+                RAISE EXCEPTION 'tool confirmation event is required';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_CONFIRMATION_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_confirmations_guard
+    BEFORE UPDATE OR DELETE ON tool_confirmations
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_confirmation_mutation()
+    """
+).execute_if(dialect="postgresql")
+_CONFIRMATION_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_confirmation_mutation()"
+).execute_if(dialect="postgresql")
+
+for _confirmation_guard in (
+    _CONFIRMATION_SQLITE_AUTHORITY_UPDATE,
+    _CONFIRMATION_SQLITE_DELETE,
+    _CONFIRMATION_SQLITE_STATE_GUARD,
+    _CONFIRMATION_POSTGRES_FUNCTION,
+    _CONFIRMATION_POSTGRES_TRIGGER,
+):
+    event.listen(ToolConfirmation.__table__, "after_create", _confirmation_guard)
+event.listen(ToolConfirmation.__table__, "after_drop", _CONFIRMATION_POSTGRES_DROP)
+
+
+_ARTIFACT_SQLITE_AUTHORITY_UPDATE = DDL(
+    """
+    CREATE TRIGGER tool_artifacts_authority_no_update
+    BEFORE UPDATE OF invocation_id, attempt_id, provider_id, fencing_token,
+        idempotency_key, reservation_request_hash, producer_tool_id,
+        producer_descriptor_version, producer_descriptor_hash, data_classification,
+        canonical_conversation, mime_type, policy_snapshot_json, policy_hash,
+        max_bytes, max_width_pixels, max_height_pixels, declared_bytes, declared_sha256,
+        expires_at, upload_secret_hash, quarantine_key, created_at
+    ON tool_artifacts
+    BEGIN
+        SELECT RAISE(ABORT, 'tool artifact authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ARTIFACT_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER tool_artifacts_no_delete
+    BEFORE DELETE ON tool_artifacts
+    BEGIN
+        SELECT RAISE(ABORT, 'tool artifact evidence cannot be deleted');
+    END
+    """
+).execute_if(dialect="sqlite")
+_ARTIFACT_SQLITE_STATE_GUARD = DDL(
+    """
+    CREATE TRIGGER tool_artifacts_state_guard
+    BEFORE UPDATE OF state, resource_version, content_sha256, byte_size, width_pixels,
+        height_pixels, storage_key, finalized_at, referenced_at, rejected_at,
+        expired_at, content_deleted_at, updated_at
+    ON tool_artifacts
+    WHEN NEW.state IS NOT OLD.state
+      OR NEW.resource_version IS NOT OLD.resource_version
+      OR NEW.content_sha256 IS NOT OLD.content_sha256
+      OR NEW.byte_size IS NOT OLD.byte_size
+      OR NEW.width_pixels IS NOT OLD.width_pixels
+      OR NEW.height_pixels IS NOT OLD.height_pixels
+      OR NEW.storage_key IS NOT OLD.storage_key
+      OR NEW.finalized_at IS NOT OLD.finalized_at
+      OR NEW.referenced_at IS NOT OLD.referenced_at
+      OR NEW.rejected_at IS NOT OLD.rejected_at
+      OR NEW.expired_at IS NOT OLD.expired_at
+      OR NEW.content_deleted_at IS NOT OLD.content_deleted_at
+      OR NEW.updated_at IS NOT OLD.updated_at
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'tool artifact resource version must increase by one') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM tool_artifact_events
+            WHERE artifact_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+              AND provider_id = OLD.provider_id
+              AND fencing_token = OLD.fencing_token
+              AND effective_at IS NEW.updated_at
+              AND ((event = 'upload_start' AND OLD.state = 'reserved'
+                    AND NEW.state = 'uploading') OR
+                   (event = 'upload_complete' AND OLD.state = 'uploading'
+                    AND NEW.state = 'uploading') OR
+                   (event = 'finalize' AND OLD.state = 'uploading'
+                    AND NEW.state = 'finalized' AND NEW.finalized_at IS effective_at) OR
+                   (event = 'reference' AND OLD.state = 'finalized'
+                    AND NEW.state = 'finalized' AND NEW.referenced_at IS effective_at) OR
+                   (event = 'reject' AND OLD.state IN ('reserved', 'uploading')
+                    AND NEW.state = 'rejected' AND NEW.rejected_at IS effective_at) OR
+                   (event = 'expire' AND OLD.state IN ('reserved', 'uploading')
+                    AND NEW.state = 'expired' AND NEW.expired_at IS effective_at) OR
+                   (event = 'cleanup' AND NEW.state = OLD.state
+                    AND NEW.content_deleted_at IS effective_at))
+        ) THEN RAISE(ABORT, 'tool artifact event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_ARTIFACT_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_tool_artifact_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'tool artifact evidence cannot be deleted';
+        END IF;
+        IF NEW.invocation_id IS DISTINCT FROM OLD.invocation_id
+           OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+           OR NEW.provider_id IS DISTINCT FROM OLD.provider_id
+           OR NEW.fencing_token IS DISTINCT FROM OLD.fencing_token
+           OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+           OR NEW.reservation_request_hash IS DISTINCT FROM OLD.reservation_request_hash
+           OR NEW.producer_tool_id IS DISTINCT FROM OLD.producer_tool_id
+           OR NEW.producer_descriptor_version IS DISTINCT FROM OLD.producer_descriptor_version
+           OR NEW.producer_descriptor_hash IS DISTINCT FROM OLD.producer_descriptor_hash
+           OR NEW.data_classification IS DISTINCT FROM OLD.data_classification
+           OR NEW.canonical_conversation IS DISTINCT FROM OLD.canonical_conversation
+           OR NEW.mime_type IS DISTINCT FROM OLD.mime_type
+           OR NEW.policy_snapshot_json::text IS DISTINCT FROM OLD.policy_snapshot_json::text
+           OR NEW.policy_hash IS DISTINCT FROM OLD.policy_hash
+           OR NEW.max_bytes IS DISTINCT FROM OLD.max_bytes
+           OR NEW.max_width_pixels IS DISTINCT FROM OLD.max_width_pixels
+           OR NEW.max_height_pixels IS DISTINCT FROM OLD.max_height_pixels
+           OR NEW.declared_bytes IS DISTINCT FROM OLD.declared_bytes
+           OR NEW.declared_sha256 IS DISTINCT FROM OLD.declared_sha256
+           OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+           OR NEW.upload_secret_hash IS DISTINCT FROM OLD.upload_secret_hash
+           OR NEW.quarantine_key IS DISTINCT FROM OLD.quarantine_key
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'tool artifact authority is immutable';
+        END IF;
+        IF NEW.state IS DISTINCT FROM OLD.state
+           OR NEW.resource_version IS DISTINCT FROM OLD.resource_version
+           OR NEW.content_sha256 IS DISTINCT FROM OLD.content_sha256
+           OR NEW.byte_size IS DISTINCT FROM OLD.byte_size
+           OR NEW.width_pixels IS DISTINCT FROM OLD.width_pixels
+           OR NEW.height_pixels IS DISTINCT FROM OLD.height_pixels
+           OR NEW.storage_key IS DISTINCT FROM OLD.storage_key
+           OR NEW.finalized_at IS DISTINCT FROM OLD.finalized_at
+           OR NEW.referenced_at IS DISTINCT FROM OLD.referenced_at
+           OR NEW.rejected_at IS DISTINCT FROM OLD.rejected_at
+           OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
+           OR NEW.content_deleted_at IS DISTINCT FROM OLD.content_deleted_at
+           OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
+            IF NEW.resource_version != OLD.resource_version + 1 THEN
+                RAISE EXCEPTION 'tool artifact resource version must increase by one';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM tool_artifact_events
+                WHERE artifact_id = OLD.id
+                  AND sequence = NEW.resource_version
+                  AND previous_state = OLD.state
+                  AND state = NEW.state
+                  AND provider_id = OLD.provider_id
+                  AND fencing_token = OLD.fencing_token
+                  AND effective_at IS NOT DISTINCT FROM NEW.updated_at
+                  AND ((event = 'upload_start' AND OLD.state = 'reserved'
+                        AND NEW.state = 'uploading') OR
+                       (event = 'upload_complete' AND OLD.state = 'uploading'
+                        AND NEW.state = 'uploading') OR
+                       (event = 'finalize' AND OLD.state = 'uploading'
+                        AND NEW.state = 'finalized'
+                        AND NEW.finalized_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'reference' AND OLD.state = 'finalized'
+                        AND NEW.state = 'finalized'
+                        AND NEW.referenced_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'reject' AND OLD.state IN ('reserved', 'uploading')
+                        AND NEW.state = 'rejected'
+                        AND NEW.rejected_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'expire' AND OLD.state IN ('reserved', 'uploading')
+                        AND NEW.state = 'expired'
+                        AND NEW.expired_at IS NOT DISTINCT FROM effective_at) OR
+                       (event = 'cleanup' AND NEW.state = OLD.state
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM effective_at))
+            ) THEN
+                RAISE EXCEPTION 'tool artifact event is required';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_ARTIFACT_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER tool_artifacts_guard
+    BEFORE UPDATE OR DELETE ON tool_artifacts
+    FOR EACH ROW EXECUTE FUNCTION guard_tool_artifact_mutation()
+    """
+).execute_if(dialect="postgresql")
+_ARTIFACT_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_tool_artifact_mutation()"
+).execute_if(dialect="postgresql")
+
+for _artifact_guard in (
+    _ARTIFACT_SQLITE_AUTHORITY_UPDATE,
+    _ARTIFACT_SQLITE_DELETE,
+    _ARTIFACT_SQLITE_STATE_GUARD,
+    _ARTIFACT_POSTGRES_FUNCTION,
+    _ARTIFACT_POSTGRES_TRIGGER,
+):
+    event.listen(ToolArtifact.__table__, "after_create", _artifact_guard)
+event.listen(ToolArtifact.__table__, "after_drop", _ARTIFACT_POSTGRES_DROP)
+
+
+_CONFIRMATION_ARTIFACT_EVENT_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_confirmation_artifact_event_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'confirmation and artifact events are append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_CONFIRMATION_ARTIFACT_EVENT_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_confirmation_artifact_event_mutation()"
+).execute_if(dialect="postgresql")
+
+
+def _install_confirmation_artifact_event_triggers(table) -> None:
+    name = table.name
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_update
+            BEFORE UPDATE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'confirmation and artifact events are append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_delete
+            BEFORE DELETE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'confirmation and artifact events are append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_mutation
+            BEFORE UPDATE OR DELETE ON {name}
+            FOR EACH ROW EXECUTE FUNCTION reject_confirmation_artifact_event_mutation()
+            """
+        ).execute_if(dialect="postgresql"),
+    )
+
+
+event.listen(
+    ToolConfirmationEvent.__table__,
+    "after_create",
+    _CONFIRMATION_ARTIFACT_EVENT_POSTGRES_FUNCTION,
+)
+for _confirmation_artifact_event_table in (
+    ToolConfirmationEvent.__table__,
+    ToolArtifactEvent.__table__,
+):
+    _install_confirmation_artifact_event_triggers(_confirmation_artifact_event_table)
+event.listen(
+    ToolConfirmationEvent.__table__,
+    "after_drop",
+    _CONFIRMATION_ARTIFACT_EVENT_POSTGRES_DROP,
+)
 
 
 _INVOCATION_TRANSITION_SQLITE_UPDATE_TRIGGER = DDL(

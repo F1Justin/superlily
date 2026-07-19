@@ -7,6 +7,7 @@ credential 推导，不信任 payload 自报的 Provider。
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -53,6 +54,19 @@ ToolFailureCode: TypeAlias = Literal[
 ]
 
 LeaseSecret = Annotated[str, Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]
+ArtifactUploadSecret = Annotated[
+    str,
+    Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+]
+_MIME_RE = re.compile(
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$"
+)
+
+
+def _exact_mime(value: str) -> str:
+    if not _MIME_RE.fullmatch(value):
+        raise ValueError("artifact MIME must be an exact lowercase media type")
+    return value
 
 
 class ExecutionContractModel(BaseModel):
@@ -109,10 +123,31 @@ class ToolExecutionHeartbeatIn(ToolExecutionProof):
         return parsed
 
 
+class ToolArtifactReference(ExecutionContractModel):
+    artifact_id: OpaqueId
+    content_sha256: Sha256
+    mime_type: str = Field(min_length=3, max_length=255)
+    byte_size: int = Field(ge=1, le=10_737_418_240)
+    width_pixels: int | None = Field(default=None, ge=1, le=32_768)
+    height_pixels: int | None = Field(default=None, ge=1, le=32_768)
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _exact_mime(value)
+
+    @model_validator(mode="after")
+    def dimensions_are_paired(self) -> "ToolArtifactReference":
+        if (self.width_pixels is None) != (self.height_pixels is None):
+            raise ValueError("artifact dimensions must both be present or absent")
+        return self
+
+
 class ToolExecutionCompleteIn(ToolExecutionProof):
     provider_result_id: OpaqueId
     output: Any
     usage: ToolUsage
+    artifacts: list[ToolArtifactReference] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def validate_output_domain(self) -> "ToolExecutionCompleteIn":
@@ -120,6 +155,85 @@ class ToolExecutionCompleteIn(ToolExecutionProof):
             canonicalize_json_value(self.output)
         except CanonicalJSONError as exc:
             raise ValueError("tool output is outside the bounded canonical JSON domain") from exc
+        return self
+
+
+class ToolArtifactReserveIn(ToolExecutionProof):
+    mime_type: str = Field(min_length=3, max_length=255)
+    declared_bytes: int | None = Field(default=None, ge=1, le=10_737_418_240)
+    declared_sha256: Sha256 | None = None
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _exact_mime(value)
+
+
+class ToolArtifactReservationOut(ExecutionContractModel):
+    artifact_id: OpaqueId
+    invocation_id: OpaqueId
+    attempt_id: OpaqueId
+    fencing_token: int = Field(ge=1)
+    upload_secret: ArtifactUploadSecret
+    mime_type: str
+    max_bytes: int = Field(ge=1, le=10_737_418_240)
+    max_width_pixels: int = Field(ge=1, le=32_768)
+    max_height_pixels: int = Field(ge=1, le=32_768)
+    expires_at: AwareDatetime
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _exact_mime(value)
+
+    @field_validator("expires_at", mode="before")
+    @classmethod
+    def validate_expires_at(cls, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value
+        if not isinstance(value, str) or value != value.strip():
+            raise ValueError("artifact expiry must be an exact ISO 8601 timestamp")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("artifact expiry must be ISO 8601") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("artifact expiry must include a timezone")
+        return parsed
+
+
+class ToolArtifactUploadOut(ExecutionContractModel):
+    artifact_id: OpaqueId
+    state: Literal["uploading"]
+    content_sha256: Sha256
+    mime_type: str
+    byte_size: int = Field(ge=1, le=10_737_418_240)
+    width_pixels: int | None = Field(default=None, ge=1, le=32_768)
+    height_pixels: int | None = Field(default=None, ge=1, le=32_768)
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _exact_mime(value)
+
+
+class ToolArtifactFinalizeIn(ToolExecutionProof):
+    artifact_id: OpaqueId
+    content_sha256: Sha256
+    mime_type: str
+    byte_size: int = Field(ge=1, le=10_737_418_240)
+    width_pixels: int | None = Field(default=None, ge=1, le=32_768)
+    height_pixels: int | None = Field(default=None, ge=1, le=32_768)
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _exact_mime(value)
+
+    @model_validator(mode="after")
+    def dimensions_are_paired(self) -> "ToolArtifactFinalizeIn":
+        if (self.width_pixels is None) != (self.height_pixels is None):
+            raise ValueError("artifact dimensions must both be present or absent")
         return self
 
 

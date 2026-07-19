@@ -219,6 +219,27 @@ class ToolInvocationCancelIn(InvocationContractModel):
         return value
 
 
+class ToolInvocationConfirmIn(InvocationContractModel):
+    schema_version: Literal["1.0"] = TOOL_INVOCATION_SCHEMA_VERSION
+    confirmation_id: OpaqueId
+    request_hash: Sha256
+    input_hash: Sha256
+    principal_hash: Sha256
+    decision: Literal["approve", "reject"]
+    reason: str = Field(min_length=1, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or not value
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("confirmation reason must be exact visible text")
+        return value
+
+
 def invocation_request_hash(
     payload: ToolInvocationCreateIn,
     *,
