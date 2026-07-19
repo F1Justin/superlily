@@ -9,8 +9,9 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 上线。Phase 3b 的 invocation/attempt 账本、lease/fence/reaper、控制面 M0–M3、
 `status.inspect@1.0.2` 和 Git-bound rollout plan 已部署；四个独立 stop 与一次无平台
 发送的生产 canary、八项异常恢复故障矩阵和修正后的稳定窗口均已完成。13 份一次性
-计划全部暂停并耗尽，Core 恢复 `ledger_only`。当前开始 `0016` 的确认/artifact
-账本设计与实现，不扩大自然语言、conversation、caller 或工具集合。
+计划全部暂停并耗尽，Core 恢复 `ledger_only`。`0016_confirm_artifacts` 的精确确认、
+内容寻址 artifact、Provider SDK、清理器与数据库防篡改已经完成双数据库全量回归，
+当前等待默认关闭的生产迁移签署；自然语言、conversation、caller 和工具集合均未扩大。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -33,6 +34,8 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 - 权威实施顺序：[`docs/ROADMAP.md`](docs/ROADMAP.md)
 - 第三阶段协议：[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md)
 - 第三阶段故障矩阵：[`docs/PHASE3_FAULT_DRILLS.md`](docs/PHASE3_FAULT_DRILLS.md)
+- 确认与 Artifact 实施包：
+  [`docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md`](docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md)
 - 采集与 agent 共识：
   [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
 - C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)

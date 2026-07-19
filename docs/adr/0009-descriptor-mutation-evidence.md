@@ -16,7 +16,7 @@ ADR 0008 的 M0 已作为 `0015a_control_plane_auth` 部署。M1 如果只复用
 ## 决定
 
 1. 新增线性迁移 `0015b_descriptor_mutations`，其 down revision 为
-   `0015a_control_plane_auth`；未来 `0016_tool_confirmations_artifacts` 接在第三阶段
+   `0015a_control_plane_auth`；未来 `0016_confirm_artifacts` 接在第三阶段
    最后一个 `0015x` 治理迁移之后。
 2. `tool_descriptors` 增加单调 `resource_version`。每个 lifecycle 更新必须恰好加一，
    并且同一事务已追加匹配 sequence、before/after 的 lifecycle event。

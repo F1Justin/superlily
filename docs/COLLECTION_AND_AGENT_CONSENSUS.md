@@ -280,7 +280,7 @@ C0-A 在 C0-D 稳定后可以与 Phase 3b 分别排期；Phase 3b 不依赖两�
 
 历史导入继续遵守 `HISTORY_DRY_RUN.md`：旧库缺少可靠跨账号强身份时，保留来源身份，不能用文本和时间伪造统一 canonical 事件。
 
-`C0-D1` 使用下一个单线 Alembic revision `0013_collection_reliability`。尚未部署的 Phase 3 迁移顺延为 `0014_tool_invocations`、`0015_tool_attempts` 和 `0016_tool_confirmations_artifacts`；不能为了保留旧编号制造两个 migration head，也不能把 C0-D 表塞进已经部署的 `0012_tool_registry`。
+`C0-D1` 使用下一个单线 Alembic revision `0013_collection_reliability`。尚未部署的 Phase 3 迁移顺延为 `0014_tool_invocations`、`0015_tool_attempts` 和 `0016_confirm_artifacts`；不能为了保留旧编号制造两个 migration head，也不能把 C0-D 表塞进已经部署的 `0012_tool_registry`。
 
 ## 9. 验收标准
 

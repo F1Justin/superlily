@@ -36,7 +36,7 @@ The existing `/v1/events` response becomes a durable commit receipt while retain
 - C0-D2 must implement local spool durability and replay before the receipt/watermark tables prove end-to-end no-loss collection.
 - C0-D4 must map real OneBot/NapCat notices into the action contract on both Lily and Nekro.
 - C0-A receives new migrations only when its schemas are reviewed; no forward/archive/export table is created by `0013`.
-- Previously planned, undeployed Phase 3 migrations shift to `0014_tool_invocations`, `0015_tool_attempts` and `0016_tool_confirmations_artifacts`; the Alembic history stays linear.
+- Previously planned, undeployed Phase 3 migrations shift to `0014_tool_invocations`, `0015_tool_attempts` and `0016_confirm_artifacts`; the Alembic history stays linear.
 - This ADR supersedes only the undeployed migration-number references in accepted ADRs 0003 and 0004. Their protocol, authority and safety decisions remain unchanged.
 
 ## Rejected alternatives

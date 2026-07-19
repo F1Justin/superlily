@@ -11,12 +11,12 @@
 quarantine 或 canary mutation。直接 SQL 虽然技术上可行，却会绕过这条已接受的
 authority 边界。
 
-ADR 0007 已将 `0016_tool_confirmations_artifacts` 固定给 confirmation/artifact，
+ADR 0007 已将 `0016_confirm_artifacts` 固定给 confirmation/artifact，
 不能为赶 canary 重用或改名。
 
 ## 决定
 
-1. 在 `0015_tool_attempts` 与未来 `0016_tool_confirmations_artifacts` 之间插入唯一
+1. 在 `0015_tool_attempts` 与未来 `0016_confirm_artifacts` 之间插入唯一
    Alembic revision `0015a_control_plane_auth`。这不是改写已应用的 `0015`，也不占用
    已冻结的 `0016`；未来 `0016` 以 `0015a_control_plane_auth` 为 down revision。
 2. 控制面按最小权限分包上线，不先造完整 Web Admin：
@@ -44,7 +44,7 @@ ADR 0007 已将 `0016_tool_confirmations_artifacts` 固定给 confirmation/artif
 只读 Registry/API 继续可用；没有配置 operator credential 时，新 session/mutation
 表即使存在也不会开放 mutation 权限。
 
-`0016_tool_confirmations_artifacts` 的名称和职责保持不变，只把 down revision 接到
+`0016_confirm_artifacts` 的名称和职责保持不变，只把 down revision 接到
 `0015a_control_plane_auth`。若 M0–M3 尚未签署，`status.inspect` 继续
 `ledger_only`，不会因执行器已经存在而自动激活。
 

@@ -443,9 +443,9 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
 
 ## Artifacts and first tools
 
-- [ ] Migration `0016_tool_confirmations_artifacts` passes both databases and
+- [x] Migration `0016_confirm_artifacts` passes both databases and
   reservation/upload/finalize state is immutable/idempotent.
-- [ ] Upload secrets are one-use/provider-attempt-fence-bound. Core enforces
+- [x] Upload secrets are one-use/provider-attempt-fence-bound. Core enforces
   expiry, count, bytes, MIME/hash/dimensions and quarantine before atomic
   finalize; late/failed/orphan cleanup is tested.
 - [x] `status.inspect` passes registry with execution off, then ledger-only,

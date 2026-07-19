@@ -63,9 +63,12 @@ rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废
 默认禁用生产迁移与首次计划已于 2026-07-19 完成：`0015d` head/no
 drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active plan/lease。
 四个独立 stop 和首个 `admin_api` 精确 canary 已有生产证据；恢复故障矩阵与稳定
-窗口现也已签署。完整 SQLite 为 395 通过、4 跳过，PostgreSQL 17.10 为 399 通过。
-下一包是 `0016_tool_confirmations_artifacts`；仍不扩大 conversation、caller 或
-自然语言 authority，工具循环仍属 Phase 5。
+窗口现也已签署。`0016_confirm_artifacts` 随后完成精确请求 confirmation、批准时
+消费 rollout、内容寻址 artifact、Provider reserve/upload/finalize SDK、保留期/
+orphan 清理和字段级数据库 guard。SQLite 全量为 439 通过、4 跳过，PostgreSQL 17
+全量为 443 通过；当前等待默认关闭的生产迁移签署。它仍不扩大 conversation、caller
+或自然语言 authority，工具循环仍属 Phase 5。签署后下一实现包是文本模式
+`wolfram.run`，图像输出继续等待单独 artifact canary。
 
 ## Sequencing rules
 

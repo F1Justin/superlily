@@ -370,7 +370,7 @@ foundation; the remaining Phase 3 allocation is frozen before implementation:
   actions, receipts and watermarks; no tool execution state;
 - `0014_tool_invocations`: invocations and append-only transitions;
 - `0015_tool_attempts`: leases, fencing tokens, attempt heartbeats and usage;
-- `0016_tool_confirmations_artifacts`: confirmation ledger plus bounded
+- `0016_confirm_artifacts`: confirmation ledger plus bounded
   artifact reservations and metadata.
 
 Later migrations may split these tables but may not collapse immutable audit
@@ -556,7 +556,7 @@ After the start checklist is green, implementation begins in this exact order:
    stop controls, then upgrade the reporting-only status process with the
    standalone hard-budget lease executor. Canary the exact
    tool/version/conversation/caller/provider tuple and prove rollback.
-8. Add migration `0016_tool_confirmations_artifacts` and pass reservation,
+8. Add migration `0016_confirm_artifacts` and pass reservation,
    upload, finalize, expiry, quota, MIME/hash, reaper, and late-fence tests.
 9. Migrate text-only `wolfram.run`; enable its image output only through the
    artifact path. Migrate `latex.render` after that boundary passes. Old command

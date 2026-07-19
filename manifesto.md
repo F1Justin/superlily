@@ -316,7 +316,7 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 8.1 当前第三阶段状态（2026-07-19）
 
-十一份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期、控制面认证、descriptor mutation、Provider quarantine 与 Git-bound rollout plan 边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
+十二份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期、控制面认证、descriptor mutation、Provider quarantine、Git-bound rollout plan 与确认/artifact 具体协议边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
 
 2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
 
@@ -336,7 +336,16 @@ Provider 时钟、取消确认、取消/完成竞态、取消未确认，以及 
 authority。完整 SQLite 为 395 项通过、4 项 PostgreSQL 专用场景跳过；PostgreSQL
 17.10 为 399 项全部通过。生产 8/8 场景已得到预期终态；空 lease 的 keep-alive
 边界噪声也已修正并跨过完整 inventory 稳定周期。下一包转为
-`0016_tool_confirmations_artifacts`，详细证据见 `docs/PHASE3_FAULT_DRILLS.md`。
+`0016_confirm_artifacts`，详细证据见 `docs/PHASE3_FAULT_DRILLS.md`。
+
+`0016_confirm_artifacts` 随后已完成实现与双数据库全量回归。需要确认的调用不在等待
+人类时消耗执行 deadline 或 rollout 次数，批准时会重新验证完整 authority；单人
+`always/on_write` 可用，缺少强身份边界的 `two_person` 继续 fail closed。Artifact
+使用 Provider/attempt/fence 绑定的 reserve、流式 upload、Core 独立 PNG 检查、内容
+寻址 finalize 和 complete 精确引用，upload secret 与 lease secret 均不进入审计。
+SQLite 为 439 项通过、4 项跳过，PostgreSQL 17 为 443 项通过；默认 root/pepper 为空，
+没有新 descriptor、plan、自然语言 caller 或平台发送 authority。生产默认关闭签署后
+才进入文本模式 `wolfram.run`。
 
 9. 第四阶段：统一 Renderer
 
@@ -413,8 +422,8 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 3. M2 Provider quarantine、M3 Git-bound rollout plan、四种独立 stop 和首个单次 `admin_api` canary 已完成生产证明。继续保持角色、短会话、重认证、服务端 preview、CAS、幂等、只追加 before/after 审计和可测回滚，禁止直接 SQL 代替。
 4. 当前 13 份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
 5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
-6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；现在开始 `0016_tool_confirmations_artifacts`，仍不扩大会话、caller 或模型 authority。
-7. `0016` 通过后才迁移文本模式 `wolfram.run`；图像输出和 `latex.render` 必须走 finalized artifact。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现与双数据库回归已经完成，下一步是默认关闭的生产迁移、备份恢复和零 authority 签署。
+7. 生产签署后迁移文本模式 `wolfram.run`；图像输出和 `latex.render` 必须先走独立的 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 

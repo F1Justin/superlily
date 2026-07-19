@@ -18,7 +18,7 @@ different histories for the same Alembic revision names.
   contains no tool execution state.
 - The invocation ledger is `0014_tool_invocations`.
 - Lease, attempt, and fencing state is `0015_tool_attempts`.
-- Confirmation and artifact state is `0016_tool_confirmations_artifacts`.
+- Confirmation and artifact state is `0016_confirm_artifacts`.
 
 This ADR amends only the migration-number references in the consequences of
 ADRs 0003 and 0004. Their transition, recovery, fencing, and artifact decisions
