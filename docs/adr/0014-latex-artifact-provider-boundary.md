@@ -54,7 +54,7 @@ reserve/upload/finalize 协议，但生产 artifact 存储仍默认关闭，也�
    连同 XeTeX/Poppler 版本生成 worker identity
    `5fec6df87bbfda7666c2e47018763d080e2b99049cea57d24e3ad4bc160e848a`；Provider
    implementation hash 为
-   `79c93de77f01b4694dbf4b0a2456148fb4f4082c8092ceb794ccf8f8674c6f0c`。
+   `26a473b53cb3291c91fa049ed8fc15316d8c44e6d91a9bfa790f6a314d1357c3`。
    这些哈希是运维核验过的部署身份，不是硬件远程证明；任一输入漂移都必须重新审阅。
 10. 客户端断开不能中止已经进入 worker thread 的同步 TeX 子进程，因此取消或 Core
     链路不明确时 Provider 只停止续租，不发送虚假的取消 ACK。worker 的纯计算仍受
@@ -81,4 +81,3 @@ ADR 自动扩大权限。
 - worker 的 network/rootfs/capability/cgroup/PID/tmpfs/uid、版本和部署 identity；
 - Core artifact 存储启用前备份/恢复，reserve/upload/finalize/reference/reaper 证据；
 - 单次固定公式 canary、零平台 response、计划暂停、旧 `/tex` 串行对比和稳定窗口。
-

@@ -29,10 +29,10 @@
 | artifact | 1 张 `image/png`，最多 4 MiB、2048×2048 |
 | timeout / concurrency | 30 秒 / 1 |
 | worker image | `sha256:845faf7b8caecf17540c1933a9a764b5c13865b5f57597a741aa27b3d75b69bc` |
-| Provider image | `sha256:be90487d21822a3994d5cd6ec8edb194517e8e5eaaed0107688b8ffd519d6274` |
+| Provider image | `sha256:cc2ec3b8d73c64f17f12d400dedb903422fb2e7df003757952e3cbddbedb72fc` |
 | sandbox profile | `0bdca3208a8b183937ffb4f6f4cda908a731ed709122440a76c781b953c2b492` |
 | worker identity | `5fec6df87bbfda7666c2e47018763d080e2b99049cea57d24e3ad4bc160e848a` |
-| implementation hash | `79c93de77f01b4694dbf4b0a2456148fb4f4082c8092ceb794ccf8f8674c6f0c` |
+| implementation hash | `26a473b53cb3291c91fa049ed8fc15316d8c44e6d91a9bfa790f6a314d1357c3` |
 
 implementation hash 只要 `main.py`、`runtime.py` 或 worker identity 改变就必须重算。
 worker identity 只要镜像、worker 源码、模板、引擎版本或隔离配置改变也必须重算。

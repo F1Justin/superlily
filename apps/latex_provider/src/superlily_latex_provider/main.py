@@ -730,41 +730,51 @@ def main(argv: list[str] | None = None) -> int:
         level=os.getenv("SUPERLILY_LATEX_PROVIDER_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    if args.command == "verify":
-        executor, implementation = _load_runtime(_verify_config(args), execution_enabled=True)
-        print(
-            canonicalize_json_value(
-                {
-                    "descriptor_hash": implementation.loaded_descriptor.authority.sha256,
-                    "implementation_hash": executor.implementation_hash,
-                    "worker_identity_hash": executor.worker_identity_hash,
-                }
-            ).canonical_bytes.decode("utf-8")
-        )
-        return 0
-    if args.command == "probe":
-        config = _verify_config(args)
-        executor, _ = _load_runtime(config, execution_enabled=True)
-        result = asyncio.run(executor.execute({"latex": "x^2+y^2=z^2"}, timeout_seconds=25))
-        if result.outcome != "success" or result.artifact is None:
-            raise SystemExit(result.safe_detail or "latex probe failed")
-        print(
-            canonicalize_json_value(
-                {
-                    "byte_size": len(result.artifact.content),
-                    "content_sha256": sha256(result.artifact.content).hexdigest(),
-                    "height_pixels": result.artifact.height_pixels,
-                    "mime_type": MIME_TYPE,
-                    "width_pixels": result.artifact.width_pixels,
-                }
-            ).canonical_bytes.decode("utf-8")
-        )
-        return 0
-    config = LatexProviderConfig.from_env()
-    if args.command == "report":
-        asyncio.run(run_reporter(config, once=args.once))
-    else:
-        asyncio.run(run_executor(config, once=args.once))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    try:
+        if args.command == "verify":
+            executor, implementation = _load_runtime(
+                _verify_config(args), execution_enabled=True
+            )
+            print(
+                canonicalize_json_value(
+                    {
+                        "descriptor_hash": implementation.loaded_descriptor.authority.sha256,
+                        "implementation_hash": executor.implementation_hash,
+                        "worker_identity_hash": executor.worker_identity_hash,
+                    }
+                ).canonical_bytes.decode("utf-8")
+            )
+        elif args.command == "probe":
+            config = _verify_config(args)
+            executor, _ = _load_runtime(config, execution_enabled=True)
+            result = asyncio.run(
+                executor.execute({"latex": "x^2+y^2=z^2"}, timeout_seconds=25)
+            )
+            if result.outcome != "success" or result.artifact is None:
+                raise RuntimeError(result.safe_detail or "latex probe failed")
+            print(
+                canonicalize_json_value(
+                    {
+                        "byte_size": len(result.artifact.content),
+                        "content_sha256": sha256(result.artifact.content).hexdigest(),
+                        "height_pixels": result.artifact.height_pixels,
+                        "mime_type": MIME_TYPE,
+                        "width_pixels": result.artifact.width_pixels,
+                    }
+                ).canonical_bytes.decode("utf-8")
+            )
+        elif args.command == "report":
+            config = LatexProviderConfig.from_env()
+            os.environ.pop("SUPERLILY_LATEX_PROVIDER_TOKEN", None)
+            asyncio.run(run_reporter(config, once=args.once))
+        else:
+            config = LatexProviderConfig.from_env()
+            os.environ.pop("SUPERLILY_LATEX_PROVIDER_TOKEN", None)
+            asyncio.run(run_executor(config, once=args.once))
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.error("latex provider failed safely: %s", exc)
+        return 2
     return 0
 
 
