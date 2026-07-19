@@ -10,7 +10,9 @@ COPY deploy/constraints.txt ./deploy/constraints.txt
 COPY apps ./apps
 COPY packages ./packages
 COPY registry ./registry
-RUN python -m pip install --constraint deploy/constraints.txt . && chmod -R a+rX /app
+RUN python -m pip install --constraint deploy/constraints.txt . \
+    && chmod -R a+rX /app \
+    && install -d -o 65532 -g 65532 -m 0700 /var/lib/superlily/artifacts
 
 USER 65532:65532
 EXPOSE 8000

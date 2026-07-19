@@ -61,6 +61,8 @@ EligibilityReason: TypeAlias = Literal[
     "execution_off",
     "tool_suspended",
     "global_stop",
+    "artifact_storage_unavailable",
+    "artifact_mime_unsupported",
 ]
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")

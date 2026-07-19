@@ -67,6 +67,25 @@ def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> No
     assert settings.tool_global_stop is True
 
 
+def test_artifact_store_requires_a_paired_narrow_root_and_private_pepper(tmp_path) -> None:
+    assert Settings().artifact_enabled is False
+    with pytest.raises(ValueError, match="configured together"):
+        Settings(artifact_root=str(tmp_path / "artifacts"))
+    with pytest.raises(ValueError, match="at least 32"):
+        Settings(
+            artifact_root=str(tmp_path / "artifacts"),
+            artifact_secret_pepper="short",
+        )
+    with pytest.raises(ValueError, match="narrow absolute"):
+        Settings(artifact_root="/", artifact_secret_pepper="p" * 32)
+    settings = Settings(
+        artifact_root=str(tmp_path / "artifacts"),
+        artifact_secret_pepper="p" * 32,
+    )
+    assert settings.artifact_enabled is True
+    assert settings.artifact_secret_pepper not in repr(settings)
+
+
 def test_enforce_mode_remains_closed_until_reviewed_plan_support(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "enforce")
 

@@ -16,6 +16,7 @@ from .control_routes import (
 )
 from .routes import router
 from .settings import Settings
+from .tool_artifact_service import reap_expired_artifacts
 from .tool_execution_service import reap_expired_attempts
 from .tool_invocation_service import reap_expired_invocations
 
@@ -41,19 +42,27 @@ def _install_access_log_filter() -> None:
 
 
 async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
-    """只在可执行模式回收过期调用；异常记日志，不能拖垮 Core。"""
+    """独立回收 artifact 与执行账本；任一失败不阻塞另一条清理线。"""
 
     while True:
         settings: Settings = app.state.settings
-        try:
-            if settings.tool_execution_mode == "canary":
+        if settings.artifact_enabled:
+            try:
+                async with database.sessions() as session:
+                    await reap_expired_artifacts(session, settings)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("tool artifact reaper iteration failed")
+        if settings.tool_execution_mode == "canary":
+            try:
                 async with database.sessions() as session:
                     await reap_expired_attempts(session)
                     await reap_expired_invocations(session)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("tool execution reaper iteration failed")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("tool execution reaper iteration failed")
         await asyncio.sleep(settings.tool_reaper_interval_seconds)
 
 
@@ -95,12 +104,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; frame-ancestors 'none'"
             )
+        if request.url.path.startswith(("/v1/tool-executions", "/v1/tool-artifacts")):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.exception_handler(RequestValidationError)
     async def redact_control_validation_error(request: Request, exc: RequestValidationError):
         if request.url.path.startswith("/v1/control/"):
             return JSONResponse(status_code=422, content={"detail": "invalid control request"})
+        if request.url.path.startswith(("/v1/tool-executions", "/v1/tool-artifacts")):
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "invalid provider execution request"},
+            )
         return await request_validation_exception_handler(request, exc)
 
     app.include_router(router)

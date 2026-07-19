@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterable
 from typing import Any
 
 import httpx
@@ -11,6 +12,11 @@ from superlily_contracts import (
     ToolExecutionFailIn,
     ToolExecutionHeartbeatIn,
     ToolExecutionStartIn,
+    ToolArtifactFinalizeIn,
+    ToolArtifactReference,
+    ToolArtifactReservationOut,
+    ToolArtifactReserveIn,
+    ToolArtifactUploadOut,
     ToolLeaseOut,
     ToolLeaseRequestIn,
 )
@@ -101,6 +107,99 @@ class ProviderExecutionClient:
         )
         return self._require_receipt(result)
 
+    async def reserve_artifact(
+        self,
+        invocation_id: str,
+        payload: ToolArtifactReserveIn,
+        *,
+        idempotency_key: str,
+    ) -> ToolArtifactReservationOut:
+        if not 8 <= len(idempotency_key) <= 256 or idempotency_key != idempotency_key.strip():
+            raise ValueError("artifact idempotency key must be exact bounded text")
+        result = self._require_receipt(
+            await self._post(
+                f"/v1/tool-executions/{invocation_id}/artifacts/reserve",
+                payload.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+            )
+        )
+        bounded = dict(result)
+        bounded.pop("duplicate", None)
+        try:
+            return ToolArtifactReservationOut.model_validate(bounded)
+        except ValueError as exc:
+            raise ProviderExecutionError(
+                "Core returned an invalid artifact reservation"
+            ) from exc
+
+    async def upload_artifact(
+        self,
+        artifact_id: str,
+        *,
+        upload_secret: str,
+        mime_type: str,
+        content: bytes | AsyncIterable[bytes],
+    ) -> ToolArtifactUploadOut:
+        if not upload_secret or upload_secret != upload_secret.strip():
+            raise ValueError("artifact upload secret must be exact non-empty text")
+        if not mime_type or mime_type != mime_type.strip():
+            raise ValueError("artifact MIME must be exact non-empty text")
+        client = await self._ensure_client()
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "X-Superlily-Artifact-Upload-Secret": upload_secret,
+            "Content-Type": mime_type,
+        }
+        if isinstance(content, bytes):
+            headers["Content-Length"] = str(len(content))
+        try:
+            response = await client.put(
+                f"{self.base_url}/v1/tool-artifacts/{artifact_id}/content",
+                content=content,
+                headers=headers,
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ProviderExecutionError(
+                    "Core returned a non-object artifact upload receipt"
+                )
+            try:
+                return ToolArtifactUploadOut.model_validate(result)
+            except ValueError as exc:
+                raise ProviderExecutionError(
+                    "Core returned an invalid artifact upload receipt"
+                ) from exc
+        except ProviderExecutionError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            raise ProviderExecutionError(
+                f"Core rejected artifact upload with HTTP {exc.response.status_code}"
+            ) from exc
+        except (httpx.TransportError, ValueError) as exc:
+            raise ProviderExecutionError(
+                f"artifact upload had an ambiguous {type(exc).__name__} failure"
+            ) from exc
+
+    async def finalize_artifact(
+        self,
+        invocation_id: str,
+        payload: ToolArtifactFinalizeIn,
+    ) -> ToolArtifactReference:
+        result = self._require_receipt(
+            await self._post(
+                f"/v1/tool-executions/{invocation_id}/artifacts/finalize",
+                payload.model_dump(mode="json"),
+            )
+        )
+        try:
+            return ToolArtifactReference.model_validate(result)
+        except ValueError as exc:
+            raise ProviderExecutionError(
+                "Core returned an invalid finalized artifact reference"
+            ) from exc
+
     async def complete(
         self,
         invocation_id: str,
@@ -135,6 +234,7 @@ class ProviderExecutionClient:
         payload: dict[str, Any],
         *,
         close_connection: bool = False,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any] | None:
         client = await self._ensure_client()
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -143,6 +243,8 @@ class ProviderExecutionClient:
         # 产生 ReadError；真实执行阶段的 start/heartbeat/complete 仍复用连接。
         if close_connection:
             headers["Connection"] = "close"
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
         try:
             response = await client.post(
                 f"{self.base_url}{endpoint}",

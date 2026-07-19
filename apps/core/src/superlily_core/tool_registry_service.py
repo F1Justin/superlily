@@ -41,6 +41,8 @@ _REASON_ORDER = (
     "not_reviewed",
     "inactive_descriptor",
     "tool_suspended",
+    "artifact_storage_unavailable",
+    "artifact_mime_unsupported",
     "provider_missing",
     "provider_quarantined",
     "inventory_missing",
@@ -709,6 +711,14 @@ async def tool_registry_view(
             base_reasons.add("inactive_descriptor")
         if record.lifecycle == "suspended":
             base_reasons.add("tool_suspended")
+        if descriptor.execution_permissions.artifacts:
+            if not settings.artifact_enabled:
+                base_reasons.add("artifact_storage_unavailable")
+            if any(
+                mime_type != "image/png"
+                for mime_type in descriptor.execution_permissions.artifacts
+            ):
+                base_reasons.add("artifact_mime_unsupported")
         runtime = []
         provider_reason_sets: list[set[str]] = []
         for provider_id in descriptor.provider_selector.provider_ids:

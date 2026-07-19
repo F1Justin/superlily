@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
 
 from .command_registry import DEFAULT_COMMAND_REGISTRY_PATH
@@ -162,6 +163,9 @@ class Settings:
     tool_lease_seconds: int = 15
     tool_confirmation_seconds: int = 120
     tool_reaper_interval_seconds: int = 1
+    artifact_root: str = ""
+    artifact_secret_pepper: str = field(default="", repr=False)
+    artifact_orphan_grace_seconds: int = 300
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
@@ -225,6 +229,22 @@ class Settings:
             raise ValueError("tool_confirmation_seconds must be between 30 and 900")
         if not 1 <= self.tool_reaper_interval_seconds <= 60:
             raise ValueError("tool_reaper_interval_seconds must be between 1 and 60")
+        if bool(self.artifact_root) != bool(self.artifact_secret_pepper):
+            raise ValueError("artifact root and secret pepper must be configured together")
+        if self.artifact_root:
+            root = Path(self.artifact_root)
+            if (
+                not root.is_absolute()
+                or ".." in root.parts
+                or "\x00" in self.artifact_root
+                or root == Path("/")
+                or root == Path.home()
+            ):
+                raise ValueError("artifact_root must be a narrow absolute directory")
+            if len(self.artifact_secret_pepper) < 32:
+                raise ValueError("artifact_secret_pepper must contain at least 32 characters")
+        if not 60 <= self.artifact_orphan_grace_seconds <= 86_400:
+            raise ValueError("artifact_orphan_grace_seconds must be between 60 and 86400")
         if any(
             not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
             or "/" in host
@@ -279,6 +299,10 @@ class Settings:
         key = f"{platform}:{conversation_type}:{canonical_conversation_id}"
         return self.group_modes.get(key, self.group_default_mode)
 
+    @property
+    def artifact_enabled(self) -> bool:
+        return bool(self.artifact_root and self.artifact_secret_pepper)
+
     @classmethod
     def from_env(cls) -> "Settings":
         tokens = _token_map(
@@ -330,6 +354,11 @@ class Settings:
             ),
             tool_reaper_interval_seconds=int(
                 os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")
+            ),
+            artifact_root=os.getenv("SUPERLILY_ARTIFACT_ROOT", ""),
+            artifact_secret_pepper=os.getenv("SUPERLILY_ARTIFACT_SECRET_PEPPER", ""),
+            artifact_orphan_grace_seconds=int(
+                os.getenv("SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS", "300")
             ),
             control_operators=_control_operators(
                 os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),

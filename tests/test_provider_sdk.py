@@ -8,6 +8,8 @@ import pytest
 
 from superlily_contracts import (
     ProviderRegistration,
+    ToolArtifactFinalizeIn,
+    ToolArtifactReserveIn,
     ToolExecutionStartIn,
     ToolLeaseOut,
     canonicalize_json_value,
@@ -307,3 +309,96 @@ async def test_execution_sdk_rejects_empty_non_lease_receipt() -> None:
                 ),
             )
     assert requests[0].headers["connection"] != "close"
+
+
+async def test_artifact_sdk_is_single_shot_and_never_exposes_upload_secret() -> None:
+    requests: list[httpx.Request] = []
+    secret = "artifact-upload-secret-that-must-not-leak-123"
+    proof = {
+        "attempt_id": "attempt-1",
+        "fencing_token": 1,
+        "lease_secret": "s" * 43,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "POST" and request.url.path.endswith("/reserve"):
+            return httpx.Response(
+                201,
+                json={
+                    "artifact_id": "artifact-1",
+                    "invocation_id": "invocation-1",
+                    "attempt_id": "attempt-1",
+                    "fencing_token": 1,
+                    "upload_secret": secret,
+                    "mime_type": "image/png",
+                    "max_bytes": 2048,
+                    "max_width_pixels": 16,
+                    "max_height_pixels": 16,
+                    "expires_at": "2026-07-19T12:00:00+00:00",
+                    "duplicate": False,
+                },
+            )
+        if request.method == "PUT":
+            return httpx.Response(503, json={"echo": secret})
+        raise AssertionError(request.url)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        executor = ProviderExecutionClient(
+            base_url="https://core.example.test",
+            provider_id="provider-status-primary",
+            token="provider-token",
+            client=http_client,
+        )
+        reservation = await executor.reserve_artifact(
+            "invocation-1",
+            ToolArtifactReserveIn.model_validate({**proof, "mime_type": "image/png"}),
+            idempotency_key="artifact-sdk-reserve-1",
+        )
+        with pytest.raises(ProviderExecutionError) as failure:
+            await executor.upload_artifact(
+                reservation.artifact_id,
+                upload_secret=reservation.upload_secret,
+                mime_type=reservation.mime_type,
+                content=b"png-body",
+            )
+    assert len(requests) == 2
+    assert requests[0].headers["Idempotency-Key"] == "artifact-sdk-reserve-1"
+    assert requests[1].headers["X-Superlily-Artifact-Upload-Secret"] == secret
+    assert requests[1].headers["Content-Length"] == "8"
+    assert secret not in str(failure.value)
+    assert "echo" not in str(failure.value)
+
+
+async def test_artifact_sdk_validates_finalize_reference() -> None:
+    reference = {
+        "artifact_id": "artifact-1",
+        "content_sha256": "a" * 64,
+        "mime_type": "image/png",
+        "byte_size": 68,
+        "width_pixels": 1,
+        "height_pixels": 1,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=reference)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        executor = ProviderExecutionClient(
+            base_url="https://core.example.test",
+            provider_id="provider-status-primary",
+            token="provider-token",
+            client=http_client,
+        )
+        result = await executor.finalize_artifact(
+            "invocation-1",
+            ToolArtifactFinalizeIn.model_validate(
+                {
+                    "attempt_id": "attempt-1",
+                    "fencing_token": 1,
+                    "lease_secret": "s" * 43,
+                    **reference,
+                }
+            ),
+        )
+    assert result.model_dump(mode="json") == reference

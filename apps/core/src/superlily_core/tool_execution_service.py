@@ -635,8 +635,13 @@ def _budget_violation(
     *,
     actual_input_bytes: int,
     actual_output_bytes: int,
+    actual_artifact_bytes: int,
 ) -> str | None:
-    if usage.input_bytes != actual_input_bytes or usage.output_bytes != actual_output_bytes:
+    if (
+        usage.input_bytes != actual_input_bytes
+        or usage.output_bytes != actual_output_bytes
+        or usage.artifact_bytes != actual_artifact_bytes
+    ):
         return "usage_mismatch"
     budget = descriptor.resource_budget
     limits = {
@@ -644,7 +649,7 @@ def _budget_violation(
         "memory": (usage.memory_peak_bytes, budget.memory_bytes),
         "input_bytes": (actual_input_bytes, budget.input_bytes),
         "output_bytes": (actual_output_bytes, budget.output_bytes),
-        "artifact_bytes": (usage.artifact_bytes, budget.artifact_bytes),
+        "artifact_bytes": (actual_artifact_bytes, budget.artifact_bytes),
         "wall_time": (usage.wall_time_ms, descriptor.timeout_ms),
     }
     return next(
@@ -715,7 +720,13 @@ async def complete_tool_execution(
     invocation_id: str,
     payload: ToolExecutionCompleteIn,
     provider_id: str,
+    settings: Settings,
 ) -> dict[str, Any]:
+    from .tool_artifact_service import (
+        ArtifactProtocolError,
+        validate_and_reference_artifacts,
+    )
+
     attempt, invocation, now = await _locked_attempt_and_invocation(
         session,
         invocation_id,
@@ -751,11 +762,45 @@ async def complete_tool_execution(
             error_code="invalid_output",
             safe_error_detail="provider output did not satisfy the reviewed schema",
         )
+    try:
+        artifact_bytes = await validate_and_reference_artifacts(
+            session,
+            attempt,
+            invocation,
+            descriptor,
+            payload.artifacts,
+            payload.usage,
+            provider_id,
+            now,
+            settings,
+            mark_referenced=False,
+        )
+    except ArtifactProtocolError as exc:
+        cancelled_race = invocation.state == "cancel_requested"
+        return await _finish_attempt(
+            session,
+            attempt,
+            invocation,
+            provider_id=provider_id,
+            provider_result_id=payload.provider_result_id,
+            usage=payload.usage,
+            event="fail",
+            invocation_event=("unknown_completion" if cancelled_race else "complete_failure"),
+            invocation_state=("unknown_completion" if cancelled_race else "failed"),
+            attempt_state=("unknown_completion" if cancelled_race else "failed"),
+            reason_code=("completion_raced_cancellation" if cancelled_race else exc.code),
+            evidence={"output_hash": output_hash, **exc.evidence},
+            now=now,
+            output_hash=output_hash,
+            error_code="artifact_failed",
+            safe_error_detail=exc.safe_detail,
+        )
     violation = _budget_violation(
         descriptor,
         payload.usage,
         actual_input_bytes=input_bytes,
         actual_output_bytes=output_bytes,
+        actual_artifact_bytes=artifact_bytes,
     )
     if violation is not None:
         cancelled_race = invocation.state == "cancel_requested"
@@ -795,6 +840,38 @@ async def complete_tool_execution(
             output_hash=output_hash,
             error_code="cancelled",
             safe_error_detail="completion arrived after cancellation was requested",
+        )
+    try:
+        await validate_and_reference_artifacts(
+            session,
+            attempt,
+            invocation,
+            descriptor,
+            payload.artifacts,
+            payload.usage,
+            provider_id,
+            now,
+            settings,
+            mark_referenced=True,
+        )
+    except ArtifactProtocolError as exc:
+        return await _finish_attempt(
+            session,
+            attempt,
+            invocation,
+            provider_id=provider_id,
+            provider_result_id=payload.provider_result_id,
+            usage=payload.usage,
+            event="fail",
+            invocation_event="complete_failure",
+            invocation_state="failed",
+            attempt_state="failed",
+            reason_code=exc.code,
+            evidence={"output_hash": output_hash, **exc.evidence},
+            now=now,
+            output_hash=output_hash,
+            error_code="artifact_failed",
+            safe_error_detail=exc.safe_detail,
         )
     return await _finish_attempt(
         session,

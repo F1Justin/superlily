@@ -309,3 +309,9 @@ def lease_secret_hash(secret: str) -> str:
     """将高熵一次性 secret 转为可比较的存储值。"""
 
     return canonicalize_json_value({"lease_secret": secret}).sha256
+
+
+def artifact_upload_secret_hash(secret: str) -> str:
+    """将 artifact 一次性上传 secret 转为可比较的存储值。"""
+
+    return canonicalize_json_value({"artifact_upload_secret": secret}).sha256

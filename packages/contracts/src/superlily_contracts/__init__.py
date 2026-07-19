@@ -95,6 +95,7 @@ from .tool_execution import (
     ToolLeaseOut,
     ToolLeaseRequestIn,
     ToolUsage,
+    artifact_upload_secret_hash,
     lease_secret_hash,
 )
 from .tool_rollout import (
@@ -184,6 +185,7 @@ __all__ = [
     "ToolLeaseOut",
     "ToolLeaseRequestIn",
     "ToolUsage",
+    "artifact_upload_secret_hash",
     "ToolRegistryContractError",
     "canonicalize_json",
     "canonicalize_json_value",

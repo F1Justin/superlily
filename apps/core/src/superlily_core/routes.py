@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -16,6 +17,8 @@ from superlily_contracts import (
     ToolInvocationCancelIn,
     ToolInvocationConfirmIn,
     ToolInvocationCreateIn,
+    ToolArtifactFinalizeIn,
+    ToolArtifactReserveIn,
     ToolExecutionCompleteIn,
     ToolExecutionFailIn,
     ToolExecutionHeartbeatIn,
@@ -82,6 +85,11 @@ from .tool_execution_service import (
     lease_tool_execution,
     start_tool_execution,
 )
+from .tool_artifact_service import (
+    finalize_tool_artifact,
+    reserve_tool_artifact,
+    upload_tool_artifact,
+)
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -89,6 +97,7 @@ Identity = Annotated[str, Depends(ingest_identity)]
 ProviderIdentity = Annotated[str, Depends(provider_identity)]
 ToolInvocationIdentity = Annotated[InvocationIdentity, Depends(invocation_identity)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=256)]
+_ARTIFACT_UPLOAD_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
 def _verify_identity(authenticated_instance: str, payload_instance: str) -> None:
@@ -1247,6 +1256,91 @@ async def post_tool_execution_heartbeat(
     )
 
 
+@router.post(
+    "/v1/tool-executions/{invocation_id}/artifacts/reserve",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_tool_artifact_reserve(
+    invocation_id: str,
+    payload: ToolArtifactReserveIn,
+    response: Response,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    reservation, duplicate = await reserve_tool_artifact(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+        idempotency_key,
+        session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = reservation.model_dump(mode="json")
+    result["duplicate"] = duplicate
+    return result
+
+
+@router.put("/v1/tool-artifacts/{artifact_id}/content")
+async def put_tool_artifact_content(
+    artifact_id: str,
+    request: Request,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    upload_secret = request.headers.get("X-Superlily-Artifact-Upload-Secret", "")
+    if not _ARTIFACT_UPLOAD_SECRET_RE.fullmatch(upload_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="artifact upload authorization is invalid",
+        )
+    content_type = request.headers.get("Content-Type", "")
+    raw_content_length = request.headers.get("Content-Length")
+    if raw_content_length is None:
+        content_length = None
+    elif (
+        len(raw_content_length) > 20
+        or not raw_content_length.isascii()
+        or not raw_content_length.isdigit()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="artifact Content-Length is invalid",
+        )
+    else:
+        content_length = int(raw_content_length)
+    result = await upload_tool_artifact(
+        session,
+        artifact_id,
+        request.stream(),
+        authenticated_provider,
+        upload_secret,
+        content_type,
+        content_length,
+        session.info["settings"],
+    )
+    return result.model_dump(mode="json")
+
+
+@router.post("/v1/tool-executions/{invocation_id}/artifacts/finalize")
+async def post_tool_artifact_finalize(
+    invocation_id: str,
+    payload: ToolArtifactFinalizeIn,
+    session: Session,
+    authenticated_provider: ProviderIdentity,
+) -> dict:
+    result = await finalize_tool_artifact(
+        session,
+        invocation_id,
+        payload,
+        authenticated_provider,
+        session.info["settings"],
+    )
+    return result.model_dump(mode="json")
+
+
 @router.post("/v1/tool-executions/{invocation_id}/complete")
 async def post_tool_execution_complete(
     invocation_id: str,
@@ -1259,6 +1353,7 @@ async def post_tool_execution_complete(
         invocation_id,
         payload,
         authenticated_provider,
+        session.info["settings"],
     )
 
 

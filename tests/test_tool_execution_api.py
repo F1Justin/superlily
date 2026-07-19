@@ -73,6 +73,7 @@ async def prepare_canary(
     *,
     implementation_hash: str = "a" * 64,
     descriptor_path: Path = DESCRIPTOR_PATH,
+    budget_enforcement: dict[str, str] | None = None,
 ) -> tuple[ToolDescriptorRecord, str]:
     source = descriptor_path.read_bytes()
     authority = load_tool_descriptor(source).authority
@@ -125,7 +126,10 @@ async def prepare_canary(
         descriptor_hash=descriptor.descriptor_hash,
         protocol_version="superlily-provider-pull-v1",
         implementation_hash=implementation_hash,
-        budget_enforcement={"output_bytes": "hard", "wall_time": "hard"},
+        budget_enforcement=(
+            budget_enforcement
+            or {"output_bytes": "hard", "wall_time": "hard"}
+        ),
     )
     snapshot_hash = provider_inventory_snapshot_hash(
         provider_id="provider-status-primary",

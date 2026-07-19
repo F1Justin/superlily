@@ -276,11 +276,49 @@ async def test_artifact_current_row_requires_fence_bound_append_only_event(
             )
         )
         assert event is not None
+        event_id = event.id
+        forged_at = now + timedelta(seconds=3)
+        forged_evidence = {"upload": "complete", "forged": True}
+        session.add(
+            ToolArtifactEvent(
+                artifact_id=artifact_id,
+                sequence=3,
+                event="upload_complete",
+                previous_state="uploading",
+                state="uploading",
+                actor_type="provider",
+                actor_id=lease["provider_id"],
+                provider_id=lease["provider_id"],
+                fencing_token=lease["fencing_token"],
+                reason_code="artifact_upload_completed",
+                evidence_json=forged_evidence,
+                evidence_hash=_hash(forged_evidence),
+                effective_at=forged_at,
+                created_at=forged_at,
+            )
+        )
+        await session.flush()
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                update(ToolArtifact)
+                .where(ToolArtifact.id == artifact_id)
+                .values(
+                    resource_version=3,
+                    content_sha256="e" * 64,
+                    byte_size=64,
+                    width_pixels=1,
+                    height_pixels=1,
+                    referenced_at=forged_at,
+                    updated_at=forged_at,
+                )
+            )
+            await session.commit()
+            await session.rollback()
         for statement in (
             update(ToolArtifactEvent)
-            .where(ToolArtifactEvent.id == event.id)
+            .where(ToolArtifactEvent.id == event_id)
             .values(reason_code="tampered"),
-            delete(ToolArtifactEvent).where(ToolArtifactEvent.id == event.id),
+            delete(ToolArtifactEvent).where(ToolArtifactEvent.id == event_id),
             update(ToolArtifact)
             .where(ToolArtifact.id == artifact_id)
             .values(fencing_token=lease["fencing_token"] + 1),

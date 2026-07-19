@@ -1740,18 +1740,88 @@ _ARTIFACT_SQLITE_STATE_GUARD = DDL(
               AND fencing_token = OLD.fencing_token
               AND effective_at IS NEW.updated_at
               AND ((event = 'upload_start' AND OLD.state = 'reserved'
-                    AND NEW.state = 'uploading') OR
+                    AND NEW.state = 'uploading'
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS OLD.expired_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'upload_complete' AND OLD.state = 'uploading'
-                    AND NEW.state = 'uploading') OR
+                    AND NEW.state = 'uploading'
+                    AND OLD.content_sha256 IS NULL AND OLD.byte_size IS NULL
+                    AND OLD.width_pixels IS NULL AND OLD.height_pixels IS NULL
+                    AND NEW.content_sha256 IS NOT NULL AND NEW.byte_size IS NOT NULL
+                    AND NEW.width_pixels IS NOT NULL AND NEW.height_pixels IS NOT NULL
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS OLD.expired_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'finalize' AND OLD.state = 'uploading'
-                    AND NEW.state = 'finalized' AND NEW.finalized_at IS effective_at) OR
+                    AND NEW.state = 'finalized' AND OLD.finalized_at IS NULL
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS NOT NULL
+                    AND NEW.finalized_at IS effective_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS OLD.expired_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'reference' AND OLD.state = 'finalized'
-                    AND NEW.state = 'finalized' AND NEW.referenced_at IS effective_at) OR
+                    AND NEW.state = 'finalized' AND OLD.referenced_at IS NULL
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS effective_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS OLD.expired_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'reject' AND OLD.state IN ('reserved', 'uploading')
-                    AND NEW.state = 'rejected' AND NEW.rejected_at IS effective_at) OR
+                    AND NEW.state = 'rejected' AND OLD.rejected_at IS NULL
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS effective_at
+                    AND NEW.expired_at IS OLD.expired_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'expire' AND OLD.state IN ('reserved', 'uploading')
-                    AND NEW.state = 'expired' AND NEW.expired_at IS effective_at) OR
+                    AND NEW.state = 'expired' AND OLD.expired_at IS NULL
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS effective_at
+                    AND NEW.content_deleted_at IS OLD.content_deleted_at) OR
                    (event = 'cleanup' AND NEW.state = OLD.state
+                    AND OLD.content_deleted_at IS NULL
+                    AND NEW.content_sha256 IS OLD.content_sha256
+                    AND NEW.byte_size IS OLD.byte_size
+                    AND NEW.width_pixels IS OLD.width_pixels
+                    AND NEW.height_pixels IS OLD.height_pixels
+                    AND NEW.storage_key IS OLD.storage_key
+                    AND NEW.finalized_at IS OLD.finalized_at
+                    AND NEW.referenced_at IS OLD.referenced_at
+                    AND NEW.rejected_at IS OLD.rejected_at
+                    AND NEW.expired_at IS OLD.expired_at
                     AND NEW.content_deleted_at IS effective_at))
         ) THEN RAISE(ABORT, 'tool artifact event is required') END;
     END
@@ -1816,22 +1886,88 @@ _ARTIFACT_POSTGRES_FUNCTION = DDL(
                   AND fencing_token = OLD.fencing_token
                   AND effective_at IS NOT DISTINCT FROM NEW.updated_at
                   AND ((event = 'upload_start' AND OLD.state = 'reserved'
-                        AND NEW.state = 'uploading') OR
+                        AND NEW.state = 'uploading'
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'upload_complete' AND OLD.state = 'uploading'
-                        AND NEW.state = 'uploading') OR
+                        AND NEW.state = 'uploading'
+                        AND OLD.content_sha256 IS NULL AND OLD.byte_size IS NULL
+                        AND OLD.width_pixels IS NULL AND OLD.height_pixels IS NULL
+                        AND NEW.content_sha256 IS NOT NULL AND NEW.byte_size IS NOT NULL
+                        AND NEW.width_pixels IS NOT NULL AND NEW.height_pixels IS NOT NULL
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'finalize' AND OLD.state = 'uploading'
-                        AND NEW.state = 'finalized'
-                        AND NEW.finalized_at IS NOT DISTINCT FROM effective_at) OR
+                        AND NEW.state = 'finalized' AND OLD.finalized_at IS NULL
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT NULL
+                        AND NEW.finalized_at IS NOT DISTINCT FROM effective_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'reference' AND OLD.state = 'finalized'
-                        AND NEW.state = 'finalized'
-                        AND NEW.referenced_at IS NOT DISTINCT FROM effective_at) OR
+                        AND NEW.state = 'finalized' AND OLD.referenced_at IS NULL
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM effective_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'reject' AND OLD.state IN ('reserved', 'uploading')
-                        AND NEW.state = 'rejected'
-                        AND NEW.rejected_at IS NOT DISTINCT FROM effective_at) OR
+                        AND NEW.state = 'rejected' AND OLD.rejected_at IS NULL
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM effective_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'expire' AND OLD.state IN ('reserved', 'uploading')
-                        AND NEW.state = 'expired'
-                        AND NEW.expired_at IS NOT DISTINCT FROM effective_at) OR
+                        AND NEW.state = 'expired' AND OLD.expired_at IS NULL
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM effective_at
+                        AND NEW.content_deleted_at IS NOT DISTINCT FROM OLD.content_deleted_at) OR
                        (event = 'cleanup' AND NEW.state = OLD.state
+                        AND OLD.content_deleted_at IS NULL
+                        AND NEW.content_sha256 IS NOT DISTINCT FROM OLD.content_sha256
+                        AND NEW.byte_size IS NOT DISTINCT FROM OLD.byte_size
+                        AND NEW.width_pixels IS NOT DISTINCT FROM OLD.width_pixels
+                        AND NEW.height_pixels IS NOT DISTINCT FROM OLD.height_pixels
+                        AND NEW.storage_key IS NOT DISTINCT FROM OLD.storage_key
+                        AND NEW.finalized_at IS NOT DISTINCT FROM OLD.finalized_at
+                        AND NEW.referenced_at IS NOT DISTINCT FROM OLD.referenced_at
+                        AND NEW.rejected_at IS NOT DISTINCT FROM OLD.rejected_at
+                        AND NEW.expired_at IS NOT DISTINCT FROM OLD.expired_at
                         AND NEW.content_deleted_at IS NOT DISTINCT FROM effective_at))
             ) THEN
                 RAISE EXCEPTION 'tool artifact event is required';
