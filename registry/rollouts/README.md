@@ -31,3 +31,10 @@
   不在中断期间重放完成请求；
 - 八份计划均精确绑定当前 `active/rv4` descriptor 与 `active/rv3` Provider。一次只激活
   一份；每项完成或失败后都先暂停当前 plan，再处理下一项。
+
+`wolfram-text-success-20260719.json` 是文本 Wolfram Provider 的首次生产计划：
+
+- 只允许 `admin_api + qq:group:1080353942 + wolfram.run@1.0.0 +
+  provider-wolfram-primary`，精确绑定 descriptor `active/rv2` 与 Provider `active/rv1`；
+- 最多 1 次调用，只返回有界文本，不生成 artifact、不触发 QQ 发送；
+- 固定 `2+2` canary 完成后立即暂停，旧 `/wf` 继续作为回滚入口。

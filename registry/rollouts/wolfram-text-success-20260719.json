@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "wolfram-text-success-20260719",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-19T10:30:00+08:00",
+  "expires_at": "2026-07-19T12:00:00+08:00",
+  "max_invocations": 1,
+  "rollback_mode": "ledger_only",
+  "reason": "文本 Wolfram Provider 的单次无平台发送生产验证",
+  "items": [
+    {
+      "item_id": "wolfram-text-admin",
+      "tool_id": "wolfram.run",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "aa6e9b1c930406bab11500de6c7653219aa9e8b831ee5fc7d08b1ab3d239ddaa",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "admin_api",
+      "provider_id": "provider-wolfram-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    }
+  ]
+}
