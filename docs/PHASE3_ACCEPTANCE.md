@@ -1,13 +1,14 @@
 # 第三阶段验收清单
 
-## Status and entrance gate
+## 状态与入口门
 
-Phase 3a completed after its recorded Phase 2 entrance prerequisite. Its
-Registry schema/read surface, real reviewed `status.inspect` authority, shared
-Provider SDK, stable Provider identity, and reporting-only runtime are deployed.
-The accepted ADRs, tests, and production record are evidence for these narrow
-checked items only; invocation, lease, artifact, tool execution, and
-natural-language authority remain unchecked until their own evidence exists.
+第三阶段已于 2026-07-19 完成生产签署。它在已签署的第二阶段与 C0-D 基础上，依次
+交付 Registry authority、Provider SDK/identity、invocation/attempt/confirmation/
+artifact 账本、lease/fence/reaper、M0–M3 控制面和 Git-bound rollout。三个代表性
+工具 `status.inspect`、`wolfram.run`、`latex.render` 都已通过公共协议的生产
+canary；全部临时计划均暂停并耗尽，生产最终为 `ledger_only`、active plan/attempt=0、
+自然语言 caller 关闭、控制面默认禁用。以下勾选项由 ADR、双数据库回归和生产证据
+共同支持，不授权第四阶段 Renderer 或第五阶段自然语言工具循环提前上线。
 
 - [x] `ACCEPTANCE.md` contains the signed policy-v6 Phase 2 controlled samples,
   reused policy-v5 24-hour audit plus policy-v6 counterfactual replay,
@@ -435,11 +436,14 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   PostgreSQL 17.10 为 399 通过。
 - [x] 八份单调用故障 plan 完成生产导入、激活/暂停与真实 Core/PostgreSQL 中断；
   两条预期 `unknown_completion` 均有解释，无 active attempt/plan 和平台发送。
-- [ ] Input/output, rate, concurrency, wall-time, CPU, memory and byte budgets
-  are enforced or make the provider ineligible; best-effort is never labeled
-  hard.
-- [ ] Network, filesystem, subprocess, secret, sandbox, remote-fetch and
-  artifact permissions are machine-readable, non-escalatable arguments.
+- [x] Input/output、rate、concurrency、wall-time、CPU、memory 与 byte budget 已由
+  Core、Provider 或 cgroup 分层强制；某项 required enforcement 未报告为 hard 时
+  Provider 直接不 eligible，best-effort 从未标成 hard。三个代表性 Provider 的生产
+  inventory、并发和 usage 已与 descriptor 对照。
+- [x] Network、filesystem、subprocess、secret、sandbox、remote-fetch 与 artifact
+  permission 均为 descriptor、lease 和 Provider identity 的机器可读参数。Core 不能
+  通过调用输入提权；status 子进程、Wolfram worker 与 LaTeX worker 分别使用与风险
+  相称的进程或容器边界。
 
 ## Artifacts and first tools
 
@@ -464,7 +468,7 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   随后跨过完整 300 秒 inventory 周期，两份 inventory hash 一致、10 次 heartbeat
   全部 healthy、Provider 零新日志且四个相关容器零重启。精确证据见
   `DEPLOYMENT.md` 第 17 节。
-- [ ] `latex.render` accepts only finalized content-addressed artifacts and
+- [x] `latex.render` accepts only finalized content-addressed artifacts and
   passes malicious TeX, timeout, MIME/hash/size, cleanup and renderer-boundary
   tests.
   发布前实现已完成：descriptor/provider authority、无网络无凭据 worker、私有
@@ -472,12 +476,17 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   错误脱敏、MIME/hash/字节/尺寸复验和 reserve/upload/finalize 顺序已有定向回归。
   最终镜像边界为只读 rootfs、cap drop、NoNewPrivs、1 GiB、1 CPU、128 PIDs、单并发；
   固定公式输出 34,883 字节、2048×499 PNG。加入本包后的 SQLite 全量为 463 通过、
-  4 跳过，隔离 PostgreSQL 17 为 467 全通过。生产 artifact store 和单次 canary 尚未
-  签署，因此本项保持未完成。
+  4 跳过，隔离 PostgreSQL 17 为 467 全通过。生产 canary 只产生一个 attempt/fence；
+  artifact 事件严格为 reserve/upload_start/upload_complete/finalize/reference，数据库
+  与 0600 对象文件的 MIME/hash/字节/尺寸一致。plan 已 paused/rv3 且 1/1，稳定窗口
+  通过，精确证据见 `DEPLOYMENT.md` 第 18 节。
 - [x] No provider sends a platform message; command parsing, invocation,
   execution, result, rendering and delivery remain separately observable.
-- [ ] Existing command paths remain rollback until per-tool shadow/canary
+- [x] Existing command paths remain rollback until per-tool shadow/canary
   equivalence, latency, errors, budgets and evidence window are signed.
+  `status.inspect` 保留旧状态入口；`wolfram.run` 与旧 `/wf` 同样返回 `4`；
+  `latex.render` 与旧 `/tex` 均在不发送 QQ 的串行对比中成功生成 PNG。第三阶段没有
+  把旧命令切到新路径，命令统一适配仍按路线留给后续阶段。
 
 ## 控制面、安全与运维
 
@@ -487,20 +496,26 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   runtime 重算和只追加证据在两种数据库通过，并已完成生产默认禁用签署。
 - [x] M2 security_admin Provider quarantine/restore、runtime 恢复门、lease 行锁、
   数据库 authority trigger 与默认禁用生产部署均已签署。
-- [ ] 只读面板的 desired/reported/effective/actual 数量和 reason code 与直接 API/SQL
-  证据一致；第三阶段不在线编辑 descriptor 内容。
+- [x] 第三阶段选择管理 API/CLI 作为只读 truth surface，没有部署浏览器面板；
+  desired/reported/effective 已逐项与 API、actual 账本与 SQL 对照。未来面板仍必须以
+  同一 API 为源并做计数/reason code 一致性测试，第三阶段没有在线编辑 descriptor。
 - [x] M3 的 operator/break-glass 权限矩阵、Git-bound rollout plan、服务端 preview、
   CAS/幂等、调用上限、数据库不可变约束和 pause/lease 并发已在两种数据库通过；
   首批生产 authority 已精确消费并暂停，当前无 active plan/lease。
-- [ ] 浏览器存储、日志、URL、工具输入/结果、artifact 和导出证据中均无 bearer token；
-  Provider/bot/admin credential 相互独立，并完成轮换/撤权测试。
+- [x] 第三阶段没有浏览器 credential surface；日志、URL、工具输入/结果、artifact 和
+  导出证据中均未出现 bearer token。Provider/bot/admin credential 相互独立；控制面
+  operator 撤除后登录为 503，临时明文凭据已销毁。Provider 认证、撤权和 token
+  混用拒绝均有双数据库回归。
 - [x] 记录生产备份/恢复、head/drift、镜像/提交/config 哈希、停止开关、
   Provider/Core/数据库故障和回滚演练。
 
 ## Phase 3 exit
 
-- [ ] `status.inspect`, `wolfram.run`, and `latex.render` use the common
+- [x] `status.inspect`, `wolfram.run`, and `latex.render` use the common
   descriptor/invocation/provider/artifact protocol with stable signed canaries.
 - [x] Natural-language callers remain disabled; no write/admin tool is enabled.
-- [ ] All exceptional rows and security/retention findings are explained, docs
+- [x] All exceptional rows and security/retention findings are explained, docs
   and code are committed, and the operator signs the Phase 3 evidence record.
+  两条历史 `unknown_completion`、旧 fence 拒绝和控制面重建 warning 均保留解释；
+  finalized/referenced LaTeX artifact 按 30 天策略保留，不为回滚删账本。最终生产为
+  `ledger_only`、active plan/attempt=0、控制面关闭，第三阶段于 2026-07-19 签署完成。

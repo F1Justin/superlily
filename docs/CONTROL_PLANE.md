@@ -1,14 +1,19 @@
-# Control plane and operator panel design
+# 控制面与运维面板设计
 
-## Status and boundary
+## 当前状态与边界
 
-This is a design contract, not a deployed panel. Phase 3a authority contracts
-have started, but there is no panel and no control-plane mutation surface. A
-future panel must expose existing Core truth before it is allowed to mutate
-anything; it is not an alternate authority store and must never infer
-“healthy” or “eligible” from one green status.
+截至 2026-07-19，M0–M3 服务端控制面已经实现并完成生产演练：短会话、角色、
+CSRF/Origin/Host、重新认证、canonical preview、CAS、幂等、descriptor lifecycle、
+Provider quarantine、Git-bound rollout pause/activate 和只追加审计均已通过双数据库
+回归。生产默认仍不配置 operator、Host、Origin 或 pepper，登录返回 503；需要一次性
+变更时才临时启用，完成后立即撤除。
 
-The panel always separates:
+浏览器运维面板尚未部署。第三阶段以管理 API/CLI 和 SQL 证据作为 truth surface；
+未来面板必须先忠实展示 Core 既有事实，不能成为另一套 authority，也不能因一个绿色
+状态就推断整体“healthy”或“eligible”。面板不是第三阶段运行依赖，详细退出证据见
+`PHASE3_ACCEPTANCE.md` 与 `DEPLOYMENT.md` 第 18 节。
+
+面板始终必须分开显示：
 
 - **desired:** reviewed Git descriptors, conversation topology, rollout mode,
   policies and explicit operator controls;

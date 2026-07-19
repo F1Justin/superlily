@@ -872,3 +872,71 @@ hash 均为 `2bb912a8ebe92aa70c11d6843fb89c85fc1c2497d60380e9c939ab829217b775`�
 期间 10 次 heartbeat 全部 healthy 且只引用该 hash；Wolfram Provider 日志零新增，
 Core、Provider、worker 与 PostgreSQL restart count 均为 0。至此文本
 `wolfram.run@1.0.0` 生产迁移完成签署。
+
+## 18. LaTeX Artifact Provider 与第三阶段退出
+
+2026-07-19 11:29–11:50 CST，`latex.render@1.0.0` 完成生产上线。实现来自提交
+`7a4e3ba76d6d69574538c09991913278562e9a87`，Provider 进程安全收尾来自
+`3df6537`，单次 rollout plan 来自完整提交
+`0d4c1bfe43d916c7acf06307ea6a88f715759d3e`。descriptor、Provider、worker、
+artifact 与 canary 的详细字段见 `PHASE3_LATEX_RENDER.md`。
+
+启用 artifact store 前制作的生产备份位于
+`/home/justin/backups/superlily/20260719-phase3-latex-artifact/`，大小
+152,117,402 字节，SHA-256 为
+`881cf9aa7a634768ac42056744fa9b265e675d54edc58431b1ba989b7eeea8b2`。它已在
+无端口暴露的独立 PostgreSQL 17 磁盘卷中完整恢复到 `0016_confirm_artifacts`；
+恢复后 source event=388,819、invocation=15、attempt=11、artifact=0、plan=14，
+临时容器和卷随后删除，备份保留且权限为 0600。
+
+最终镜像与运行身份为：
+
+- Core：`sha256:0450f2d9742bcbc69d73e354adf5cd4ebb60e4c4a001a06b225fb0842b89ee86`；
+- LaTeX Provider：
+  `sha256:cc2ec3b8d73c64f17f12d400dedb903422fb2e7df003757952e3cbddbedb72fc`；
+- LaTeX worker：
+  `sha256:845faf7b8caecf17540c1933a9a764b5c13865b5f57597a741aa27b3d75b69bc`；
+- worker identity：
+  `5fec6df87bbfda7666c2e47018763d080e2b99049cea57d24e3ad4bc160e848a`；
+- Provider implementation hash：
+  `26a473b53cb3291c91fa049ed8fc15316d8c44e6d91a9bfa790f6a314d1357c3`；
+- inventory hash：
+  `b4ad3081c6f2cd3bb4b4006125eb0088b455d29f7f2866433496ca455f4f2f4b`。
+
+worker 实际为 network none、只读 rootfs、uid/gid 1000、cap drop ALL、
+NoNewPrivs、1 GiB、1 CPU、128 PIDs、单并发和私有 tmpfs/socket。Provider token 与
+其他 token 独立，worker 不持有任何 credential。Provider 启动后发现 `httpx` 默认
+INFO 会记录每次 lease URL；最终实现将该 logger 降为 WARNING，并在配置加载后从
+进程环境移除 token。修正镜像无轮询日志洪泛，Core 短暂重建时只保留一条不含 URL、
+正文或 credential 的保守 ConnectError warning。
+
+reviewer 将 descriptor 激活为 `active/rv2`；operator 激活的
+`latex-artifact-success-20260719@1.0.0` plan hash 为
+`d09f39c5fad1a45953bee32e0e2cbccad113967394e318ff6040460f2ecf4694`，精确绑定
+`admin_api + qq:group:1080353942 + provider-latex-primary + descriptor rv2 +
+Provider rv1`，最多一次。唯一 invocation
+`a5138434-2b51-4b3a-98bd-810bfb51afc5` 和 attempt
+`65a0cd4e-b8f9-4c38-9d7e-dcebd16fc8d1` 以 fence=1 成功，没有重试、取消或不确定
+完成。usage 为 wall=1,245 ms、input=23 bytes、output=235 bytes、artifact=34,883
+bytes。
+
+artifact `982810cd-ece3-41e0-af04-e9575e5a847f` 依次记录 reserve、upload_start、
+upload_complete、finalize、reference 五个事件。数据库与 0600 私有对象均证明 PNG 为
+34,883 字节、2048×499，SHA-256 为
+`4ad21ef65944d745782a87c7970bd56d9ce846ebda45be1f95d457d5bd1fdfce`；它保持
+finalized/referenced 且未删除。没有 response 与 canary source/idempotency 关联。
+旧 `tex2pic` 不经过 QQ 发送的串行对比同样成功生成 PNG，旧 `/tex` 未修改。
+
+plan 随即暂停为 `paused/rv3`、1/1；Core 恢复 `ledger_only`，active plan/attempt
+为 0。临时 control operator、Host、Origin 和 pepper 清空，登录返回 503，0600
+明文 credential 文件销毁。临时控制面关闭后的 03:44:57–03:54:28 UTC 共 20 次
+heartbeat 全部 healthy，03:44:57 与 03:49:58 两份 inventory hash 一致；该窗口内
+Provider/worker 零新增日志，Core、Provider、worker 与 PostgreSQL 均零重启、零
+OOM。PostgreSQL 启动时间仍为
+`2026-07-18T23:46:06.121900322Z`、restart=0。
+
+最终 SQLite 全量 463 项通过、4 项跳过，隔离 PostgreSQL 17 全量 467 项通过；三个
+相关镜像 `pip check` 无破损依赖，`0016_confirm_artifacts (head)` 且
+`alembic check` 无新操作。生产总账为 invocation=16、attempt=12、artifact=1、
+confirmation=0、plan=15、active plan=0、active attempt=0。至此第三阶段三个代表性
+工具全部使用公共 descriptor/invocation/provider/artifact 协议，第三阶段完成签署。

@@ -81,14 +81,17 @@ conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。
 计划已暂停并耗尽，Core 恢复 `ledger_only`、active plan/attempt 为 0、临时控制面关闭。
 随后两份 300 秒间隔的 inventory hash 一致，10 次 heartbeat 全部 healthy，Provider
 零新日志、相关容器零重启。文本 `wolfram.run` 因而完成迁移签署。随后
-`latex.render@1.0.0` 已完成发布前实现：独立 Provider 调用无网络、无凭据、只读
+`latex.render@1.0.0` 已完成实现与生产签署：独立 Provider 调用无网络、无凭据、只读
 rootfs、1 GiB/1 CPU/128 PIDs 的 XeLaTeX/Poppler worker，图片只能通过
 reserve/upload/finalize 成为单张 4 MiB、2048×2048 内的 PNG。真实宿主/容器渲染、
 恶意 TeX、错误脱敏、严格 socket/framing 和 artifact 顺序测试已通过；旧 `/tex`
 未改，自然语言和平台发送仍关闭。SQLite 全量为 463 通过、4 跳过，隔离 PostgreSQL
-17 为 467 全通过。下一生产门是启用 artifact store、激活 descriptor
-和执行精确一次 finalized artifact canary。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、
-`PHASE3_LATEX_RENDER.md`、`DEPLOYMENT.md` 第 17 节、ADR 0013 与 ADR 0014。
+17 为 467 全通过。生产 artifact store 已从备份/恢复后启用；descriptor 为
+`active/rv2`，精确一次 canary 产生一个 finalized/referenced PNG，plan 已
+`paused/rv3`、1/1，随后跨过完整 inventory 周期。Core 最终为 `ledger_only`、无
+active plan/attempt，控制面关闭。至此第三阶段退出门全部通过，下一阶段为统一
+Renderer。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、`PHASE3_LATEX_RENDER.md`、
+`DEPLOYMENT.md` 第 17–18 节、ADR 0013 与 ADR 0014。
 
 ## Sequencing rules
 
@@ -158,8 +161,8 @@ All stable boundaries -> Phase 11 optional legacy runtime replacement
 ## Phase 3: Tool Registry and controlled execution
 
 Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`. Phase acceptance is in
-`docs/PHASE3_ACCEPTANCE.md`; the future operator UI and mutation boundary are in
-`docs/CONTROL_PLANE.md`.
+`docs/PHASE3_ACCEPTANCE.md`；已实现的 mutation boundary 与仍待未来实现的浏览器
+operator UI 见 `docs/CONTROL_PLANE.md`。
 
 ### 3a. Authoritative tool descriptors
 
@@ -220,6 +223,10 @@ cancellation, malformed result, provider outage, and Core outage all have
 tested deterministic outcomes.
 
 ### 3c. First providers and migration order
+
+状态：三个退出门代表工具均已完成公共协议生产 canary。后续
+`markdown.render_image`、`history.search` 和写工具属于各自后续阶段或新增 scope，
+不再作为第三阶段退出条件。
 
 Recommended order:
 

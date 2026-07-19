@@ -5,8 +5,9 @@ Superlily 是 [`manifesto.md`](manifesto.md) 描述的 Lily Core。Phase 1 建�
 claim canary；C0-D 建立持久采集 spool、commit receipt、action observation 和覆盖诊断。
 这些阶段均已完成生产签署。
 
-Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共享 SDK 已
-上线。Phase 3b 的 invocation/attempt 账本、lease/fence/reaper、控制面 M0–M3、
+Phase 3 已于 2026-07-19 完成生产签署。Phase 3a 的 descriptor authority、Provider
+身份、inventory/heartbeat 和共享 SDK 已上线；Phase 3b 的 invocation/attempt 账本、
+lease/fence/reaper、控制面 M0–M3、
 `status.inspect@1.0.2` 和 Git-bound rollout plan 已部署；四个独立 stop 与一次无平台
 发送的生产 canary、八项异常恢复故障矩阵和修正后的稳定窗口均已完成。13 份一次性
 计划全部暂停并耗尽，Core 恢复 `ledger_only`。`0016_confirm_artifacts` 的精确确认、
@@ -17,12 +18,15 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 受限容器中的真实 `2+2` 探针返回 `4`。生产随后完成 reviewed 空转、descriptor
 激活和最多一次的 Git-bound canary；唯一 attempt/fence 返回 `4`、artifact=0，旧
 `/wf` data source 串行对比同样返回 `4`。计划已暂停并耗尽，Core 恢复
-`ledger_only`、控制面关闭；完整 inventory 稳定周期也已通过。自然语言、conversation、
-平台发送和图片输出权限均未扩大。`latex.render@1.0.0` 的发布前实现现也已完成：
+`ledger_only`、控制面关闭；完整 inventory 稳定周期也已通过。自然语言、conversation
+和平台发送权限均未扩大。`latex.render@1.0.0` 随后完成独立无凭据 worker、生产
+artifact store、reviewer 激活和最多一次的 Git-bound canary：
 它把 XeLaTeX/Poppler 放进无网络、无凭据、1 GiB cgroup 的独立 worker，通过
-reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。真实宿主与容器
-探针、恶意 TeX、错误脱敏和 artifact 顺序测试已通过；生产 descriptor 激活和单次
-artifact canary 尚未在本段签署，旧 `/tex` 保持不变。
+reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。唯一 attempt
+得到 finalized/referenced 的 34,883 字节、2048×499 PNG，计划随即暂停并耗尽；旧
+`/tex` 串行对比成功且保持不变。最终 SQLite 为 463 通过、4 跳过，PostgreSQL 17
+为 467 通过，稳定窗口和零关联平台 response 均已签署。下一阶段是统一 Renderer，
+不是直接开放自然语言工具调用。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。

@@ -14,7 +14,7 @@
 
 目前 Lily 侧整体更接近确定性命令系统，Nekro 侧整体更接近 AI agent 系统。两者仍然是不同 QQ 号、数据库、配置和代码架构下的独立运行时，但已经不再是互相不可见的两个孤岛：两个 bridge 会把事件、回复、心跳、平台能力和运行时命令清单上报 Lily Core，Core 负责 canonical correlation、确定性裁决、claim/ACK 协调和结果审计。bridge 上报与 claim 异常仍然 fail-open，不让 Core 故障阻断原有 bot；生产 claim 强制范围仍只限精确 allowlist，而不是全面接管两个运行时。
 
-截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3a 已完成生产签署。Phase 3b 的 invocation/attempt 账本、Provider 拉取协议、硬边界 `status.inspect@1.0.2`、M0–M3 控制面和 Git-bound rollout plan 已完成双数据库回归与生产部署。13 份精确计划每份只允许 1 次 `admin_api + qq:group:1080353942 + status.inspect@1.0.2 + provider-status-primary` 调用；生产已经证明四个独立 stop、成功 canary、safe retry、旧 fence、非法输出、时钟偏移、三种取消路径以及 Core/PostgreSQL 中断。所有计划均暂停并耗尽，生产恢复 `ledger_only`、无 active plan/lease；`status.inspect@1.0.2` 的修正版 Provider 已跨过稳定窗口。自然语言调用权、`enforce` 和平台发送能力仍未开放。
+截至 2026-07-19，Phase 1、Phase 2、C0-D 与 Phase 3 已完成生产签署。第三阶段已经上线 descriptor/invocation/attempt/confirmation/artifact 账本、Provider 拉取协议、M0–M3 控制面和 Git-bound rollout plan，并让 `status.inspect@1.0.2`、`wolfram.run@1.0.0`、`latex.render@1.0.0` 三个代表性工具通过公共协议的生产 canary。状态工具的 13 份单次计划证明四个独立 stop、成功路径、safe retry、旧 fence、非法输出、时钟偏移、三种取消路径以及 Core/PostgreSQL 中断；Wolfram 返回有界文本，LaTeX 生成 finalized/referenced 内容寻址 PNG。全部计划均暂停并耗尽，生产恢复 `ledger_only`、无 active plan/attempt，临时控制面关闭。旧 `/wf`、`/tex` 仍为回滚入口；自然语言调用权、`enforce` 和平台发送能力仍未开放。
 
 目前 Nekro Agent 虽然有记忆、情感、向量库等插件，但实际使用中效果不稳定，并且大量增加上下文成本。因此当前自然语言回复主要依靠 system prompt 和最近 32 条上下文。这一形态虽然 stateless，但在群聊环境中反而具有稳定、便宜、低污染、不翻旧账的优势。未来记忆系统不应恢复为默认注入式 RAG，而应当采用“memory as tool, not context”的方式，默认不检索、不注入，需要时再由 agent 主动调用历史、文档、状态或记忆工具。
 
@@ -359,17 +359,20 @@ descriptor reviewer 激活和最多一次的 Git-bound canary；唯一 attempt/f
 文本 `4`、wall=8 ms、artifact=0，旧 `/wf` data source 串行对比同样返回 `4`。
 计划已暂停并耗尽，Core 恢复 `ledger_only`、临时控制面关闭，旧 `/wf` 继续保留。
 完整 300 秒 inventory 周期也以相同 hash、10 次 healthy heartbeat、零新日志和零重启
-通过。文本 Wolfram 因而完成迁移签署；下一主要实现包转为 `latex.render` 与真实
-artifact canary。
+通过，文本 Wolfram 因而完成迁移签署。
 
-`latex.render@1.0.0` 的发布前实现随后完成。独立 Provider 不持有 bot/admin/ingest
+`latex.render@1.0.0` 随后完成实现与生产签署。独立 Provider 不持有 bot/admin/ingest
 credential，通过私有 Unix socket 调用无网络、无凭据、只读 rootfs、空 capability、
 1 GiB/1 CPU/128 PIDs 的 XeLaTeX/Poppler worker；公式、编译日志和本地路径不进入
 Core。结果只能走 reserve/upload/finalize，成为一张最多 4 MiB、2048×2048 的
 内容寻址 PNG，工具本身不能发 QQ。宿主与最终容器固定公式探针、恶意 `\input`、
-禁用 `\write18`、错误脱敏、socket/framing 和 artifact 顺序测试已通过。旧 `/tex`
-完全保留；生产 artifact store、descriptor 激活和单次 canary 尚需按
-`docs/PHASE3_LATEX_RENDER.md` 完成后才能签署第三阶段退出。
+禁用 `\write18`、错误脱敏、socket/framing 和 artifact 顺序测试已通过。生产在备份
+并独立恢复 PostgreSQL 17 后启用私有 artifact store；descriptor 经 reviewer 激活，
+最多一次的 Git-bound plan 经 operator 激活。唯一 invocation/attempt/fence 得到
+34,883 字节、2048×499 的 finalized/referenced PNG，数据库与 0600 对象哈希一致，
+没有关联平台 response。旧 `tex2pic` 无 QQ 发送串行对比成功，旧 `/tex` 完全保留。
+plan 随即暂停为 1/1，Core 恢复 `ledger_only`、临时控制面关闭；稳定窗口与双数据库
+全量通过。至此第三阶段退出门全部签署，下一阶段转为统一 Renderer。
 
 9. 第四阶段：统一 Renderer
 
@@ -439,7 +442,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 17. 近期优先级
 
-当前近期优先级已经从“完成恢复故障矩阵”推进到“补齐确认与 artifact 账本，再迁移计算工具”：
+第三阶段近期优先级已经全部完成，当前转入第四阶段统一 Renderer 的设计与最小实现：
 
 1. `0015_tool_attempts`、`status.inspect@1.0.2` 的 `ledger_only` 与 M0 默认禁用生产签署已完成，继续观察零 attempt、inventory/heartbeat 与旧命令不变。
 2. M1 descriptor lifecycle 已完成实现、双数据库回归、生产备份/恢复和默认禁用迁移；继续观察零 mutation、零 attempt 和无 drift。
@@ -448,7 +451,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
 6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现、双数据库回归、生产备份/恢复、默认关闭迁移和零 authority 签署已经完成。
 7. 文本模式 `wolfram.run@1.0.0` 已完成实现、双数据库全量、受限镜像探针、生产 reviewed 空转、精确单次 canary 与旧路径串行对比；计划已暂停并耗尽，Core 恢复 `ledger_only`。
-8. `latex.render@1.0.0` 已完成发布前实现、独立无凭据 worker、真实容器渲染与安全复查；下一步只做 artifact store 启用、Git-bound 精确单次 finalized artifact canary、旧路径串行对比和稳定窗口。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+8. `latex.render@1.0.0` 已完成独立无凭据 worker、真实容器渲染、安全复查、artifact store 启用、Git-bound 精确单次 finalized artifact canary、旧路径串行对比和稳定窗口。第三阶段由此完成。第四阶段只建立统一 Renderer 与 delivery boundary；通用工具仍需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口继续保留，自然语言 tool calling 仍后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 
@@ -456,7 +459,7 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 
 超究极莉莉的本质不是“一个更大的 bot”，而是一个面向社群、活动和群聊环境的 personal/social agent harness。它借鉴 Codex、Claude Code、Pi、Hermes 等 harness 的工具调用、权限、审计、沙箱和 agent loop 思路，但目标域不是代码仓库，而是 QQ 群、社群活动、线下现场、渲染工具、计算引擎、聊天记录、多账号灾备和虚拟/实体身体。
 
-第一、二阶段已经让莉莉从“两个互不可见的 bot”进入“独立运行时共享一个裁决与审计核心”的状态。第三阶段要继续把工具 authority 和执行账本收归 Core，而不是把插件代码搬进 Core API 进程。只有这些合同和 authority gate 稳定后，Wolfram、LaTeX、自然语言、Watchdog、多平台、Fumo、皮套和活动系统才可以作为能力逐渐接入；否则继续堆插件只会让莉莉越来越强，但也越来越分裂、越来越不可控。
+第一、二阶段让莉莉从“两个互不可见的 bot”进入“独立运行时共享一个裁决与审计核心”的状态；第三阶段又把工具 authority、执行账本和三个代表性 Provider 收归 Core，而没有把插件代码搬进 Core API 进程。现在可以在这些稳定合同和 authority gate 上继续建设 Renderer、自然语言、Watchdog、多平台、Fumo、皮套和活动系统；仍应逐层提升权限，避免重新退回只堆插件、能力越强却越分裂的路径。
 
 当前执行路线以 `docs/ROADMAP.md` 为准，第二阶段证据以 `docs/ACCEPTANCE.md`、`docs/PHASE2_FINAL_AUDIT.md` 和 `docs/PHASE2_REVIEW.md` 为准；第三阶段协议、验收和已接受决策分别以 `docs/PHASE3_TOOL_REGISTRY.md`、`docs/PHASE3_ACCEPTANCE.md` 和 `docs/adr/` 为准。愿景、合同、实现和验收由此分开维护。
 

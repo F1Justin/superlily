@@ -17,7 +17,7 @@
 通过。定向 LaTeX/SDK/artifact 合同为 63 项通过；最终 worker/Provider 镜像已构建，
 固定公式容器探针输出 34,883 字节、2048×499 的 PNG。
 
-## 已冻结的发布前 authority
+## 已冻结的部署 identity 与 authority
 
 | 项目 | 值 |
 |---|---|
@@ -69,6 +69,48 @@ worker identity 只要镜像、worker 源码、模板、引擎版本或隔离配
    下串行比较成功性、MIME、尺寸和可读内容，不要求不同渲染参数产生相同二进制 hash。
 9. 跨至少一个完整 inventory 周期观察 Core/Provider/worker、artifact/reaper、C0-D 和
    旧 bot；最后恢复 `ledger_only` 并关闭临时控制面。
+
+## 生产签署（2026-07-19）
+
+上述顺序已全部执行并通过：
+
+- 启用 artifact 前的 PostgreSQL 自定义格式备份为 152,117,402 字节，SHA-256 为
+  `881cf9aa7a634768ac42056744fa9b265e675d54edc58431b1ba989b7eeea8b2`；它已在
+  独立 PostgreSQL 17 磁盘卷中完整恢复到 `0016_confirm_artifacts`，恢复出的
+  source event=388,819、invocation=15、attempt=11、artifact=0、plan=14；
+- Core artifact store 已启用，根目录为 0700、对象为 0600，均属 uid 65532。Core
+  镜像为
+  `sha256:0450f2d9742bcbc69d73e354adf5cd4ebb60e4c4a001a06b225fb0842b89ee86`；
+- Provider 为 `active/rv1`，descriptor 经 reviewer 从 `reviewed/rv1` 激活为
+  `active/rv2`。最终 inventory hash 为
+  `b4ad3081c6f2cd3bb4b4006125eb0088b455d29f7f2866433496ca455f4f2f4b`，五项
+  required budget 均为 hard；
+- Git-bound 计划 `latex-artifact-success-20260719@1.0.0` 的 SHA-256 为
+  `d09f39c5fad1a45953bee32e0e2cbccad113967394e318ff6040460f2ecf4694`，只允许
+  `admin_api + qq:group:1080353942 + latex.render@1.0.0 +
+  provider-latex-primary`，最多一次；
+- 唯一 invocation `a5138434-2b51-4b3a-98bd-810bfb51afc5` 只产生 attempt
+  `65a0cd4e-b8f9-4c38-9d7e-dcebd16fc8d1`、attempt number=1、fence=1，并以
+  `proposed -> queued -> leased -> running -> succeeded` 完成；wall=1,245 ms、
+  input=23 bytes、output=235 bytes、artifact=34,883 bytes；
+- artifact `982810cd-ece3-41e0-af04-e9575e5a847f` 的事件严格为
+  `reserve -> upload_start -> upload_complete -> finalize -> reference`，最终为
+  finalized/referenced、未删除。数据库、私有对象文件和 Provider 三方一致确认它是
+  34,883 字节、2048×499、SHA-256
+  `4ad21ef65944d745782a87c7970bd56d9ce846ebda45be1f95d457d5bd1fdfce` 的 PNG；
+- canary 没有任何关联的 `responses` 行。旧 `tex2pic` 在不经过 QQ 发送的串行对比中
+  同样成功生成 PNG（12,004 字节、849×207），`/home/justin/lily` 原文件与既有
+  dirty worktree 均未改；
+- 计划随即暂停为 `paused/rv3` 且计数 1/1。Core 恢复 `ledger_only`，active
+  plan/attempt 均为 0；临时控制面配置清空、登录返回 503，临时明文凭据已销毁；
+- 临时控制面关闭后的 03:44:57–03:54:28 UTC 内 20 次 heartbeat 全部 healthy、
+  只引用同一 inventory hash，03:44:57 与 03:49:58 两份 inventory 一致；该窗口内
+  Provider/worker 零新增日志，Core/Provider/worker/PostgreSQL 均零重启、零 OOM；
+- 最终 SQLite 为 463 项通过、4 项跳过，隔离 PostgreSQL 17 为 467 项通过；Core、
+  Provider、worker 的 `pip check` 均通过，`0016` 为 head 且无 schema drift。
+
+因此本包退出门全部通过，`latex.render@1.0.0` 完成生产迁移签署。已引用 artifact
+按 30 天保留策略处理，不为回滚删除账本或对象。
 
 ## 失败与回滚
 
