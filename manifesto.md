@@ -316,7 +316,7 @@ C0-D5 在真实生产链路完成了两次有界故障演练。Core 停机窗中
 
 8.1 当前第三阶段状态（2026-07-19）
 
-十三份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期、控制面认证、descriptor mutation、Provider quarantine、Git-bound rollout plan、确认/artifact 协议与文本 Wolfram 隔离边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
+十四份 accepted ADR 已固定描述符/JCS authority、Provider 身份与动态状态、invocation/fencing 恢复、artifact 生命周期、控制面认证、descriptor mutation、Provider quarantine、Git-bound rollout plan、确认/artifact 协议、文本 Wolfram 与 LaTeX artifact 隔离边界。Phase 3a 的 `0012_tool_registry`、Git-bound 本机导入、Provider inventory/heartbeat、desired/reported/effective 视图、共享 Provider SDK 和真实 `status.inspect` 报告运行时均已上线。`status.inspect@1.0.0` 仍是未激活的历史 authority，运行时发现没有自动扩大 authority。
 
 2026-07-19，Phase 3b 的 `0014_tool_invocations` 已部署，execution mode 为 `ledger_only`。真实 `status.inspect` 提案只产生 `propose -> record_only`；幂等重放返回原 invocation，Provider 凭据不能创建调用。Lily 与 Nekro bridge 同日升到 0.5.1，心跳和普通/durable-spool reporter 均有监督与自恢复；两个实例线上心跳已恢复新鲜。
 
@@ -361,6 +361,15 @@ descriptor reviewer 激活和最多一次的 Git-bound canary；唯一 attempt/f
 完整 300 秒 inventory 周期也以相同 hash、10 次 healthy heartbeat、零新日志和零重启
 通过。文本 Wolfram 因而完成迁移签署；下一主要实现包转为 `latex.render` 与真实
 artifact canary。
+
+`latex.render@1.0.0` 的发布前实现随后完成。独立 Provider 不持有 bot/admin/ingest
+credential，通过私有 Unix socket 调用无网络、无凭据、只读 rootfs、空 capability、
+1 GiB/1 CPU/128 PIDs 的 XeLaTeX/Poppler worker；公式、编译日志和本地路径不进入
+Core。结果只能走 reserve/upload/finalize，成为一张最多 4 MiB、2048×2048 的
+内容寻址 PNG，工具本身不能发 QQ。宿主与最终容器固定公式探针、恶意 `\input`、
+禁用 `\write18`、错误脱敏、socket/framing 和 artifact 顺序测试已通过。旧 `/tex`
+完全保留；生产 artifact store、descriptor 激活和单次 canary 尚需按
+`docs/PHASE3_LATEX_RENDER.md` 完成后才能签署第三阶段退出。
 
 9. 第四阶段：统一 Renderer
 
@@ -438,7 +447,8 @@ Fumo 和皮套不应拥有独立大脑，而应作为 avatar adapter 接入 Lily
 4. 当前 13 份单次计划均已暂停且耗尽；Core 保持 `ledger_only`，不将“descriptor 已 active”误解为仍有执行 authority。只有新的 Git-reviewed plan 才能再次开放有界调用。
 5. safe retry、旧 fence、非法输出、时钟偏移、取消与 Core/PostgreSQL 中断已完成 8/8 生产故障演练；两个 `unknown_completion` 作为真实不确定性保留。
 6. `status.inspect` 修正版 Provider 已跨过完整 inventory 稳定周期；`0016_confirm_artifacts` 的实现、双数据库回归、生产备份/恢复、默认关闭迁移和零 authority 签署已经完成。
-7. 文本模式 `wolfram.run@1.0.0` 已完成实现、双数据库全量、受限镜像探针、生产 reviewed 空转、精确单次 canary 与旧路径串行对比；计划已暂停并耗尽，Core 恢复 `ledger_only`。下一步是 `latex.render` 与独立 finalized artifact canary。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
+7. 文本模式 `wolfram.run@1.0.0` 已完成实现、双数据库全量、受限镜像探针、生产 reviewed 空转、精确单次 canary 与旧路径串行对比；计划已暂停并耗尽，Core 恢复 `ledger_only`。
+8. `latex.render@1.0.0` 已完成发布前实现、独立无凭据 worker、真实容器渲染与安全复查；下一步只做 artifact store 启用、Git-bound 精确单次 finalized artifact canary、旧路径串行对比和稳定窗口。通用工具还需要操作系统级 sandbox，不能复用当前进程监督器冒充完整隔离。旧命令入口始终保留为回滚路径，自然语言 tool calling 继续后置到 Phase 5。
 
 不要因为 Tool Registry 已经有设计就同时启动 Renderer、自然语言 agent、Memory、Fumo 或 Web Admin 全功能。每次只提升一层 authority，并保留旧入口和回滚。
 

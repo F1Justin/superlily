@@ -467,6 +467,13 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
 - [ ] `latex.render` accepts only finalized content-addressed artifacts and
   passes malicious TeX, timeout, MIME/hash/size, cleanup and renderer-boundary
   tests.
+  发布前实现已完成：descriptor/provider authority、无网络无凭据 worker、私有
+  socket/framing、真实 XeLaTeX/Poppler 渲染、恶意 `\\input`、禁用 shell escape、
+  错误脱敏、MIME/hash/字节/尺寸复验和 reserve/upload/finalize 顺序已有定向回归。
+  最终镜像边界为只读 rootfs、cap drop、NoNewPrivs、1 GiB、1 CPU、128 PIDs、单并发；
+  固定公式输出 34,883 字节、2048×499 PNG。加入本包后的 SQLite 全量为 463 通过、
+  4 跳过，隔离 PostgreSQL 17 为 467 全通过。生产 artifact store 和单次 canary 尚未
+  签署，因此本项保持未完成。
 - [x] No provider sends a platform message; command parsing, invocation,
   execution, result, rendering and delivery remain separately observable.
 - [ ] Existing command paths remain rollback until per-tool shadow/canary

@@ -145,6 +145,73 @@ services:
     security_opt: [no-new-privileges:true]
     networks: [bus]
 
+  latex-worker:
+    profiles: [latex]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.latex-worker
+    command:
+      [
+        "--socket",
+        "/latex-ipc/worker.sock",
+        "--work-root",
+        "/work",
+        "--xelatex",
+        "/usr/local/texlive/2024/bin/x86_64-linux/xelatex",
+      ]
+    user: "1000:1000"
+    volumes:
+      - ${SUPERLILY_LATEX_WORKER_RUN_DIR:-/home/justin/superlily/run/latex}:/latex-ipc
+      - ${SUPERLILY_TEXLIVE_ROOT:-/usr/local/texlive/2024}:/usr/local/texlive/2024:ro
+      - /usr/share/fonts:/usr/share/fonts:ro
+      - /var/cache/fontconfig:/var/cache/fontconfig:ro
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /work:rw,noexec,nosuid,nodev,size=96m,uid=1000,gid=1000,mode=0700
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 128
+
+  latex-provider:
+    profiles: [latex]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      SUPERLILY_LATEX_PROVIDER_CORE_URL: http://lily-core:8000
+      SUPERLILY_LATEX_PROVIDER_TOKEN: ${SUPERLILY_LATEX_PROVIDER_TOKEN:-}
+      SUPERLILY_LATEX_PROVIDER_WORKER_IDENTITY_HASH: ${SUPERLILY_LATEX_PROVIDER_WORKER_IDENTITY_HASH:-}
+      SUPERLILY_LATEX_PROVIDER_DESCRIPTOR_PATH: registry/descriptors/latex.render/1.0.0.json
+      SUPERLILY_LATEX_PROVIDER_WORKER_SOCKET: /latex-ipc/worker.sock
+      SUPERLILY_LATEX_PROVIDER_HEARTBEAT_SECONDS: ${SUPERLILY_LATEX_PROVIDER_HEARTBEAT_SECONDS:-30}
+      SUPERLILY_LATEX_PROVIDER_INVENTORY_SECONDS: ${SUPERLILY_LATEX_PROVIDER_INVENTORY_SECONDS:-300}
+      SUPERLILY_LATEX_PROVIDER_HTTP_TIMEOUT_SECONDS: ${SUPERLILY_LATEX_PROVIDER_HTTP_TIMEOUT_SECONDS:-8}
+      SUPERLILY_LATEX_PROVIDER_CONNECT_TIMEOUT_SECONDS: ${SUPERLILY_LATEX_PROVIDER_CONNECT_TIMEOUT_SECONDS:-3}
+      SUPERLILY_LATEX_PROVIDER_POLL_SECONDS: ${SUPERLILY_LATEX_PROVIDER_POLL_SECONDS:-0.25}
+      SUPERLILY_LATEX_PROVIDER_MAX_IDLE_POLL_SECONDS: ${SUPERLILY_LATEX_PROVIDER_MAX_IDLE_POLL_SECONDS:-5}
+      SUPERLILY_LATEX_PROVIDER_EXECUTION_HEARTBEAT_SECONDS: ${SUPERLILY_LATEX_PROVIDER_EXECUTION_HEARTBEAT_SECONDS:-1}
+    command: ["superlily-latex-provider", "serve"]
+    user: "1000:1000"
+    volumes:
+      - ${SUPERLILY_LATEX_WORKER_RUN_DIR:-/home/justin/superlily/run/latex}:/latex-ipc:ro
+    depends_on:
+      lily-core:
+        condition: service_healthy
+      latex-worker:
+        condition: service_started
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bus]
+
 volumes:
   superlily_postgres_data:
   superlily_artifacts:

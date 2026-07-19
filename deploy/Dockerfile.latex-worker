@@ -1,0 +1,30 @@
+FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fontconfig \
+        libbrotli1 \
+        libbz2-1.0 \
+        libexpat1 \
+        libfontconfig1 \
+        libfreetype6 \
+        libpng16-16t64 \
+        poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY deploy/constraints.txt ./deploy/constraints.txt
+COPY apps ./apps
+COPY packages ./packages
+COPY registry ./registry
+RUN python -m pip install --constraint deploy/constraints.txt . \
+    && chmod -R a+rX /app \
+    && install -d -o 1000 -g 1000 -m 0700 /latex-ipc /work
+
+USER 1000:1000
+ENTRYPOINT ["superlily-latex-worker"]

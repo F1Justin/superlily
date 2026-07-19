@@ -80,10 +80,15 @@ conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。
 返回 `4`、wall=8 ms、artifact=0。旧 `/wf` data source 串行对比同样返回 `4`。
 计划已暂停并耗尽，Core 恢复 `ledger_only`、active plan/attempt 为 0、临时控制面关闭。
 随后两份 300 秒间隔的 inventory hash 一致，10 次 heartbeat 全部 healthy，Provider
-零新日志、相关容器零重启。文本 `wolfram.run` 因而完成迁移签署；图像输出继续等待
-单独 artifact canary，Phase 3
-下一主要实现包是 `latex.render`。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、
-`DEPLOYMENT.md` 第 17 节和 ADR 0013。
+零新日志、相关容器零重启。文本 `wolfram.run` 因而完成迁移签署。随后
+`latex.render@1.0.0` 已完成发布前实现：独立 Provider 调用无网络、无凭据、只读
+rootfs、1 GiB/1 CPU/128 PIDs 的 XeLaTeX/Poppler worker，图片只能通过
+reserve/upload/finalize 成为单张 4 MiB、2048×2048 内的 PNG。真实宿主/容器渲染、
+恶意 TeX、错误脱敏、严格 socket/framing 和 artifact 顺序测试已通过；旧 `/tex`
+未改，自然语言和平台发送仍关闭。SQLite 全量为 463 通过、4 跳过，隔离 PostgreSQL
+17 为 467 全通过。下一生产门是启用 artifact store、激活 descriptor
+和执行精确一次 finalized artifact canary。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、
+`PHASE3_LATEX_RENDER.md`、`DEPLOYMENT.md` 第 17 节、ADR 0013 与 ADR 0014。
 
 ## Sequencing rules
 

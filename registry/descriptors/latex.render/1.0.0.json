@@ -1,0 +1,128 @@
+{
+  "tool_id": "latex.render",
+  "version": "1.0.0",
+  "title": "将一段受限 LaTeX 公式渲染为 PNG",
+  "description": "在无网络、无平台凭据的独立 worker 中编译一段精确 LaTeX 公式，通过 Core 的 reserve/upload/finalize 协议返回一张带哈希、字节数和尺寸的 PNG。此版本不开放自然语言调用、远程读取或平台发送。",
+  "provider_selector": {
+    "provider_ids": ["provider-latex-primary"],
+    "protocol": "superlily-provider-pull-v1"
+  },
+  "source_plugin": "superlily_latex_provider.runtime",
+  "schema_profile": "json-schema-2020-12-superlily-v1",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "latex": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "required": ["latex"],
+    "additionalProperties": false,
+    "minProperties": 1,
+    "maxProperties": 1
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 5,
+        "const": "image"
+      },
+      "artifact_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "mime_type": {
+        "type": "string",
+        "minLength": 9,
+        "maxLength": 9,
+        "const": "image/png"
+      },
+      "content_sha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "byte_size": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4194304
+      },
+      "width_pixels": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2048
+      },
+      "height_pixels": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2048
+      }
+    },
+    "required": [
+      "kind",
+      "artifact_id",
+      "mime_type",
+      "content_sha256",
+      "byte_size",
+      "width_pixels",
+      "height_pixels"
+    ],
+    "additionalProperties": false,
+    "minProperties": 7,
+    "maxProperties": 7
+  },
+  "side_effect": "compute",
+  "determinism": "may_vary",
+  "retry_policy": "no_automatic_retry",
+  "permission": "public",
+  "confirmation": "never",
+  "allowed_callers": ["command", "admin_api"],
+  "natural_language": false,
+  "timeout_ms": 30000,
+  "concurrency_limit": 1,
+  "rate_limit": {
+    "requests": 5,
+    "window_seconds": 60,
+    "scope": "sender"
+  },
+  "resource_budget": {
+    "cpu_ms": null,
+    "memory_bytes": 1073741824,
+    "input_bytes": 32768,
+    "output_bytes": 2048,
+    "artifact_bytes": 4194304
+  },
+  "required_budget_enforcement": [
+    "wall_time",
+    "memory",
+    "input_bytes",
+    "output_bytes",
+    "artifact_bytes"
+  ],
+  "execution_permissions": {
+    "network": "deny",
+    "filesystem": "sandbox_only",
+    "subprocess": "sandbox_only",
+    "secrets": [],
+    "remote_fetch": "deny",
+    "artifacts": ["image/png"]
+  },
+  "artifact_policy": {
+    "max_count": 1,
+    "max_single_bytes": 4194304,
+    "max_width_pixels": 2048,
+    "max_height_pixels": 2048,
+    "reservation_ttl_seconds": 120
+  },
+  "required_capabilities": [],
+  "data_classification": "conversation",
+  "result_retention_seconds": 2592000
+}

@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "uid": 1000,
+  "gid": 1000,
+  "read_only_rootfs": true,
+  "network_mode": "none",
+  "cap_drop": ["ALL"],
+  "security_opt": ["no-new-privileges:true"],
+  "memory_bytes": 1073741824,
+  "nano_cpus": 1000000000,
+  "pids_limit": 128,
+  "worker_concurrency": 1,
+  "ipc": {
+    "transport": "unix_socket",
+    "directory_mode": "0700",
+    "socket_mode": "0600"
+  },
+  "mounts": [
+    {
+      "source": "/usr/local/texlive/2024",
+      "target": "/usr/local/texlive/2024",
+      "read_only": true
+    },
+    {
+      "source": "/usr/share/fonts",
+      "target": "/usr/share/fonts",
+      "read_only": true
+    },
+    {
+      "source": "/var/cache/fontconfig",
+      "target": "/var/cache/fontconfig",
+      "read_only": true
+    }
+  ],
+  "tmpfs": [
+    {
+      "target": "/work",
+      "bytes": 100663296,
+      "noexec": true,
+      "nosuid": true,
+      "nodev": true
+    },
+    {
+      "target": "/tmp",
+      "bytes": 8388608,
+      "noexec": true,
+      "nosuid": true,
+      "nodev": true
+    }
+  ]
+}

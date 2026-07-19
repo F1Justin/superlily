@@ -18,7 +18,11 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 激活和最多一次的 Git-bound canary；唯一 attempt/fence 返回 `4`、artifact=0，旧
 `/wf` data source 串行对比同样返回 `4`。计划已暂停并耗尽，Core 恢复
 `ledger_only`、控制面关闭；完整 inventory 稳定周期也已通过。自然语言、conversation、
-平台发送和图片输出权限均未扩大。
+平台发送和图片输出权限均未扩大。`latex.render@1.0.0` 的发布前实现现也已完成：
+它把 XeLaTeX/Poppler 放进无网络、无凭据、1 GiB cgroup 的独立 worker，通过
+reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。真实宿主与容器
+探针、恶意 TeX、错误脱敏和 artifact 顺序测试已通过；生产 descriptor 激活和单次
+artifact canary 尚未在本段签署，旧 `/tex` 保持不变。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -30,6 +34,7 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
 - `apps/core`：FastAPI 采集/查询/工具账本/控制面服务和数据库模型。
 - `apps/status_provider`：独立、受硬边界约束的 `status.inspect` Provider。
 - `apps/wolfram_provider`：文本模式、复用现有隔离 worker 的 `wolfram.run` Provider。
+- `apps/latex_provider`：无凭据渲染 worker 与 artifact-only `latex.render` Provider。
 - `bridges/lily_nonebot`：Lily/NoneBot observer 与 durable reporter。
 - `bridges/nekro`：Nekro observer 与 durable reporter。
 - `registry`：Git-reviewed descriptor、Provider 和短时 rollout plan authority。
@@ -46,6 +51,8 @@ Phase 3a 的 descriptor authority、Provider 身份、inventory/heartbeat 和共
   [`docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md`](docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md)
 - 文本 Wolfram 实施与上线验收：
   [`docs/PHASE3_WOLFRAM_TEXT.md`](docs/PHASE3_WOLFRAM_TEXT.md)
+- LaTeX artifact 实施与上线验收：
+  [`docs/PHASE3_LATEX_RENDER.md`](docs/PHASE3_LATEX_RENDER.md)
 - 采集与 agent 共识：
   [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
 - C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)
