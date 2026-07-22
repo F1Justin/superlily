@@ -118,8 +118,8 @@ The generic compatibility migration and exit proof are still separate work packe
 - Production is at migration `0018_render_attempt_delivery`; the 80 legacy render
   documents were backfilled to 80 attempts and all 76 artifact rows are attempt-bound.
 - Core, the document gateway, the provider, and the no-network worker use reviewed
-  worker identity `b989b1a5935e7dff10247dd5ad6ad32692b09545dbb9d43d9dda7a035f04678d`.
-- Nekro bridge `0.7.0` is online and allows exactly
+  worker identity `cd49f0e444eb6d1f973340c1ae597f5955051add347a191e03ecdf922f679fe2`.
+- Nekro bridge `0.8.0` is online and allows exactly
   `onebot_v11-group_1080353942` and `onebot_v11-group_861651713`.
 - A production RenderDocument 1.1 probe completed in 1087 ms and selected an image plan
   without degradation. The deploy probe intentionally did not send a group message;
@@ -128,6 +128,10 @@ The generic compatibility migration and exit proof are still separate work packe
 - After adding `onebot_v11-group_861651713`, a scoped production probe completed in
   1009 ms and likewise selected an image plan without degradation. It created no
   delivery intent and therefore sent no test message to the group.
+- The RenderDocument 1.2 Markdown-lite production probe completed in 1116 ms with no
+  degradation or delivery intent. Visual inspection confirmed paired strong markers,
+  strong text containing inline math, literal unmatched markers, and literal code-block
+  markers all follow their reviewed semantics.
 - `image` and `artifact_ref` nodes currently render bounded accessibility placeholders.
   Resolver-backed composition of existing artifacts remains part of the compatibility
   migration rather than granting the worker Core credentials or filesystem authority.
