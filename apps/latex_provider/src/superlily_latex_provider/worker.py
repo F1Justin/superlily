@@ -27,7 +27,7 @@ from superlily_contracts import (
     RenderDocument,
     TableBlock,
     canonicalize_json_value,
-    split_inline_math,
+    split_inline_content,
     strict_json_loads,
 )
 
@@ -172,40 +172,58 @@ def _escape_text(value: str) -> str:
     return value.translate(_TEXT_ESCAPES).replace("\n", r"\\" + "\n")
 
 
-def _mixed_text_latex(value: str) -> str:
-    return "".join(
-        _escape_text(content) if kind == "text" else r"\(" + content + r"\)"
-        for kind, content in split_inline_math(value)
-    )
+def _mixed_text_latex(value: str, *, markdown_lite: bool) -> str:
+    parts: list[str] = []
+    for kind, content in split_inline_content(value, markdown_lite=markdown_lite):
+        if kind == "math":
+            parts.append(r"\(" + content + r"\)")
+        elif kind == "strong":
+            parts.append(
+                r"\textbf{" + _mixed_text_latex(content, markdown_lite=False) + "}"
+            )
+        else:
+            parts.append(_escape_text(content))
+    return "".join(parts)
 
 
-def _leaf_block_latex(block: Any) -> str:
+def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
     if block.kind == "heading":
         size = (
             r"\fontsize{16pt}{19pt}\selectfont"
             if block.level == 1
             else r"\fontsize{14pt}{17pt}\selectfont"
         )
-        return "{" + size + r"\bfseries " + _mixed_text_latex(block.text) + "}\\par\n"
+        return (
+            "{"
+            + size
+            + r"\bfseries "
+            + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
+            + "}\\par\n"
+        )
     if block.kind == "text":
-        return _mixed_text_latex(block.text) + "\\par\n"
+        return _mixed_text_latex(block.text, markdown_lite=markdown_lite) + "\\par\n"
     if block.kind == "math":
         if block.display:
             return r"\[\displaystyle " + block.latex + r"\]" + "\n"
         return r"\(" + block.latex + r"\)\par" + "\n"
     if block.kind == "list":
         environment = "enumerate" if block.ordered else "itemize"
-        items = "".join(r"\item " + _mixed_text_latex(item) + "\n" for item in block.items)
+        items = "".join(
+            r"\item " + _mixed_text_latex(item, markdown_lite=markdown_lite) + "\n"
+            for item in block.items
+        )
         return f"\\begin{{{environment}}}\n{items}\\end{{{environment}}}\n"
     if isinstance(block, QuoteBlock):
         attribution = (
-            r"\hfill--- " + _mixed_text_latex(block.attribution) + "\n"
+            r"\hfill--- "
+            + _mixed_text_latex(block.attribution, markdown_lite=markdown_lite)
+            + "\n"
             if block.attribution
             else ""
         )
         return (
             r"\begin{quote}\itshape "
-            + _mixed_text_latex(block.text)
+            + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
             + r"\par "
             + attribution
             + "\\end{quote}\n"
@@ -227,7 +245,10 @@ def _leaf_block_latex(block: Any) -> str:
         columns = "|" + "|".join("X" for _ in block.columns) + "|"
         rows = [block.columns, *block.rows]
         body = "\n".join(
-            " & ".join(_mixed_text_latex(cell) for cell in row) + r"\\\hline"
+            " & ".join(
+                _mixed_text_latex(cell, markdown_lite=markdown_lite) for cell in row
+            )
+            + r"\\\hline"
             for row in rows
         )
         return (
@@ -238,21 +259,29 @@ def _leaf_block_latex(block: Any) -> str:
         )
     if isinstance(block, NoticeBlock):
         colors = {"info": "blue!45!black", "warning": "orange!70!black", "error": "red!65!black"}
-        title = _mixed_text_latex(block.title) + r"\quad " if block.title else ""
+        title = (
+            _mixed_text_latex(block.title, markdown_lite=markdown_lite) + r"\quad "
+            if block.title
+            else ""
+        )
         return (
             r"\noindent\fcolorbox{"
             + colors[block.severity]
             + r"}{white}{\parbox{0.92\linewidth}{\bfseries "
             + title
             + r"\normalfont "
-            + _mixed_text_latex(block.text)
+            + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
             + "}}\\par\n"
         )
     if isinstance(block, ProgressBlock):
-        detail = r"\quad " + _mixed_text_latex(block.detail) if block.detail else ""
+        detail = (
+            r"\quad " + _mixed_text_latex(block.detail, markdown_lite=markdown_lite)
+            if block.detail
+            else ""
+        )
         return (
             r"\noindent\textbf{"
-            + _mixed_text_latex(block.label)
+            + _mixed_text_latex(block.label, markdown_lite=markdown_lite)
             + "}: "
             + str(block.value)
             + r"\%"
@@ -269,41 +298,53 @@ def _leaf_block_latex(block: Any) -> str:
         )
         return (
             r"\noindent\fbox{\parbox{0.92\linewidth}{\sffamily "
-            + _mixed_text_latex(label or block.accessibility_text or "制品")
+            + _mixed_text_latex(
+                label or block.accessibility_text or "制品",
+                markdown_lite=markdown_lite,
+            )
             + "}}\\par\n"
         )
     raise ValueError("unsupported render block")
 
 
-def _render_block_latex(block: Any) -> str:
+def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
     if isinstance(block, GroupBlock):
         label = (
-            r"{\bfseries " + _mixed_text_latex(block.label) + r"}\par "
+            r"{\bfseries "
+            + _mixed_text_latex(block.label, markdown_lite=markdown_lite)
+            + r"}\par "
             if block.label
             else ""
         )
-        return label + "".join(_leaf_block_latex(child) for child in block.blocks)
+        return label + "".join(
+            _leaf_block_latex(child, markdown_lite=markdown_lite)
+            for child in block.blocks
+        )
     if isinstance(block, AlternativeBlock):
         option = next(
             option for option in block.options if option.option_id == block.preferred_option_id
         )
-        return "".join(_leaf_block_latex(child) for child in option.blocks)
-    return _leaf_block_latex(block)
+        return "".join(
+            _leaf_block_latex(child, markdown_lite=markdown_lite)
+            for child in option.blocks
+        )
+    return _leaf_block_latex(block, markdown_lite=markdown_lite)
 
 
 def document_latex(document: RenderDocument) -> str:
     """Compile the reviewed RenderDocument AST into a bounded TeX document."""
 
+    markdown_lite = document.schema_version == "1.2"
     parts = [DOCUMENT_TEMPLATE_PREFIX]
     if document.title:
         parts.append(
             r"{\fontsize{20pt}{24pt}\selectfont\bfseries "
-            + _mixed_text_latex(document.title)
+            + _mixed_text_latex(document.title, markdown_lite=markdown_lite)
             + r"}\par\smallskip"
             + "\n"
         )
     for block in document.blocks:
-        parts.append(_render_block_latex(block))
+        parts.append(_render_block_latex(block, markdown_lite=markdown_lite))
     parts.append(TEMPLATE_SUFFIX)
     return "".join(parts)
 

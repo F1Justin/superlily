@@ -128,8 +128,10 @@ from .rendering import (
     RenderDocumentReceipt,
     TableBlock,
     TextBlock,
+    inline_content_plain_text,
     render_document_hash,
     render_document_plain_text,
+    split_inline_content,
     split_inline_math,
 )
 
@@ -245,8 +247,10 @@ __all__ = [
     "RenderDocumentReceipt",
     "TableBlock",
     "TextBlock",
+    "inline_content_plain_text",
     "render_document_hash",
     "render_document_plain_text",
+    "split_inline_content",
     "split_inline_math",
     "sanitize_payload",
     "strict_json_loads",

@@ -12,8 +12,10 @@ from sqlalchemy import select
 
 from superlily_contracts import (
     RenderDocument,
+    inline_content_plain_text,
     render_document_hash,
     render_document_plain_text,
+    split_inline_content,
     split_inline_math,
 )
 from superlily_core.app import create_app
@@ -123,6 +125,85 @@ def test_prose_supports_safe_inline_math_without_block_fragmentation() -> None:
         ("math", "x"),
         ("text", "，末尾 $"),
     )
+
+
+def test_render_document_v12_supports_bounded_markdown_strong() -> None:
+    value = r"普通 **抄本之王：$x^2$**，金额 \$5，**未闭合"
+    assert split_inline_content(value, markdown_lite=True) == (
+        ("text", "普通 "),
+        ("strong", r"抄本之王：$x^2$"),
+        ("text", "，金额 $5，**未闭合"),
+    )
+    assert inline_content_plain_text(value, markdown_lite=True) == (
+        "普通 抄本之王：$x^2$，金额 $5，**未闭合"
+    )
+
+    document = RenderDocument(
+        schema_version="1.2",
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_861651713",
+        title="**传抄过程**",
+        blocks=[
+            {
+                "kind": "list",
+                "node_id": "copies",
+                "items": [
+                    r"**抄本之王：** 现存手稿是 $Codex\ Clarkianus$。",
+                    "**修道院传承：** 由僧侣代代传抄。",
+                ],
+            },
+            {
+                "kind": "code",
+                "node_id": "literal-code",
+                "code": "print('**保持原样**')",
+            },
+        ],
+    )
+
+    source = document_latex(document)
+    assert r"\textbf{传抄过程}" in source
+    assert r"\item \textbf{抄本之王：} 现存手稿是 \(Codex\ Clarkianus\)" in source
+    assert r"\item \textbf{修道院传承：} 由僧侣代代传抄" in source
+    assert "**抄本之王" not in source
+    assert "print('**保持原样**')" in source
+    plain = render_document_plain_text(document)
+    assert "**抄本之王" not in plain
+    assert "- 抄本之王： 现存手稿是 $Codex\\ Clarkianus$。" in plain
+    assert "print('**保持原样**')" in plain
+
+
+def test_render_document_v11_keeps_markdown_markers_literal() -> None:
+    document = RenderDocument(
+        schema_version="1.1",
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_861651713",
+        blocks=[
+            {
+                "kind": "list",
+                "node_id": "legacy-list",
+                "items": ["**旧语义**保持原样"],
+            }
+        ],
+    )
+
+    assert r"\item **旧语义**保持原样" in document_latex(document)
+    assert "- **旧语义**保持原样" in render_document_plain_text(document)
+
+
+def test_markdown_strong_does_not_bypass_inline_math_validation() -> None:
+    with pytest.raises(ValidationError, match="forbidden"):
+        RenderDocument(
+            schema_version="1.2",
+            instance_id="nekro-agent",
+            conversation_key="onebot_v11-group_861651713",
+            blocks=[
+                {
+                    "kind": "text",
+                    "node_id": "unsafe",
+                    "text": r"**危险 $\input{/etc/passwd}$**",
+                }
+            ],
+        )
 
 
 @pytest.mark.parametrize("field", ["title", "text", "heading", "list"])

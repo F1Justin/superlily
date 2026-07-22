@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .canonical_json import canonicalize_json_value
 
 
-RENDER_DOCUMENT_SCHEMA_VERSION = "1.1"
+RENDER_DOCUMENT_SCHEMA_VERSION = "1.2"
 _CONVERSATION_KEY_RE = re.compile(r"^[a-z0-9_]+-(?:group|private)_[A-Za-z0-9.-]{1,256}$")
 _FORBIDDEN_LATEX_RE = re.compile(
     r"\\(?:input|include|openin|openout|read|write|usepackage|documentclass|"
@@ -66,6 +66,108 @@ def split_inline_math(value: str) -> tuple[tuple[Literal["text", "math"], str], 
     if text:
         segments.append(("text", "".join(text)))
     return tuple(segments)
+
+
+def split_inline_content(
+    value: str,
+    *,
+    markdown_lite: bool = False,
+) -> tuple[tuple[Literal["text", "math", "strong"], str], ...]:
+    r"""Split reviewed inline content into text, math, and optional strong runs.
+
+    RenderDocument 1.2 deliberately recognizes only paired ``**strong**``
+    markers. Block Markdown, raw HTML, links, images, and nested emphasis remain
+    ordinary escaped text. Unmatched or empty markers are also literal text so
+    a cosmetic model mistake cannot fail the whole render request.
+    """
+
+    if not markdown_lite:
+        return split_inline_math(value)
+
+    def math_closing(start: int) -> int | None:
+        closing = start + 1
+        while closing < len(value):
+            if value[closing : closing + 2] == r"\$":
+                closing += 2
+                continue
+            if value[closing] == "$":
+                return closing
+            closing += 1
+        return None
+
+    def strong_closing(start: int) -> int | None:
+        closing = start
+        while closing < len(value):
+            if value[closing : closing + 2] == r"\$":
+                closing += 2
+                continue
+            if value[closing : closing + 2] == "$$":
+                closing += 2
+                continue
+            if value[closing] == "$":
+                math_end = math_closing(closing)
+                if math_end is not None and value[closing + 1 : math_end].strip():
+                    closing = math_end + 1
+                    continue
+            if value[closing : closing + 2] == "**":
+                return closing
+            closing += 1
+        return None
+
+    segments: list[tuple[Literal["text", "math", "strong"], str]] = []
+    text: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index : index + 2] == r"\$":
+            text.append("$")
+            index += 2
+            continue
+        if value[index : index + 2] == "$$":
+            text.append("$$")
+            index += 2
+            continue
+        if value[index] == "$":
+            closing = math_closing(index)
+            latex = value[index + 1 : closing] if closing is not None else ""
+            if closing is not None and latex.strip():
+                if text:
+                    segments.append(("text", "".join(text)))
+                    text = []
+                segments.append(("math", latex))
+                index = closing + 1
+                continue
+        if value[index : index + 2] == "**":
+            closing = strong_closing(index + 2)
+            strong = value[index + 2 : closing] if closing is not None else ""
+            if closing is not None and strong.strip():
+                if text:
+                    segments.append(("text", "".join(text)))
+                    text = []
+                segments.append(("strong", strong))
+                index = closing + 2
+                continue
+            text.append("**")
+            index += 2
+            continue
+        text.append(value[index])
+        index += 1
+    if text:
+        segments.append(("text", "".join(text)))
+    return tuple(segments)
+
+
+def inline_content_plain_text(value: str, *, markdown_lite: bool = False) -> str:
+    """Return semantic plain text without reviewed presentation markers."""
+
+    parts: list[str] = []
+    for kind, content in split_inline_content(value, markdown_lite=markdown_lite):
+        if kind == "math":
+            parts.append(f"${content}$")
+        elif kind == "strong":
+            parts.append(inline_content_plain_text(content, markdown_lite=False))
+        else:
+            parts.append(content)
+    return "".join(parts)
 
 
 def _validate_mixed_text(value: str) -> str:
@@ -292,7 +394,7 @@ RenderBlock = Annotated[
 
 
 class RenderDocument(_StrictModel):
-    schema_version: Literal["1.0", "1.1"] = RENDER_DOCUMENT_SCHEMA_VERSION
+    schema_version: Literal["1.0", "1.1", "1.2"] = RENDER_DOCUMENT_SCHEMA_VERSION
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_key: str = Field(min_length=1, max_length=320)
     source_event_id: str | None = Field(default=None, min_length=1, max_length=512)
@@ -317,10 +419,10 @@ class RenderDocument(_StrictModel):
                 nodes.extend(child for option in block.options for child in option.blocks)
         if len(nodes) > 128:
             raise ValueError("render document exceeds the node limit")
-        if self.schema_version == "1.1":
+        if self.schema_version != "1.0":
             node_ids = [node.node_id for node in nodes]
             if any(node_id is None for node_id in node_ids) or len(node_ids) != len(set(node_ids)):
-                raise ValueError("schema 1.1 requires unique node_id values")
+                raise ValueError("schema 1.1 and later require unique node_id values")
         artifact_nodes = [node for node in nodes if isinstance(node, (ImageBlock, ArtifactRefBlock))]
         if len(artifact_nodes) > 8:
             raise ValueError("render document exceeds the artifact reference limit")
@@ -405,44 +507,63 @@ class DeliveryPlanReceipt(_StrictModel):
     degradation_reasons: list[str] = Field(default_factory=list, max_length=16)
 
 
-def _leaf_plain_text(block: LeafRenderBlock) -> str:
+def _leaf_plain_text(block: LeafRenderBlock, *, markdown_lite: bool) -> str:
+    def plain(value: str) -> str:
+        return inline_content_plain_text(value, markdown_lite=markdown_lite)
+
     if block.accessibility_text:
-        return block.accessibility_text
+        return plain(block.accessibility_text)
     if isinstance(block, (TextBlock, HeadingBlock, QuoteBlock)):
-        return block.text
+        return plain(block.text)
     if isinstance(block, MathBlock):
         return block.latex
     if isinstance(block, ListBlock):
-        return "\n".join(f"- {item}" for item in block.items)
+        return "\n".join(f"- {plain(item)}" for item in block.items)
     if isinstance(block, CodeBlock):
         return block.code
     if isinstance(block, TableBlock):
-        return "\n".join(" | ".join(row) for row in [block.columns, *block.rows])
+        return "\n".join(
+            " | ".join(plain(cell) for cell in row)
+            for row in [block.columns, *block.rows]
+        )
     if isinstance(block, NoticeBlock):
-        return "：".join(item for item in (block.title, block.text) if item)
+        return "：".join(plain(item) for item in (block.title, block.text) if item)
     if isinstance(block, ProgressBlock):
-        return f"{block.label}：{block.value}%" + (f"（{block.detail}）" if block.detail else "")
+        return f"{plain(block.label)}：{block.value}%" + (
+            f"（{plain(block.detail)}）" if block.detail else ""
+        )
     if isinstance(block, ImageBlock):
-        return block.caption or "图片"
+        return plain(block.caption) if block.caption else "图片"
     if isinstance(block, ArtifactRefBlock):
-        return block.label
+        return plain(block.label)
     raise TypeError("unsupported render block")
 
 
 def render_document_plain_text(document: RenderDocument) -> str:
-    parts = [document.title] if document.title else []
+    markdown_lite = document.schema_version == "1.2"
+
+    def plain(value: str) -> str:
+        return inline_content_plain_text(value, markdown_lite=markdown_lite)
+
+    parts = [plain(document.title)] if document.title else []
     for block in document.blocks:
         if isinstance(block, GroupBlock):
             if block.label:
-                parts.append(block.label)
-            parts.extend(_leaf_plain_text(child) for child in block.blocks)
+                parts.append(plain(block.label))
+            parts.extend(
+                _leaf_plain_text(child, markdown_lite=markdown_lite)
+                for child in block.blocks
+            )
         elif isinstance(block, AlternativeBlock):
             option = next(
                 option for option in block.options if option.option_id == block.preferred_option_id
             )
-            parts.extend(_leaf_plain_text(child) for child in option.blocks)
+            parts.extend(
+                _leaf_plain_text(child, markdown_lite=markdown_lite)
+                for child in option.blocks
+            )
         else:
-            parts.append(_leaf_plain_text(block))
+            parts.append(_leaf_plain_text(block, markdown_lite=markdown_lite))
     return "\n".join(part for part in parts if part)[:8_000]
 
 

@@ -46,7 +46,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.7.0"
+BRIDGE_VERSION = "0.8.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -927,8 +927,10 @@ blocks 支持：{"kind":"heading","text":"...","level":1}、
 {"kind":"notice","severity":"info","title":"...","text":"..."}、
 {"kind":"progress","label":"...","value":50}，也支持用 group 组织多个块、用 alternative
 声明按能力选择的备选内容。title、heading、text、quote、notice 和 list 的文本中都可直接
-用单个美元符号写行内公式，例如："已知 $f(x)=x^3+px^2+qx+r$，其根为
-$\\lambda_1,\\lambda_2,\\lambda_3$。"；不要为了行内公式把一句话拆成多个 block。
+使用成对的 **文字** 表示局部加粗，也可用单个美元符号写行内公式，例如：
+"**结论：** 已知 $f(x)=x^3+px^2+qx+r$。"；不要为了加粗或行内公式把一句话拆成多个 block。
+这是文本字段唯一支持的 Markdown 子集；标题、列表、表格和代码必须使用对应的结构化 block，
+不要在文本里添加 #、-、Markdown 表格、链接、图片或代码围栏。
 只有矩阵、长推导或需要独占一行的公式才使用 math block；不要在文本中使用 $$...$$。
 不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
 该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
@@ -938,7 +940,7 @@ $\\lambda_1,\\lambda_2,\\lambda_3$。"；不要为了行内公式把一句话拆
 @plugin.mount_sandbox_method(
     SandboxMethodType.BEHAVIOR,
     name="submit_render_document",
-    description="Render and send a mixed Chinese/math document through Lily Core",
+    description="Render and send a structured Chinese/math document with safe **bold** text",
 )
 async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
     """提交结构化文档并将 Core 生成的 PNG 直接发送到当前频道。
@@ -955,7 +957,7 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
             return "文档结构无效：只允许 title 和 blocks。"
         source_event_id, request_context = _render_request_context(_ctx.chat_key)
         payload = {
-            "schema_version": "1.1",
+            "schema_version": "1.2",
             "instance_id": config.INSTANCE_ID,
             "conversation_key": _ctx.chat_key,
             "source_event_id": source_event_id,

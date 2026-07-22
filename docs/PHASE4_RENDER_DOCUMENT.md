@@ -21,9 +21,11 @@ reviewed.
 
 Core speaks to an authenticated internal document-renderer gateway. The gateway alone
 owns access to the private `render_document` worker socket. The public contract is
-the `RenderDocument` AST, not TeX and not Markdown, so an HTML/KaTeX worker can replace
-the initial backend without changing Nekro, the Core API, artifact storage, or delivery
-receipts.
+the `RenderDocument` AST, not TeX or unrestricted Markdown, so an HTML/KaTeX worker can
+replace the initial backend without changing Nekro, the Core API, artifact storage, or
+delivery receipts. RenderDocument 1.2 recognizes only paired `**strong**` markers inside
+reviewed prose fields; block Markdown, HTML, links, images, and code fences remain escaped
+text or explicit structural nodes.
 
 Local warm-process measurements for a representative mixed CJK/math document were
 1.16 s, 0.84 s, and 0.89 s. Core records `render_duration_ms` on every request. The
@@ -38,11 +40,13 @@ extra Chromium/KaTeX runtime is justified.
    either authority value.
 3. Core validates the bounded AST, ingest token, idempotency key, render mode, and exact
    canary conversation.
-4. Prose fields may mix ordinary text with single-dollar inline math, for example
-   `已知 $f(x)=x^3+px^2+qx+r$`; the contract reviews each inline expression with the
-   same restrictions as a standalone math block. The worker escapes only the prose
-   segments and renders one bounded PNG with no network or shell escape. Standalone
-   math blocks remain for matrices and long display equations.
+4. Prose fields may mix ordinary text, paired `**strong**` spans, and single-dollar
+   inline math, for example `**结论：** 已知 $f(x)=x^3+px^2+qx+r$`. The contract reviews
+   each inline expression with the same restrictions as a standalone math block.
+   Unmatched strong markers remain literal, code blocks never interpret them, and the
+   text fallback removes only recognized presentation markers. The worker escapes the
+   prose segments and renders one bounded PNG with no network or shell escape.
+   Standalone math blocks remain for matrices and long display equations.
 5. Core creates a fenced `RenderAttempt` with an exact renderer snapshot. Failed,
    abandoned, missing-object, and expired-artifact states can create a new attempt;
    a still-live lease cannot be executed twice.
@@ -82,8 +86,10 @@ changes requiring an explicit deployment decision.
 
 ## Exit checks for this slice
 
-- Contract 1.1 provides stable node IDs and bounded text, heading, math, list, quote,
+- Contract 1.2 provides stable node IDs and bounded text, heading, math, list, quote,
   code, table, notice, progress, group, alternative, image, and artifact-reference nodes.
+- Contract 1.2 adds only paired `**strong**` inline presentation, preserves 1.0/1.1
+  literal-marker semantics, and keeps image and plain-text delivery semantically aligned.
 - Contract rejects unknown fields, duplicate node IDs, inaccessible artifact references,
   oversized documents, invalid chat keys, and TeX file I/O/control commands.
 - Core stores immutable request identity, fenced attempts, renderer snapshots,
