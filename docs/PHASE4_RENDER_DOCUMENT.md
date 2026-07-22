@@ -1,8 +1,8 @@
-# Phase 4: RenderDocument canary
+# Phase 4: RenderDocument and delivery canary
 
 ## Goal
 
-The first Phase 4 slice replaces model-written Pillow/Matplotlib prose images with a
+The Phase 4 canary replaces model-written Pillow/Matplotlib prose images with a
 reviewed, deterministic path for mixed Chinese text, lists, and mathematics. The first
 canary target is the Nekro conversation `onebot_v11-group_1080353942`.
 
@@ -42,12 +42,16 @@ extra Chromium/KaTeX runtime is justified.
    same restrictions as a standalone math block. The worker escapes only the prose
    segments and renders one bounded PNG with no network or shell escape. Standalone
    math blocks remain for matrices and long display equations.
-5. Core independently validates and content-addresses the PNG, then returns a scoped,
-   expiring artifact path.
-6. Nekro verifies the SHA-256, forwards the bytes into its sandbox, and sends the image.
-7. The bridge appends a delivery attempt. Current Nekro `send_image` does not expose the
-   platform message ID, so successful calls are conservatively recorded as `ambiguous`
-   with `platform_message_id_unavailable` rather than claiming confirmed delivery.
+5. Core creates a fenced `RenderAttempt` with an exact renderer snapshot. Failed,
+   abandoned, missing-object, and expired-artifact states can create a new attempt;
+   a still-live lease cannot be executed twice.
+6. Core independently validates and content-addresses the PNG, then creates an immutable
+   `DeliveryPlan` from the instance's latest heartbeat capability snapshot. QQ currently
+   selects image; an adapter with only `send_text` gets bounded plain text plus an explicit
+   `image_unsupported_fallback_to_text` degradation.
+7. Before sending, Nekro creates an idempotent delivery intent. Its NoneBot API-completion
+   hook captures the OneBot `message_id`; Core then records a confirmed success, bounded
+   failure, or ambiguous completion. A pending/ambiguous intent is never retried blindly.
 
 ## Safe defaults and canary configuration
 
@@ -60,6 +64,8 @@ SUPERLILY_RENDER_MODE=canary
 SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON=["onebot_v11-group_1080353942"]
 SUPERLILY_RENDER_BACKEND_URL=http://document-renderer:8000
 SUPERLILY_RENDER_BACKEND_TOKEN_FILE=/run/secrets/render_backend_token
+SUPERLILY_RENDER_IMPLEMENTATION_HASH=<reviewed-worker-identity-sha256>
+SUPERLILY_RENDER_DELIVERY_INTENT_SECONDS=60
 ```
 
 The Nekro bridge remains off independently. Its plugin configuration must set:
@@ -75,11 +81,43 @@ changes requiring an explicit deployment decision.
 
 ## Exit checks for this slice
 
-- Contract rejects unknown fields, oversized documents, invalid chat keys, and TeX file
-  I/O/control commands.
-- Core stores immutable request identity, terminal status, content-addressed artifact,
-  render duration, and append-only delivery evidence.
+- Contract 1.1 provides stable node IDs and bounded text, heading, math, list, quote,
+  code, table, notice, progress, group, alternative, image, and artifact-reference nodes.
+- Contract rejects unknown fields, duplicate node IDs, inaccessible artifact references,
+  oversized documents, invalid chat keys, and TeX file I/O/control commands.
+- Core stores immutable request identity, fenced attempts, renderer snapshots,
+  content-addressed artifacts, capability plans, delivery intents, and append-only evidence.
 - Artifact download is restricted to the submitting ingest instance and expires.
-- Exact retries reuse the same render artifact.
+- Exact retries reuse a live artifact; an expired artifact or terminal failure re-renders
+  under a new attempt without changing document identity.
+- QQ success is confirmed only when OneBot returns a platform message ID. Unknown
+  completion remains ambiguous and at-most-once.
 - The golden mixed Chinese/math sample contains `≅`, `⊗`, `⊕`, and `∩` without missing
   glyph boxes and wraps within a fixed document width.
+
+## Remaining Phase 4 work after this canary
+
+The generic compatibility migration and exit proof are still separate work packets:
+
+1. move status, Wolfram, LaTeX command output, and help paths one by one to
+   structured result -> RenderDocument -> DeliveryPlan, retaining rollback paths;
+2. add a deterministic constrained-adapter simulator and run the same fixtures through
+   QQ-image and text-only profiles;
+3. complete malicious-input, crash/fence, deletion, and PostgreSQL fault matrices, then
+   hold a measured exact-conversation stable window before widening any canary.
+
+## 2026-07-22 deployment state
+
+- Production is at migration `0018_render_attempt_delivery`; the 80 legacy render
+  documents were backfilled to 80 attempts and all 76 artifact rows are attempt-bound.
+- Core, the document gateway, the provider, and the no-network worker use reviewed
+  worker identity `b989b1a5935e7dff10247dd5ad6ad32692b09545dbb9d43d9dda7a035f04678d`.
+- Nekro bridge `0.7.0` is online and still allows only
+  `onebot_v11-group_1080353942`.
+- A production RenderDocument 1.1 probe completed in 1087 ms and selected an image plan
+  without degradation. The deploy probe intentionally did not send a group message;
+  the first natural canary delivery still needs confirmation that the OneBot completion
+  hook records its real platform message ID.
+- `image` and `artifact_ref` nodes currently render bounded accessibility placeholders.
+  Resolver-backed composition of existing artifacts remains part of the compatibility
+  migration rather than granting the worker Core credentials or filesystem authority.

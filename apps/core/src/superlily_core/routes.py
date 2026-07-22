@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from superlily_contracts import (
     CommandRegistrySnapshotIn,
+    DeliveryCompletionIn,
+    DeliveryIntentIn,
     EventIn,
     HeartbeatIn,
     ProviderHeartbeatIn,
@@ -69,6 +71,8 @@ from .service import (
 )
 from .render_service import (
     RenderServiceError,
+    complete_delivery_intent,
+    create_delivery_intent,
     get_render_artifact,
     record_delivery_attempt,
     submit_render_document,
@@ -205,9 +209,16 @@ async def post_response(
 def _render_http_error(exc: RenderServiceError) -> HTTPException:
     if exc.code in {"conversation_not_canary", "artifact_forbidden", "delivery_forbidden"}:
         code = status.HTTP_403_FORBIDDEN
-    elif exc.code in {"artifact_not_found"}:
+    elif exc.code in {
+        "artifact_not_found",
+        "delivery_intent_not_found",
+        "delivery_plan_not_found",
+    }:
         code = status.HTTP_404_NOT_FOUND
-    elif exc.code in {"idempotency_conflict"}:
+    elif exc.code in {
+        "delivery_completion_conflict",
+        "idempotency_conflict",
+    }:
         code = status.HTTP_409_CONFLICT
     elif exc.code in {"render_disabled", "render_in_progress", "artifact_expired"}:
         code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -226,7 +237,7 @@ async def post_render_document(
 ) -> dict:
     _verify_identity(authenticated_instance, payload.instance_id)
     try:
-        record, artifact, duplicate = await submit_render_document(
+        record, attempt, artifact, plan, duplicate = await submit_render_document(
             session,
             session.info["settings"],
             payload,
@@ -239,6 +250,8 @@ async def post_render_document(
     return {
         "render_id": record.id,
         "artifact_id": artifact.id,
+        "attempt_id": attempt.id,
+        "delivery_plan_id": plan.id,
         "request_sha256": record.request_sha256,
         "content_sha256": artifact.content_sha256,
         "mime_type": artifact.mime_type,
@@ -247,6 +260,13 @@ async def post_render_document(
         "height_pixels": artifact.height_pixels,
         "render_duration_ms": record.render_duration_ms or 0,
         "content_path": f"/v1/render-artifacts/{artifact.id}/content",
+        "delivery_plan": {
+            "delivery_plan_id": plan.id,
+            "capability_hash": plan.capability_hash,
+            "selected_family": plan.selected_family,
+            "fallback_text": plan.fallback_text,
+            "degradation_reasons": plan.degradation_reasons_json,
+        },
         "duplicate": duplicate,
     }
 
@@ -293,6 +313,58 @@ async def post_render_delivery_attempt(
     except RenderServiceError as exc:
         raise _render_http_error(exc) from exc
     return {"attempt_id": attempt.id, "outcome": attempt.outcome}
+
+
+@router.post("/v1/render-artifacts/{artifact_id}/delivery-intents", status_code=201)
+async def post_render_delivery_intent(
+    artifact_id: str,
+    payload: DeliveryIntentIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict[str, str | bool]:
+    try:
+        intent, should_send = await create_delivery_intent(
+            session,
+            session.info["settings"],
+            artifact_id,
+            authenticated_instance,
+            payload,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    if not should_send:
+        response.status_code = status.HTTP_200_OK
+    return {
+        "intent_id": intent.id,
+        "should_send": should_send,
+        "status": intent.status,
+        "duplicate": not should_send,
+    }
+
+
+@router.post("/v1/render-delivery-intents/{intent_id}/complete")
+async def post_render_delivery_completion(
+    intent_id: str,
+    payload: DeliveryCompletionIn,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict[str, str | bool]:
+    try:
+        intent, attempt, duplicate = await complete_delivery_intent(
+            session,
+            intent_id,
+            authenticated_instance,
+            payload,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    return {
+        "intent_id": intent.id,
+        "attempt_id": attempt.id,
+        "outcome": intent.status,
+        "duplicate": duplicate,
+    }
 
 
 @router.post("/v1/heartbeats", status_code=status.HTTP_200_OK)

@@ -189,8 +189,10 @@ class Settings:
     render_canary_conversations: frozenset[str] = field(default_factory=frozenset)
     render_backend_url: str = ""
     render_backend_token: str = field(default="", repr=False)
+    render_implementation_hash: str = ""
     render_timeout_seconds: int = 30
     render_artifact_ttl_seconds: int = 3_600
+    render_delivery_intent_seconds: int = 60
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
@@ -276,8 +278,11 @@ class Settings:
             not self.render_canary_conversations
             or not self.render_backend_url
             or not self.render_backend_token
+            or not re.fullmatch(r"[0-9a-f]{64}", self.render_implementation_hash)
         ):
-            raise ValueError("render canary requires conversations, backend URL, and token")
+            raise ValueError(
+                "render canary requires conversations, backend URL, token, and implementation hash"
+            )
         if self.render_backend_url and not re.fullmatch(
             r"http://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", self.render_backend_url
         ):
@@ -288,6 +293,8 @@ class Settings:
             raise ValueError("render_timeout_seconds must be between 5 and 120")
         if not 300 <= self.render_artifact_ttl_seconds <= 86_400:
             raise ValueError("render_artifact_ttl_seconds must be between 300 and 86400")
+        if not 10 <= self.render_delivery_intent_seconds <= 300:
+            raise ValueError("render_delivery_intent_seconds must be between 10 and 300")
         if any(
             not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
             or "/" in host
@@ -417,9 +424,15 @@ class Settings:
                 os.getenv("SUPERLILY_RENDER_BACKEND_TOKEN_FILE"),
                 variable="SUPERLILY_RENDER_BACKEND_TOKEN_FILE",
             ),
+            render_implementation_hash=os.getenv(
+                "SUPERLILY_RENDER_IMPLEMENTATION_HASH", ""
+            ).strip(),
             render_timeout_seconds=int(os.getenv("SUPERLILY_RENDER_TIMEOUT_SECONDS", "30")),
             render_artifact_ttl_seconds=int(
                 os.getenv("SUPERLILY_RENDER_ARTIFACT_TTL_SECONDS", "3600")
+            ),
+            render_delivery_intent_seconds=int(
+                os.getenv("SUPERLILY_RENDER_DELIVERY_INTENT_SECONDS", "60")
             ),
             control_operators=_control_operators(
                 os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),

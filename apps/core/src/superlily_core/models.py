@@ -112,12 +112,58 @@ class RenderDocumentRecord(Base):
     )
 
 
+class RenderAttemptRecord(Base):
+    """Fenced render execution; stale running attempts may be abandoned and retried."""
+
+    __tablename__ = "render_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    render_id: Mapped[str] = mapped_column(
+        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    renderer_profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    renderer_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    renderer_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    render_duration_ms: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("render_id", "attempt_number", name="uq_render_attempt_number"),
+        UniqueConstraint("render_id", "fencing_token", name="uq_render_attempt_fence"),
+        CheckConstraint(
+            "state IN ('running', 'succeeded', 'failed', 'abandoned')",
+            name="ck_render_attempt_state",
+        ),
+        CheckConstraint(
+            "(state = 'running' AND completed_at IS NULL AND safe_error_code IS NULL) OR "
+            "(state = 'succeeded' AND completed_at IS NOT NULL AND safe_error_code IS NULL) OR "
+            "(state IN ('failed', 'abandoned') AND completed_at IS NOT NULL "
+            "AND safe_error_code IS NOT NULL)",
+            name="ck_render_attempt_terminal",
+        ),
+        CheckConstraint(
+            "render_duration_ms IS NULL OR render_duration_ms BETWEEN 0 AND 120000",
+            name="ck_render_attempt_duration",
+        ),
+        Index("ix_render_attempts_render_started", "render_id", "started_at"),
+    )
+
+
 class RenderArtifactRecord(Base):
     __tablename__ = "render_artifacts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     render_id: Mapped[str] = mapped_column(
-        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False, unique=True
+        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("render_attempts.id", ondelete="RESTRICT"), nullable=False, unique=True
     )
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -137,6 +183,80 @@ class RenderArtifactRecord(Base):
         ),
         CheckConstraint("expires_at > created_at", name="ck_render_artifact_expiry"),
         Index("ix_render_artifacts_hash", "content_sha256"),
+        Index("ix_render_artifacts_render_created", "render_id", "created_at"),
+    )
+
+
+class RenderDeliveryPlan(Base):
+    """Immutable capability decision created before an adapter send."""
+
+    __tablename__ = "render_delivery_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
+    capability_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    selected_family: Mapped[str] = mapped_column(String(32), nullable=False)
+    fallback_text: Mapped[str | None] = mapped_column(Text)
+    degradation_reasons_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id", "capability_hash", name="uq_render_delivery_plan_capability"
+        ),
+        CheckConstraint(
+            "selected_family IN ('image', 'text')",
+            name="ck_render_delivery_plan_family",
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_render_delivery_plan_expiry"),
+        Index("ix_render_delivery_plan_instance_created", "instance_id", "created_at"),
+    )
+
+
+class RenderDeliveryIntent(Base):
+    """Idempotent pre-send claim; pending expiry becomes ambiguous, never a blind retry."""
+
+    __tablename__ = "render_delivery_intents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("render_delivery_plans.id", ondelete="RESTRICT"), nullable=False
+    )
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "idempotency_key", name="uq_render_delivery_intent_key"),
+        CheckConstraint(
+            "status IN ('pending', 'succeeded', 'failed', 'ambiguous')",
+            name="ck_render_delivery_intent_status",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND completed_at IS NULL AND platform_message_id IS NULL "
+            "AND safe_error_code IS NULL) OR "
+            "(status = 'succeeded' AND completed_at IS NOT NULL "
+            "AND platform_message_id IS NOT NULL AND safe_error_code IS NULL) OR "
+            "(status IN ('failed', 'ambiguous') AND completed_at IS NOT NULL "
+            "AND safe_error_code IS NOT NULL)",
+            name="ck_render_delivery_intent_terminal",
+        ),
+        Index("ix_render_delivery_intent_deadline", "status", "deadline_at"),
     )
 
 
@@ -151,6 +271,12 @@ class RenderDeliveryAttempt(Base):
     )
     instance_id: Mapped[str] = mapped_column(
         ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("render_delivery_plans.id", ondelete="RESTRICT")
+    )
+    intent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("render_delivery_intents.id", ondelete="RESTRICT"), unique=True
     )
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     platform_message_id: Mapped[str | None] = mapped_column(String(512))

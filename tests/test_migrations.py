@@ -137,8 +137,34 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "'tool_artifacts', 'tool_artifact_events')"
             ).fetchall()
         }
+        render_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+                "('render_documents', 'render_attempts', 'render_artifacts', "
+                "'render_delivery_plans', 'render_delivery_intents', "
+                "'render_delivery_attempts')"
+            ).fetchall()
+        }
+        render_artifact_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(render_artifacts)").fetchall()
+        }
+        render_delivery_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(render_delivery_attempts)"
+            ).fetchall()
+        }
+        render_delivery_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name = 'render_delivery_attempts'"
+            ).fetchall()
+        }
 
-    assert version == ("0017_render_delivery",)
+    assert version == ("0018_render_attempt_delivery",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -262,6 +288,20 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "tool_artifacts_state_guard",
         "tool_artifact_events_no_update",
         "tool_artifact_events_no_delete",
+    }
+    assert render_tables == {
+        "render_documents",
+        "render_attempts",
+        "render_artifacts",
+        "render_delivery_plans",
+        "render_delivery_intents",
+        "render_delivery_attempts",
+    }
+    assert "attempt_id" in render_artifact_columns
+    assert {"plan_id", "intent_id"}.issubset(render_delivery_columns)
+    assert render_delivery_triggers == {
+        "render_delivery_attempts_no_update",
+        "render_delivery_attempts_no_delete",
     }
     assert collection_tables == {
         "collector_watermarks",
@@ -473,7 +513,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0017_render_delivery",)
+    assert version == ("0018_render_attempt_delivery",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -649,7 +689,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0017_render_delivery"
+        assert version == "0018_render_attempt_delivery"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -759,6 +799,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0017_render_delivery"
+        assert asyncio.run(snapshot())[0] == "0018_render_attempt_delivery"
     finally:
         alembic("downgrade", "base", check=False)

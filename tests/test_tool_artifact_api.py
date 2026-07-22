@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from superlily_core.models import (
     RenderArtifactRecord,
+    RenderAttemptRecord,
     RenderDocumentRecord,
     ToolArtifact,
     ToolArtifactEvent,
@@ -369,9 +370,25 @@ async def test_artifact_reaper_preserves_live_render_document_objects(
         )
         session.add(document)
         await session.flush()
+        attempt = RenderAttemptRecord(
+            render_id=document.id,
+            attempt_number=1,
+            fencing_token=1,
+            state="succeeded",
+            renderer_profile="test",
+            renderer_snapshot_json={"profile": "test"},
+            renderer_snapshot_hash="b" * 64,
+            lease_expires_at=now + timedelta(minutes=1),
+            render_duration_ms=1,
+            started_at=now,
+            completed_at=now,
+        )
+        session.add(attempt)
+        await session.flush()
         session.add(
             RenderArtifactRecord(
                 render_id=document.id,
+                attempt_id=attempt.id,
                 content_sha256=digest,
                 storage_key=storage_key,
                 mime_type="image/png",

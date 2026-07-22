@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .canonical_json import canonicalize_json_value
 
 
-RENDER_DOCUMENT_SCHEMA_VERSION = "1.0"
+RENDER_DOCUMENT_SCHEMA_VERSION = "1.1"
 _CONVERSATION_KEY_RE = re.compile(r"^[a-z0-9_]+-(?:group|private)_[A-Za-z0-9.-]{1,256}$")
 _FORBIDDEN_LATEX_RE = re.compile(
     r"\\(?:input|include|openin|openout|read|write|usepackage|documentclass|"
@@ -79,18 +79,32 @@ def _validate_mixed_text(value: str) -> str:
     return value
 
 
+def _validate_optional_mixed_text(value: str | None) -> str | None:
+    return _validate_mixed_text(value) if value is not None else None
+
+
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class TextBlock(_StrictModel):
+class _RenderNode(_StrictModel):
+    node_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    accessibility_text: str | None = Field(default=None, min_length=1, max_length=2_000)
+
+    @field_validator("accessibility_text")
+    @classmethod
+    def validate_accessibility_inline_math(cls, value: str | None) -> str | None:
+        return _validate_mixed_text(value) if value is not None else None
+
+
+class TextBlock(_RenderNode):
     kind: Literal["text"] = "text"
     text: str = Field(min_length=1, max_length=4_000)
 
     _validate_inline_math = field_validator("text")(_validate_mixed_text)
 
 
-class HeadingBlock(_StrictModel):
+class HeadingBlock(_RenderNode):
     kind: Literal["heading"] = "heading"
     text: str = Field(min_length=1, max_length=240)
     level: Literal[1, 2] = 1
@@ -98,7 +112,7 @@ class HeadingBlock(_StrictModel):
     _validate_inline_math = field_validator("text")(_validate_mixed_text)
 
 
-class MathBlock(_StrictModel):
+class MathBlock(_RenderNode):
     kind: Literal["math"] = "math"
     latex: str = Field(min_length=1, max_length=2_000)
     display: bool = True
@@ -110,7 +124,7 @@ class MathBlock(_StrictModel):
         return self
 
 
-class ListBlock(_StrictModel):
+class ListBlock(_RenderNode):
     kind: Literal["list"] = "list"
     ordered: bool = False
     items: list[str] = Field(min_length=1, max_length=32)
@@ -124,14 +138,161 @@ class ListBlock(_StrictModel):
         return self
 
 
+class QuoteBlock(_RenderNode):
+    kind: Literal["quote"] = "quote"
+    text: str = Field(min_length=1, max_length=4_000)
+    attribution: str | None = Field(default=None, min_length=1, max_length=240)
+
+    _validate_inline_math = field_validator("text")(_validate_mixed_text)
+    _validate_optional_inline_math = field_validator("attribution")(
+        _validate_optional_mixed_text
+    )
+
+
+class CodeBlock(_RenderNode):
+    kind: Literal["code"] = "code"
+    code: str = Field(min_length=1, max_length=8_000)
+    language: str | None = Field(default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_+.-]+$")
+    wrap: bool = True
+
+    @field_validator("code")
+    @classmethod
+    def reject_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("code contains a NUL byte")
+        return value
+
+
+class TableBlock(_RenderNode):
+    kind: Literal["table"] = "table"
+    columns: list[str] = Field(min_length=1, max_length=8)
+    rows: list[list[str]] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_cells(self) -> "TableBlock":
+        width = len(self.columns)
+        cells = [*self.columns, *(cell for row in self.rows for cell in row)]
+        if any(len(row) != width for row in self.rows):
+            raise ValueError("table rows must match the column count")
+        if any(not cell.strip() or len(cell) > 512 for cell in cells):
+            raise ValueError("table cells must be non-empty bounded text")
+        for cell in cells:
+            _validate_mixed_text(cell)
+        return self
+
+
+class NoticeBlock(_RenderNode):
+    kind: Literal["notice"] = "notice"
+    severity: Literal["info", "warning", "error"] = "info"
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=2_000)
+
+    _validate_inline_math = field_validator("text")(_validate_mixed_text)
+    _validate_optional_inline_math = field_validator("title")(_validate_optional_mixed_text)
+
+
+class ProgressBlock(_RenderNode):
+    kind: Literal["progress"] = "progress"
+    label: str = Field(min_length=1, max_length=120)
+    value: int = Field(ge=0, le=100)
+    detail: str | None = Field(default=None, min_length=1, max_length=500)
+
+    _validate_inline_math = field_validator("label")(_validate_mixed_text)
+    _validate_optional_inline_math = field_validator("detail")(_validate_optional_mixed_text)
+
+
+class ImageBlock(_RenderNode):
+    kind: Literal["image"] = "image"
+    artifact_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    caption: str | None = Field(default=None, min_length=1, max_length=500)
+
+    _validate_inline_math = field_validator("caption")(_validate_optional_mixed_text)
+
+
+class ArtifactRefBlock(_RenderNode):
+    kind: Literal["artifact_ref"] = "artifact_ref"
+    artifact_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    mime_type: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9.+-]+/[a-z0-9.+-]+$")
+    label: str = Field(min_length=1, max_length=500)
+
+    _validate_inline_math = field_validator("label")(_validate_optional_mixed_text)
+
+
+LeafRenderBlock = Annotated[
+    TextBlock
+    | HeadingBlock
+    | MathBlock
+    | ListBlock
+    | QuoteBlock
+    | CodeBlock
+    | TableBlock
+    | NoticeBlock
+    | ProgressBlock
+    | ImageBlock
+    | ArtifactRefBlock,
+    Field(discriminator="kind"),
+]
+
+
+class GroupBlock(_RenderNode):
+    kind: Literal["group"] = "group"
+    label: str | None = Field(default=None, min_length=1, max_length=120)
+    blocks: list[LeafRenderBlock] = Field(min_length=1, max_length=32)
+
+    _validate_inline_math = field_validator("label")(_validate_optional_mixed_text)
+
+
+class AlternativeOption(_StrictModel):
+    option_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    label: str = Field(min_length=1, max_length=120)
+    requires: list[str] = Field(default_factory=list, max_length=16)
+    blocks: list[LeafRenderBlock] = Field(min_length=1, max_length=32)
+
+    _validate_inline_math = field_validator("label")(_validate_mixed_text)
+
+    @field_validator("requires")
+    @classmethod
+    def validate_capabilities(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or any(
+            not re.fullmatch(r"[a-z0-9_.-]{1,64}", item) for item in value
+        ):
+            raise ValueError("alternative capabilities must be unique bounded identifiers")
+        return value
+
+
+class AlternativeBlock(_RenderNode):
+    kind: Literal["alternative"] = "alternative"
+    options: list[AlternativeOption] = Field(min_length=1, max_length=8)
+    preferred_option_id: str = Field(min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_preferred_option(self) -> "AlternativeBlock":
+        ids = [option.option_id for option in self.options]
+        if len(ids) != len(set(ids)) or self.preferred_option_id not in ids:
+            raise ValueError("alternative options must be unique and include the preferred option")
+        return self
+
+
 RenderBlock = Annotated[
-    TextBlock | HeadingBlock | MathBlock | ListBlock,
+    TextBlock
+    | HeadingBlock
+    | MathBlock
+    | ListBlock
+    | QuoteBlock
+    | CodeBlock
+    | TableBlock
+    | NoticeBlock
+    | ProgressBlock
+    | ImageBlock
+    | ArtifactRefBlock
+    | GroupBlock
+    | AlternativeBlock,
     Field(discriminator="kind"),
 ]
 
 
 class RenderDocument(_StrictModel):
-    schema_version: Literal["1.0"] = RENDER_DOCUMENT_SCHEMA_VERSION
+    schema_version: Literal["1.0", "1.1"] = RENDER_DOCUMENT_SCHEMA_VERSION
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_key: str = Field(min_length=1, max_length=320)
     source_event_id: str | None = Field(default=None, min_length=1, max_length=512)
@@ -147,6 +308,24 @@ class RenderDocument(_StrictModel):
     def validate_document(self) -> "RenderDocument":
         if not _CONVERSATION_KEY_RE.fullmatch(self.conversation_key):
             raise ValueError("conversation_key must use adapter-group_id or adapter-private_id")
+        nodes: list[_RenderNode] = []
+        for block in self.blocks:
+            nodes.append(block)
+            if isinstance(block, GroupBlock):
+                nodes.extend(block.blocks)
+            elif isinstance(block, AlternativeBlock):
+                nodes.extend(child for option in block.options for child in option.blocks)
+        if len(nodes) > 128:
+            raise ValueError("render document exceeds the node limit")
+        if self.schema_version == "1.1":
+            node_ids = [node.node_id for node in nodes]
+            if any(node_id is None for node_id in node_ids) or len(node_ids) != len(set(node_ids)):
+                raise ValueError("schema 1.1 requires unique node_id values")
+        artifact_nodes = [node for node in nodes if isinstance(node, (ImageBlock, ArtifactRefBlock))]
+        if len(artifact_nodes) > 8:
+            raise ValueError("render document exceeds the artifact reference limit")
+        if any(not node.accessibility_text for node in artifact_nodes):
+            raise ValueError("artifact nodes require accessibility_text")
         encoded = canonicalize_json_value(self.model_dump(mode="json")).canonical_bytes
         if len(encoded) > 32_768:
             raise ValueError("render document exceeds the canonical byte limit")
@@ -156,6 +335,8 @@ class RenderDocument(_StrictModel):
 class RenderDocumentReceipt(_StrictModel):
     render_id: str = Field(min_length=36, max_length=36)
     artifact_id: str = Field(min_length=36, max_length=36)
+    attempt_id: str | None = Field(default=None, min_length=36, max_length=36)
+    delivery_plan_id: str | None = Field(default=None, min_length=36, max_length=36)
     request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     mime_type: Literal["image/png"] = "image/png"
@@ -172,6 +353,8 @@ class DeliveryAttemptIn(_StrictModel):
     outcome: Literal["succeeded", "failed", "ambiguous"]
     platform_message_id: str | None = Field(default=None, min_length=1, max_length=512)
     safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,64}$")
+    delivery_plan_id: str | None = Field(default=None, min_length=36, max_length=36)
+    delivery_intent_id: str | None = Field(default=None, min_length=36, max_length=36)
 
     @model_validator(mode="after")
     def validate_outcome_fields(self) -> "DeliveryAttemptIn":
@@ -182,6 +365,85 @@ class DeliveryAttemptIn(_StrictModel):
         if self.outcome != "succeeded" and not self.safe_error_code:
             raise ValueError("non-successful delivery requires safe_error_code")
         return self
+
+
+class DeliveryIntentIn(_StrictModel):
+    instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    delivery_plan_id: str = Field(min_length=36, max_length=36)
+    idempotency_key: str = Field(min_length=1, max_length=256)
+
+
+class DeliveryIntentReceipt(_StrictModel):
+    intent_id: str = Field(min_length=36, max_length=36)
+    should_send: bool
+    status: Literal["pending", "succeeded", "failed", "ambiguous"]
+    duplicate: bool = False
+
+
+class DeliveryCompletionIn(_StrictModel):
+    instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    outcome: Literal["succeeded", "failed", "ambiguous"]
+    platform_message_id: str | None = Field(default=None, min_length=1, max_length=512)
+    safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,64}$")
+
+    @model_validator(mode="after")
+    def validate_completion(self) -> "DeliveryCompletionIn":
+        DeliveryAttemptIn(
+            instance_id=self.instance_id,
+            outcome=self.outcome,
+            platform_message_id=self.platform_message_id,
+            safe_error_code=self.safe_error_code,
+        )
+        return self
+
+
+class DeliveryPlanReceipt(_StrictModel):
+    delivery_plan_id: str = Field(min_length=36, max_length=36)
+    capability_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selected_family: Literal["image", "text"]
+    fallback_text: str | None = Field(default=None, max_length=8_000)
+    degradation_reasons: list[str] = Field(default_factory=list, max_length=16)
+
+
+def _leaf_plain_text(block: LeafRenderBlock) -> str:
+    if block.accessibility_text:
+        return block.accessibility_text
+    if isinstance(block, (TextBlock, HeadingBlock, QuoteBlock)):
+        return block.text
+    if isinstance(block, MathBlock):
+        return block.latex
+    if isinstance(block, ListBlock):
+        return "\n".join(f"- {item}" for item in block.items)
+    if isinstance(block, CodeBlock):
+        return block.code
+    if isinstance(block, TableBlock):
+        return "\n".join(" | ".join(row) for row in [block.columns, *block.rows])
+    if isinstance(block, NoticeBlock):
+        return "：".join(item for item in (block.title, block.text) if item)
+    if isinstance(block, ProgressBlock):
+        return f"{block.label}：{block.value}%" + (f"（{block.detail}）" if block.detail else "")
+    if isinstance(block, ImageBlock):
+        return block.caption or "图片"
+    if isinstance(block, ArtifactRefBlock):
+        return block.label
+    raise TypeError("unsupported render block")
+
+
+def render_document_plain_text(document: RenderDocument) -> str:
+    parts = [document.title] if document.title else []
+    for block in document.blocks:
+        if isinstance(block, GroupBlock):
+            if block.label:
+                parts.append(block.label)
+            parts.extend(_leaf_plain_text(child) for child in block.blocks)
+        elif isinstance(block, AlternativeBlock):
+            option = next(
+                option for option in block.options if option.option_id == block.preferred_option_id
+            )
+            parts.extend(_leaf_plain_text(child) for child in option.blocks)
+        else:
+            parts.append(_leaf_plain_text(block))
+    return "\n".join(part for part in parts if part)[:8_000]
 
 
 def render_document_hash(document: RenderDocument) -> str:

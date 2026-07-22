@@ -42,7 +42,7 @@ async def test_document_gateway_authenticates_and_returns_strict_png(monkeypatch
     document = RenderDocument(
         instance_id="nekro-agent",
         conversation_key="onebot_v11-group_1080353942",
-        blocks=[{"kind": "text", "text": "手机渲染"}],
+        blocks=[{"kind": "text", "node_id": "mobile-text", "text": "手机渲染"}],
     )
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get("/health/ready")).status_code == 200

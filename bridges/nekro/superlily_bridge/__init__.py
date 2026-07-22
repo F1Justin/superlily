@@ -1,4 +1,5 @@
 import asyncio
+from contextvars import ContextVar
 import hashlib
 import json
 import time
@@ -45,7 +46,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.6.1"
+BRIDGE_VERSION = "0.7.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -141,6 +142,10 @@ _EVENT_SEND_ATTEMPTS_ATTR = "_superlily_event_send_attempts_v1"
 _ACTIVE_CLAIM_EVENTS_ATTR = "_superlily_active_claim_events_v1"
 api_started: dict[int, float] = {}
 blocked_api_calls: dict[int, ClaimSuppression] = {}
+_render_send_receipt: ContextVar[asyncio.Future[dict[str, str | None]] | None] = ContextVar(
+    "superlily_render_send_receipt",
+    default=None,
+)
 TRIGGER_BIND_MAX_WAIT_SECONDS = 3600.0
 TRIGGER_BIND_POLL_SECONDS = 0.1
 ONEBOT_QQ_CAPABILITIES = {
@@ -163,6 +168,59 @@ def utc_iso(timestamp: int | float | None = None) -> str:
 
 def stable_key(*parts: Any) -> str:
     return hashlib.sha256("\x1f".join(str(part) for part in parts).encode()).hexdigest()
+
+
+def _render_conversation(chat_key: str) -> dict[str, str] | None:
+    prefix = "onebot_v11-"
+    if not chat_key.startswith(prefix):
+        return None
+    remainder = chat_key[len(prefix) :]
+    kind, separator, conversation_id = remainder.partition("_")
+    if separator and kind in {"group", "private"} and conversation_id:
+        return {"type": kind, "id": conversation_id, "name": None}
+    return None
+
+
+def _render_request_context(chat_key: str) -> tuple[str | None, str]:
+    conv = _render_conversation(chat_key)
+    source_event_id = _current_task_trigger(conv) if conv is not None else None
+    task_token = _task_token(conv) if conv is not None else None
+    context_key = source_event_id or (f"task:{task_token}" if task_token is not None else f"unbound:{uuid4()}")
+    return source_event_id, context_key
+
+
+def _version_render_blocks(blocks: Any) -> list[dict[str, Any]]:
+    if not isinstance(blocks, list):
+        raise ValueError("blocks must be a list")
+    counter = 0
+
+    def visit(block: Any) -> dict[str, Any]:
+        nonlocal counter
+        if not isinstance(block, dict):
+            raise ValueError("render blocks must be objects")
+        counter += 1
+        normalized = dict(block)
+        normalized["node_id"] = f"n{counter:03d}"
+        kind = normalized.get("kind")
+        if kind == "group":
+            normalized["blocks"] = [visit(child) for child in normalized.get("blocks", [])]
+        elif kind == "alternative":
+            options = normalized.get("options")
+            if not isinstance(options, list):
+                raise ValueError("alternative options must be a list")
+            normalized_options = []
+            for option in options:
+                if not isinstance(option, dict):
+                    raise ValueError("alternative options must be objects")
+                normalized_option = dict(option)
+                normalized_option["blocks"] = [
+                    visit(child) for child in normalized_option.get("blocks", [])
+                ]
+                normalized_options.append(normalized_option)
+            normalized["options"] = normalized_options
+        return normalized
+
+    return [visit(block) for block in blocks]
 
 
 def _render_canary_chat_keys() -> frozenset[str]:
@@ -696,7 +754,7 @@ if not getattr(OneBotBot, "_superlily_claim_send_guard_v1", False):
     OneBotBot._superlily_claim_send_guard_v1 = True
 
 
-if not getattr(OneBotBot, "_superlily_send_result_hook_v1", False):
+if not getattr(OneBotBot, "_superlily_send_result_hook_v2", False):
 
     @OneBotBot.on_called_api
     async def observe_send_result(
@@ -710,6 +768,41 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v1", False):
             return
         started = api_started.pop(id(data), None)
         suppression = blocked_api_calls.pop(id(data), None)
+        render_receipt = _render_send_receipt.get()
+        if render_receipt is not None and not render_receipt.done():
+            message_id = result.get("message_id") if isinstance(result, dict) else None
+            error_text = str(exception).lower()
+            if suppression is not None:
+                delivery_result = {
+                    "outcome": "failed",
+                    "platform_message_id": None,
+                    "safe_error_code": "blocked_by_core_claim",
+                }
+            elif exception is None and message_id is not None:
+                delivery_result = {
+                    "outcome": "succeeded",
+                    "platform_message_id": str(message_id),
+                    "safe_error_code": None,
+                }
+            elif exception is None:
+                delivery_result = {
+                    "outcome": "ambiguous",
+                    "platform_message_id": None,
+                    "safe_error_code": "platform_message_id_unavailable",
+                }
+            elif "timeout" in error_text or "timed out" in error_text:
+                delivery_result = {
+                    "outcome": "ambiguous",
+                    "platform_message_id": None,
+                    "safe_error_code": "platform_completion_unknown",
+                }
+            else:
+                delivery_result = {
+                    "outcome": "failed",
+                    "platform_message_id": None,
+                    "safe_error_code": "platform_send_failed",
+                }
+            render_receipt.set_result(delivery_result)
         if exception is None and suppression is None:
             # Successful platform sends are recorded from confirmed
             # message_sent events; do not duplicate them here.
@@ -770,7 +863,7 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v1", False):
             ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
         )
 
-    OneBotBot._superlily_send_result_hook_v1 = True
+    OneBotBot._superlily_send_result_hook_v2 = True
 
 
 async def heartbeat_loop() -> None:
@@ -828,7 +921,12 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
 必须调用 `submit_render_document(document_json)`；document_json 只包含可选 title 和 blocks。
 blocks 支持：{"kind":"heading","text":"...","level":1}、
 {"kind":"text","text":"..."}、{"kind":"math","latex":"...","display":true}、
-{"kind":"list","ordered":true,"items":["..."]}。title、heading、text 和 list 的文本中都可直接
+{"kind":"list","ordered":true,"items":["..."]}、{"kind":"quote","text":"..."}、
+{"kind":"code","code":"...","language":"python"}、
+{"kind":"table","columns":["列1"],"rows":[["值"]]}、
+{"kind":"notice","severity":"info","title":"...","text":"..."}、
+{"kind":"progress","label":"...","value":50}，也支持用 group 组织多个块、用 alternative
+声明按能力选择的备选内容。title、heading、text、quote、notice 和 list 的文本中都可直接
 用单个美元符号写行内公式，例如："已知 $f(x)=x^3+px^2+qx+r$，其根为
 $\\lambda_1,\\lambda_2,\\lambda_3$。"；不要为了行内公式把一句话拆成多个 block。
 只有矩阵、长推导或需要独占一行的公式才使用 math block；不要在文本中使用 $$...$$。
@@ -855,14 +953,19 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
         raw = json.loads(document_json)
         if not isinstance(raw, dict) or not set(raw).issubset({"title", "blocks"}):
             return "文档结构无效：只允许 title 和 blocks。"
+        source_event_id, request_context = _render_request_context(_ctx.chat_key)
         payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "instance_id": config.INSTANCE_ID,
             "conversation_key": _ctx.chat_key,
-            **raw,
+            "source_event_id": source_event_id,
+            "blocks": _version_render_blocks(raw.get("blocks")),
         }
+        if raw.get("title") is not None:
+            payload["title"] = raw["title"]
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        idempotency_key = f"nekro-render:{stable_key(_ctx.chat_key, canonical)}"
+        render_key = stable_key(_ctx.chat_key, request_context, canonical)
+        idempotency_key = f"nekro-render:{render_key}"
         headers = {
             "Authorization": f"Bearer {config.CORE_TOKEN}",
             "Idempotency-Key": idempotency_key,
@@ -877,43 +980,109 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
             receipt = response.json()
             expected_hash = receipt.get("content_sha256")
             content_path = receipt.get("content_path")
+            delivery_plan_id = receipt.get("delivery_plan_id")
+            delivery_plan = receipt.get("delivery_plan")
             if (
                 not isinstance(expected_hash, str)
                 or len(expected_hash) != 64
                 or not isinstance(content_path, str)
                 or not content_path.startswith("/v1/render-artifacts/")
+                or not isinstance(delivery_plan_id, str)
+                or not isinstance(delivery_plan, dict)
             ):
                 return "统一文档渲染失败：Core 返回了无效制品凭证。"
-            artifact_response = await client.get(
-                content_path,
+            intent_response = await client.post(
+                f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-intents",
+                json={
+                    "instance_id": config.INSTANCE_ID,
+                    "delivery_plan_id": delivery_plan_id,
+                    "idempotency_key": f"nekro-delivery:{render_key}",
+                },
                 headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
             )
-            artifact_response.raise_for_status()
-            content = artifact_response.content
-            if (
-                not content.startswith(b"\x89PNG\r\n\x1a\n")
-                or hashlib.sha256(content).hexdigest() != expected_hash
-            ):
-                return "统一文档渲染失败：制品完整性校验未通过。"
-            sandbox_path = await _ctx.fs.mixed_forward_file(
-                content,
-                file_name=f"lily-render-{receipt['artifact_id']}.png",
+            intent_response.raise_for_status()
+            intent = intent_response.json()
+            if not intent.get("should_send"):
+                status_text = intent.get("status", "unknown")
+                return f"统一文档发送已登记（{status_text}），为避免重复发送，本次未再次投递。"
+
+            selected_family = delivery_plan.get("selected_family")
+            send_receipt: dict[str, str | None]
+            future: asyncio.Future[dict[str, str | None]] = (
+                asyncio.get_running_loop().create_future()
             )
-            await _ctx.send_image(sandbox_path)
+            receipt_token = _render_send_receipt.set(future)
             try:
-                delivery_response = await client.post(
-                    f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-attempts",
-                    json={
-                        "instance_id": config.INSTANCE_ID,
-                        "outcome": "ambiguous",
-                        "safe_error_code": "platform_message_id_unavailable",
-                    },
-                    headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
-                )
-                delivery_response.raise_for_status()
-            except httpx.HTTPError:
-                logger.warning("Lily Core render delivery receipt could not be recorded")
-        return "统一文档已渲染并发送。"
+                if selected_family == "image":
+                    artifact_response = await client.get(
+                        content_path,
+                        headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
+                    )
+                    artifact_response.raise_for_status()
+                    content = artifact_response.content
+                    if (
+                        not content.startswith(b"\x89PNG\r\n\x1a\n")
+                        or hashlib.sha256(content).hexdigest() != expected_hash
+                    ):
+                        send_receipt = {
+                            "outcome": "failed",
+                            "platform_message_id": None,
+                            "safe_error_code": "artifact_integrity_failure",
+                        }
+                    else:
+                        sandbox_path = await _ctx.fs.mixed_forward_file(
+                            content,
+                            file_name=f"lily-render-{receipt['artifact_id']}.png",
+                        )
+                        await _ctx.send_image(sandbox_path)
+                        send_receipt = await asyncio.wait_for(
+                            asyncio.shield(future), timeout=2.0
+                        )
+                elif selected_family == "text" and isinstance(
+                    delivery_plan.get("fallback_text"), str
+                ):
+                    await _ctx.send_text(delivery_plan["fallback_text"])
+                    send_receipt = await asyncio.wait_for(
+                        asyncio.shield(future), timeout=2.0
+                    )
+                else:
+                    send_receipt = {
+                        "outcome": "failed",
+                        "platform_message_id": None,
+                        "safe_error_code": "delivery_plan_invalid",
+                    }
+            except asyncio.TimeoutError:
+                send_receipt = {
+                    "outcome": "ambiguous",
+                    "platform_message_id": None,
+                    "safe_error_code": "platform_completion_unknown",
+                }
+            except Exception:
+                if future.done() and not future.cancelled():
+                    send_receipt = future.result()
+                else:
+                    send_receipt = {
+                        "outcome": "failed",
+                        "platform_message_id": None,
+                        "safe_error_code": "platform_send_failed",
+                    }
+            finally:
+                _render_send_receipt.reset(receipt_token)
+
+            completion_response = await client.post(
+                f"/v1/render-delivery-intents/{intent['intent_id']}/complete",
+                json={
+                    "instance_id": config.INSTANCE_ID,
+                    **send_receipt,
+                },
+                headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
+            )
+            completion_response.raise_for_status()
+            if send_receipt["outcome"] == "succeeded":
+                return "统一文档已渲染并发送，平台回执已确认。"
+            if send_receipt["outcome"] == "ambiguous":
+                return "统一文档已提交平台，但平台未返回可确认的消息 ID；为避免重复发送，不会自动重试。"
+            return "统一文档发送失败，失败证据已记录；请改用普通文本回复。"
     except (json.JSONDecodeError, TypeError, ValueError):
         return "文档结构无效，请按约定的 blocks JSON 重试。"
     except httpx.HTTPStatusError as exc:

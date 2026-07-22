@@ -16,7 +16,16 @@ import tempfile
 from typing import Any
 
 from superlily_contracts import (
+    AlternativeBlock,
+    ArtifactRefBlock,
+    CodeBlock,
+    GroupBlock,
+    ImageBlock,
+    NoticeBlock,
+    ProgressBlock,
+    QuoteBlock,
     RenderDocument,
+    TableBlock,
     canonicalize_json_value,
     split_inline_math,
     strict_json_loads,
@@ -80,6 +89,7 @@ DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{st
 \usepackage{mathtools}
 \usepackage{xcolor}
 \usepackage{enumitem}
+\usepackage{tabularx}
 \usepackage[punct=kaiming,fontset=none]{ctex}
 \setCJKmainfont{Noto Serif CJK SC}
 \setCJKsansfont{Noto Sans CJK SC}
@@ -169,6 +179,118 @@ def _mixed_text_latex(value: str) -> str:
     )
 
 
+def _leaf_block_latex(block: Any) -> str:
+    if block.kind == "heading":
+        size = (
+            r"\fontsize{16pt}{19pt}\selectfont"
+            if block.level == 1
+            else r"\fontsize{14pt}{17pt}\selectfont"
+        )
+        return "{" + size + r"\bfseries " + _mixed_text_latex(block.text) + "}\\par\n"
+    if block.kind == "text":
+        return _mixed_text_latex(block.text) + "\\par\n"
+    if block.kind == "math":
+        if block.display:
+            return r"\[\displaystyle " + block.latex + r"\]" + "\n"
+        return r"\(" + block.latex + r"\)\par" + "\n"
+    if block.kind == "list":
+        environment = "enumerate" if block.ordered else "itemize"
+        items = "".join(r"\item " + _mixed_text_latex(item) + "\n" for item in block.items)
+        return f"\\begin{{{environment}}}\n{items}\\end{{{environment}}}\n"
+    if isinstance(block, QuoteBlock):
+        attribution = (
+            r"\hfill--- " + _mixed_text_latex(block.attribution) + "\n"
+            if block.attribution
+            else ""
+        )
+        return (
+            r"\begin{quote}\itshape "
+            + _mixed_text_latex(block.text)
+            + r"\par "
+            + attribution
+            + "\\end{quote}\n"
+        )
+    if isinstance(block, CodeBlock):
+        language = (
+            r"{\scriptsize\sffamily " + _escape_text(block.language) + r"}\par "
+            if block.language
+            else ""
+        )
+        return (
+            r"\begingroup\small\ttfamily\raggedright "
+            + language
+            + _escape_text(block.code)
+            + r"\par\endgroup"
+            + "\n"
+        )
+    if isinstance(block, TableBlock):
+        columns = "|" + "|".join("X" for _ in block.columns) + "|"
+        rows = [block.columns, *block.rows]
+        body = "\n".join(
+            " & ".join(_mixed_text_latex(cell) for cell in row) + r"\\\hline"
+            for row in rows
+        )
+        return (
+            r"\begingroup\small\renewcommand{\arraystretch}{1.15}"
+            + f"\\begin{{tabularx}}{{\\linewidth}}{{{columns}}}\\hline\n"
+            + body
+            + "\n\\end{tabularx}\\par\\endgroup\n"
+        )
+    if isinstance(block, NoticeBlock):
+        colors = {"info": "blue!45!black", "warning": "orange!70!black", "error": "red!65!black"}
+        title = _mixed_text_latex(block.title) + r"\quad " if block.title else ""
+        return (
+            r"\noindent\fcolorbox{"
+            + colors[block.severity]
+            + r"}{white}{\parbox{0.92\linewidth}{\bfseries "
+            + title
+            + r"\normalfont "
+            + _mixed_text_latex(block.text)
+            + "}}\\par\n"
+        )
+    if isinstance(block, ProgressBlock):
+        detail = r"\quad " + _mixed_text_latex(block.detail) if block.detail else ""
+        return (
+            r"\noindent\textbf{"
+            + _mixed_text_latex(block.label)
+            + "}: "
+            + str(block.value)
+            + r"\%"
+            + detail
+            + "\\par\n"
+        )
+    if isinstance(block, (ImageBlock, ArtifactRefBlock)):
+        label = (
+            block.caption
+            if isinstance(block, ImageBlock) and block.caption
+            else block.label
+            if isinstance(block, ArtifactRefBlock)
+            else block.accessibility_text
+        )
+        return (
+            r"\noindent\fbox{\parbox{0.92\linewidth}{\sffamily "
+            + _mixed_text_latex(label or block.accessibility_text or "制品")
+            + "}}\\par\n"
+        )
+    raise ValueError("unsupported render block")
+
+
+def _render_block_latex(block: Any) -> str:
+    if isinstance(block, GroupBlock):
+        label = (
+            r"{\bfseries " + _mixed_text_latex(block.label) + r"}\par "
+            if block.label
+            else ""
+        )
+        return label + "".join(_leaf_block_latex(child) for child in block.blocks)
+    if isinstance(block, AlternativeBlock):
+        option = next(
+            option for option in block.options if option.option_id == block.preferred_option_id
+        )
+        return "".join(_leaf_block_latex(child) for child in option.blocks)
+    return _leaf_block_latex(block)
+
+
 def document_latex(document: RenderDocument) -> str:
     """Compile the reviewed RenderDocument AST into a bounded TeX document."""
 
@@ -181,25 +303,7 @@ def document_latex(document: RenderDocument) -> str:
             + "\n"
         )
     for block in document.blocks:
-        if block.kind == "heading":
-            size = (
-                r"\fontsize{16pt}{19pt}\selectfont"
-                if block.level == 1
-                else r"\fontsize{14pt}{17pt}\selectfont"
-            )
-            parts.append("{" + size + r"\bfseries " + _mixed_text_latex(block.text) + "}\\par\n")
-        elif block.kind == "text":
-            parts.append(_mixed_text_latex(block.text) + "\\par\n")
-        elif block.kind == "math":
-            if block.display:
-                parts.append(r"\[\displaystyle " + block.latex + r"\]" + "\n")
-            else:
-                parts.append(r"$\displaystyle " + block.latex + r"$\par" + "\n")
-        elif block.kind == "list":
-            environment = "enumerate" if block.ordered else "itemize"
-            parts.append(f"\\begin{{{environment}}}\n")
-            parts.extend(r"\item " + _mixed_text_latex(item) + "\n" for item in block.items)
-            parts.append(f"\\end{{{environment}}}\n")
+        parts.append(_render_block_latex(block))
     parts.append(TEMPLATE_SUFFIX)
     return "".join(parts)
 
