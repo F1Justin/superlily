@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from superlily_core.models import ToolArtifact, ToolArtifactEvent, ToolAttemptEvent
+from superlily_core.models import (
+    RenderArtifactRecord,
+    RenderDocumentRecord,
+    ToolArtifact,
+    ToolArtifactEvent,
+    ToolAttemptEvent,
+)
 from superlily_core import tool_artifact_service
 from superlily_core.tool_artifact_service import reap_expired_artifacts
 
@@ -325,6 +331,66 @@ async def test_artifact_reaper_expires_quarantine_and_removes_untracked_objects(
     async with app.state.database.sessions() as session:
         row = await session.get(ToolArtifact, reservation["artifact_id"])
     assert row is not None and row.state == "expired"
+
+
+async def test_artifact_reaper_preserves_live_render_document_objects(
+    app, tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "shared-artifact-data"
+    app.state.settings = replace(
+        app.state.settings,
+        artifact_root=str(root),
+        artifact_secret_pepper="render-reaper-test-pepper-0123456789",
+        artifact_orphan_grace_seconds=60,
+    )
+    body = png_bytes()
+    digest = hashlib.sha256(body).hexdigest()
+    storage_key = f"objects/sha256/{digest[:2]}/{digest}"
+    object_path = root / storage_key
+    object_path.parent.mkdir(parents=True, mode=0o700)
+    object_path.write_bytes(body)
+    object_path.chmod(0o600)
+    old = (datetime.now(timezone.utc) - timedelta(seconds=120)).timestamp()
+    import os
+
+    os.utime(object_path, (old, old))
+    now = datetime.now(timezone.utc)
+    async with app.state.database.sessions() as session:
+        document = RenderDocumentRecord(
+            instance_id="nekro-agent",
+            conversation_key="onebot_v11-group_1080353942",
+            source_event_id="render-reaper-regression",
+            idempotency_key="render-reaper-regression",
+            request_sha256="a" * 64,
+            document_json={"schema_version": "1.0"},
+            status="succeeded",
+            render_duration_ms=1,
+            completed_at=now,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            RenderArtifactRecord(
+                render_id=document.id,
+                content_sha256=digest,
+                storage_key=storage_key,
+                mime_type="image/png",
+                byte_size=len(body),
+                width_pixels=1,
+                height_pixels=1,
+                created_at=now,
+                expires_at=now + timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+    async def current_database_now(session):
+        return now
+
+    monkeypatch.setattr(tool_artifact_service, "database_now", current_database_now)
+    async with app.state.database.sessions() as session:
+        await reap_expired_artifacts(session, app.state.settings)
+    assert object_path.is_file()
 
 
 async def test_artifact_reaper_deletes_bytes_only_after_referenced_retention(

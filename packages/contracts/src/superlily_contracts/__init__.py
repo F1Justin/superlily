@@ -105,6 +105,19 @@ from .tool_rollout import (
     ToolRolloutPlanItem,
     load_tool_rollout_plan,
 )
+from .rendering import (
+    RENDER_DOCUMENT_SCHEMA_VERSION,
+    DeliveryAttemptIn,
+    HeadingBlock,
+    ListBlock,
+    MathBlock,
+    RenderBlock,
+    RenderDocument,
+    RenderDocumentReceipt,
+    TextBlock,
+    render_document_hash,
+    split_inline_math,
+)
 
 __all__ = [
     "API_SCHEMA_VERSION",
@@ -196,6 +209,17 @@ __all__ = [
     "lease_secret_hash",
     "provider_inventory_snapshot_hash",
     "replace_nul",
+    "RENDER_DOCUMENT_SCHEMA_VERSION",
+    "DeliveryAttemptIn",
+    "HeadingBlock",
+    "ListBlock",
+    "MathBlock",
+    "RenderBlock",
+    "RenderDocument",
+    "RenderDocumentReceipt",
+    "TextBlock",
+    "render_document_hash",
+    "split_inline_math",
     "sanitize_payload",
     "strict_json_loads",
     "validate_schema_instance",

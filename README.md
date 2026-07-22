@@ -25,8 +25,9 @@ artifact store、reviewer 激活和最多一次的 Git-bound canary：
 reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。唯一 attempt
 得到 finalized/referenced 的 34,883 字节、2048×499 PNG，计划随即暂停并耗尽；旧
 `/tex` 串行对比成功且保持不变。最终 SQLite 为 463 通过、4 跳过，PostgreSQL 17
-为 467 通过，稳定窗口和零关联平台 response 均已签署。下一阶段是统一 Renderer，
-不是直接开放自然语言工具调用。
+为 467 通过，稳定窗口和零关联平台 response 均已签署。第四阶段的首个灰度切片是
+统一 `RenderDocument` Renderer，不是直接开放自然语言工具调用；实现边界、速度取舍
+与精确群灰度配置见 [`docs/PHASE4_RENDER_DOCUMENT.md`](docs/PHASE4_RENDER_DOCUMENT.md)。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。

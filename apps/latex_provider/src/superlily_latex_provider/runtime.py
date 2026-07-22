@@ -11,7 +11,7 @@ import re
 import stat
 from typing import Any, Literal
 
-from superlily_contracts import canonicalize_json_value, strict_json_loads
+from superlily_contracts import RenderDocument, canonicalize_json_value, strict_json_loads
 
 
 PROVIDER_ID = "provider-latex-primary"
@@ -22,7 +22,7 @@ MAX_LATEX_BYTES = 8 * 1024
 MAX_ARTIFACT_BYTES = 4 * 1024 * 1024
 MAX_DIMENSION_PIXELS = 2_048
 MAX_HEADER_BYTES = 4 * 1024
-MAX_REQUEST_BYTES = 32 * 1024
+MAX_REQUEST_BYTES = 40 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _VERSION_RE = re.compile(r"^[\x20-\x7e]{1,128}$")
@@ -199,6 +199,24 @@ class LatexWorkerClient:
             {"op": "render", "latex": latex},
             timeout_seconds=timeout_seconds,
         )
+        return self._parse_render_result(header, content)
+
+    async def render_document(
+        self,
+        document: RenderDocument,
+        *,
+        timeout_seconds: float,
+    ) -> LatexPngResult:
+        if not 1 <= timeout_seconds <= 3_600:
+            raise ValueError("worker timeout must be between 1 and 3600 seconds")
+        header, content = await self._call(
+            {"op": "render_document", "document": document.model_dump(mode="json")},
+            timeout_seconds=timeout_seconds,
+        )
+        return self._parse_render_result(header, content)
+
+    @staticmethod
+    def _parse_render_result(header: dict[str, Any], content: bytes) -> LatexPngResult:
         if header.get("ok") is not True:
             allowed_codes = {
                 "timeout",

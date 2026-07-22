@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         fontconfig \
+        fonts-noto-cjk \
         libbrotli1 \
         libbz2-1.0 \
         libexpat1 \
@@ -14,6 +15,7 @@ RUN apt-get update \
         libfreetype6 \
         libpng16-16t64 \
         poppler-utils \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

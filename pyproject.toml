@@ -33,6 +33,7 @@ superlily-status-provider = "superlily_status_provider.main:main"
 superlily-wolfram-provider = "superlily_wolfram_provider.main:main"
 superlily-latex-provider = "superlily_latex_provider.main:main"
 superlily-latex-worker = "superlily_latex_provider.worker:main"
+superlily-document-renderer = "superlily_latex_provider.document_gateway:main"
 superlily-control-password = "superlily_core.control_plane_cli:main"
 superlily-phase3-status-fault = "superlily_core.phase3_status_fault_driver:main"
 

@@ -72,6 +72,105 @@ class SourceEvent(Base):
     )
 
 
+class RenderDocumentRecord(Base):
+    """Immutable render request identity with a bounded terminal state."""
+
+    __tablename__ = "render_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
+    source_event_id: Mapped[str | None] = mapped_column(String(512))
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    render_duration_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "idempotency_key", name="uq_render_document_idempotency"),
+        CheckConstraint(
+            "status IN ('pending', 'succeeded', 'failed')",
+            name="ck_render_document_status",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND completed_at IS NULL AND safe_error_code IS NULL) OR "
+            "(status = 'succeeded' AND completed_at IS NOT NULL AND safe_error_code IS NULL) OR "
+            "(status = 'failed' AND completed_at IS NOT NULL AND safe_error_code IS NOT NULL)",
+            name="ck_render_document_terminal",
+        ),
+        CheckConstraint(
+            "render_duration_ms IS NULL OR render_duration_ms BETWEEN 0 AND 120000",
+            name="ck_render_document_duration",
+        ),
+        Index("ix_render_documents_conversation_created", "conversation_key", "created_at"),
+    )
+
+
+class RenderArtifactRecord(Base):
+    __tablename__ = "render_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    render_id: Mapped[str] = mapped_column(
+        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    width_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    height_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("mime_type = 'image/png'", name="ck_render_artifact_mime"),
+        CheckConstraint("byte_size BETWEEN 1 AND 8388608", name="ck_render_artifact_bytes"),
+        CheckConstraint(
+            "width_pixels BETWEEN 1 AND 4096 AND height_pixels BETWEEN 1 AND 4096",
+            name="ck_render_artifact_dimensions",
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_render_artifact_expiry"),
+        Index("ix_render_artifacts_hash", "content_sha256"),
+    )
+
+
+class RenderDeliveryAttempt(Base):
+    """Append-only evidence reported by the adapter after a platform send."""
+
+    __tablename__ = "render_delivery_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('succeeded', 'failed', 'ambiguous')",
+            name="ck_render_delivery_outcome",
+        ),
+        CheckConstraint(
+            "(outcome = 'succeeded' AND platform_message_id IS NOT NULL AND safe_error_code IS NULL) OR "
+            "(outcome <> 'succeeded' AND safe_error_code IS NOT NULL)",
+            name="ck_render_delivery_evidence",
+        ),
+        Index("ix_render_delivery_artifact_created", "artifact_id", "created_at"),
+    )
+
+
 class EventObservation(Base):
     __tablename__ = "event_observations"
 
@@ -2868,3 +2967,53 @@ event.listen(
     "after_drop",
     _CONTROL_EVIDENCE_POSTGRES_FUNCTION_DROP,
 )
+
+
+_RENDER_DELIVERY_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_render_delivery_attempt_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'render delivery evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_RENDER_DELIVERY_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_render_delivery_attempt_mutation()"
+).execute_if(dialect="postgresql")
+event.listen(
+    RenderDeliveryAttempt.__table__,
+    "after_create",
+    DDL(
+        """
+        CREATE TRIGGER render_delivery_attempts_no_update
+        BEFORE UPDATE ON render_delivery_attempts
+        BEGIN SELECT RAISE(ABORT, 'render delivery evidence is append-only'); END
+        """
+    ).execute_if(dialect="sqlite"),
+)
+event.listen(
+    RenderDeliveryAttempt.__table__,
+    "after_create",
+    DDL(
+        """
+        CREATE TRIGGER render_delivery_attempts_no_delete
+        BEFORE DELETE ON render_delivery_attempts
+        BEGIN SELECT RAISE(ABORT, 'render delivery evidence is append-only'); END
+        """
+    ).execute_if(dialect="sqlite"),
+)
+event.listen(RenderDeliveryAttempt.__table__, "after_create", _RENDER_DELIVERY_POSTGRES_FUNCTION)
+event.listen(
+    RenderDeliveryAttempt.__table__,
+    "after_create",
+    DDL(
+        """
+        CREATE TRIGGER render_delivery_attempts_no_mutation
+        BEFORE UPDATE OR DELETE ON render_delivery_attempts
+        FOR EACH ROW EXECUTE FUNCTION reject_render_delivery_attempt_mutation()
+        """
+    ).execute_if(dialect="postgresql"),
+)
+event.listen(RenderDeliveryAttempt.__table__, "after_drop", _RENDER_DELIVERY_POSTGRES_DROP)

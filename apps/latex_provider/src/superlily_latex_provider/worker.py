@@ -15,7 +15,12 @@ import subprocess
 import tempfile
 from typing import Any
 
-from superlily_contracts import canonicalize_json_value, strict_json_loads
+from superlily_contracts import (
+    RenderDocument,
+    canonicalize_json_value,
+    split_inline_math,
+    strict_json_loads,
+)
 
 from .runtime import (
     MAX_ARTIFACT_BYTES,
@@ -60,14 +65,54 @@ TEMPLATE_PREFIX = r"""\documentclass[border=2pt]{standalone}
 \usepackage{enumitem}
 \usepackage{bbm}
 \usepackage{mathrsfs}
-\usepackage[punct=kaiming,fontset=fandol]{ctex}
+\usepackage[punct=kaiming,fontset=none]{ctex}
+\setCJKmainfont{Noto Serif CJK SC}
+\setCJKsansfont{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans Mono CJK SC}
+\setCJKmathfont{Noto Serif CJK SC}
 \begin{document}
 """
 TEMPLATE_SUFFIX = "\n\\end{document}\n"
 
+DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{standalone}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[punct=kaiming,fontset=none]{ctex}
+\setCJKmainfont{Noto Serif CJK SC}
+\setCJKsansfont{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans Mono CJK SC}
+\setCJKmathfont{Noto Serif CJK SC}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.25em}
+\setlength{\abovedisplayskip}{0.35em}
+\setlength{\belowdisplayskip}{0.35em}
+\setlength{\abovedisplayshortskip}{0.2em}
+\setlength{\belowdisplayshortskip}{0.2em}
+\setlist{itemsep=0.15em,topsep=0.15em,parsep=0pt,leftmargin=1.75em}
+\linespread{1.03}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\sloppy
+\begin{document}
+\fontsize{14pt}{17pt}\selectfont
+"""
+
 
 def template_sha256() -> str:
-    return sha256((TEMPLATE_PREFIX + "<LATEX>" + TEMPLATE_SUFFIX).encode("utf-8")).hexdigest()
+    templates = (
+        "formula\x00"
+        + TEMPLATE_PREFIX
+        + "<LATEX>"
+        + TEMPLATE_SUFFIX
+        + "\x00document\x00"
+        + DOCUMENT_TEMPLATE_PREFIX
+        + "<RENDER_DOCUMENT_AST>"
+        + TEMPLATE_SUFFIX
+    )
+    return sha256(templates.encode("utf-8")).hexdigest()
 
 
 def _safe_version(command: list[str]) -> str:
@@ -95,6 +140,68 @@ def _document(latex: str) -> str:
         else "$\\displaystyle " + latex + "$"
     )
     return TEMPLATE_PREFIX + equation + TEMPLATE_SUFFIX
+
+
+_TEXT_ESCAPES = str.maketrans(
+    {
+        "\\": r"\textbackslash{}",
+        "{": r"\{",
+        "}": r"\}",
+        "$": r"\$",
+        "&": r"\&",
+        "#": r"\#",
+        "%": r"\%",
+        "_": r"\_",
+        "^": r"\textasciicircum{}",
+        "~": r"\textasciitilde{}",
+    }
+)
+
+
+def _escape_text(value: str) -> str:
+    return value.translate(_TEXT_ESCAPES).replace("\n", r"\\" + "\n")
+
+
+def _mixed_text_latex(value: str) -> str:
+    return "".join(
+        _escape_text(content) if kind == "text" else r"\(" + content + r"\)"
+        for kind, content in split_inline_math(value)
+    )
+
+
+def document_latex(document: RenderDocument) -> str:
+    """Compile the reviewed RenderDocument AST into a bounded TeX document."""
+
+    parts = [DOCUMENT_TEMPLATE_PREFIX]
+    if document.title:
+        parts.append(
+            r"{\fontsize{20pt}{24pt}\selectfont\bfseries "
+            + _mixed_text_latex(document.title)
+            + r"}\par\smallskip"
+            + "\n"
+        )
+    for block in document.blocks:
+        if block.kind == "heading":
+            size = (
+                r"\fontsize{16pt}{19pt}\selectfont"
+                if block.level == 1
+                else r"\fontsize{14pt}{17pt}\selectfont"
+            )
+            parts.append("{" + size + r"\bfseries " + _mixed_text_latex(block.text) + "}\\par\n")
+        elif block.kind == "text":
+            parts.append(_mixed_text_latex(block.text) + "\\par\n")
+        elif block.kind == "math":
+            if block.display:
+                parts.append(r"\[\displaystyle " + block.latex + r"\]" + "\n")
+            else:
+                parts.append(r"$\displaystyle " + block.latex + r"$\par" + "\n")
+        elif block.kind == "list":
+            environment = "enumerate" if block.ordered else "itemize"
+            parts.append(f"\\begin{{{environment}}}\n")
+            parts.extend(r"\item " + _mixed_text_latex(item) + "\n" for item in block.items)
+            parts.append(f"\\end{{{environment}}}\n")
+    parts.append(TEMPLATE_SUFFIX)
+    return "".join(parts)
 
 
 def _bounded_environment(work_dir: Path) -> dict[str, str]:
@@ -223,6 +330,103 @@ def render_latex_png(
         raise LatexWorkerError("internal_error", "latex renderer failed its local boundary") from exc
 
 
+def render_document_png(
+    document: RenderDocument,
+    *,
+    work_root: Path = DEFAULT_WORK_ROOT,
+    xelatex: Path = DEFAULT_XELATEX,
+    pdftoppm: Path = DEFAULT_PDFTOPPM,
+    pdfinfo: Path = DEFAULT_PDFINFO,
+) -> bytes:
+    """Render a validated mixed CJK/math document with the same isolated toolchain."""
+
+    latex = document_latex(document)
+    if len(latex.encode("utf-8")) > 64 * 1024:
+        raise LatexWorkerError("budget_exceeded", "document exceeded its compiled byte limit")
+    try:
+        with tempfile.TemporaryDirectory(prefix="document-", dir=work_root) as raw_dir:
+            work_dir = Path(raw_dir)
+            tex_path = work_dir / "input.tex"
+            pdf_path = work_dir / "input.pdf"
+            png_path = work_dir / "artifact.png"
+            tex_path.write_text(latex, encoding="utf-8")
+            environment = _bounded_environment(work_dir)
+            compiled = subprocess.run(
+                [
+                    str(xelatex),
+                    "--no-shell-escape",
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    "-file-line-error",
+                    "-output-directory",
+                    str(work_dir),
+                    str(tex_path),
+                ],
+                cwd=work_dir,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=COMPILE_TIMEOUT_SECONDS,
+                check=False,
+            )
+            if compiled.returncode != 0 or not pdf_path.is_file():
+                raise LatexWorkerError("execution_failed", "document compilation failed safely")
+            if not 1 <= pdf_path.stat().st_size <= MAX_PDF_BYTES:
+                raise LatexWorkerError("budget_exceeded", "document PDF exceeded its hard byte bound")
+            info = subprocess.run(
+                [str(pdfinfo), str(pdf_path)],
+                cwd=work_dir,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            pages = _PAGE_RE.search(info.stdout)
+            page_size = _SIZE_RE.search(info.stdout)
+            if info.returncode != 0 or pages is None or int(pages.group(1)) != 1 or page_size is None:
+                raise LatexWorkerError("invalid_output", "document PDF violated the single-page contract")
+            width_points, height_points = (float(page_size.group(1)), float(page_size.group(2)))
+            if not (0 < width_points <= MAX_PAGE_POINTS and 0 < height_points <= MAX_PAGE_POINTS):
+                raise LatexWorkerError("budget_exceeded", "document page dimensions exceeded the bound")
+            converted = subprocess.run(
+                [
+                    str(pdftoppm),
+                    "-png",
+                    "-singlefile",
+                    "-f",
+                    "1",
+                    "-l",
+                    "1",
+                    "-scale-to",
+                    str(MAX_DIMENSION_PIXELS),
+                    str(pdf_path),
+                    str(png_path.with_suffix("")),
+                ],
+                cwd=work_dir,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=CONVERT_TIMEOUT_SECONDS,
+                check=False,
+            )
+            if converted.returncode != 0 or not png_path.is_file():
+                raise LatexWorkerError("execution_failed", "document PNG conversion failed safely")
+            content = png_path.read_bytes()
+            if not 1 <= len(content) <= MAX_ARTIFACT_BYTES:
+                raise LatexWorkerError("budget_exceeded", "document PNG exceeded its hard byte bound")
+            inspect_png(content)
+            return content
+    except LatexWorkerError:
+        raise
+    except subprocess.TimeoutExpired as exc:
+        raise LatexWorkerError("timeout", "document rendering exceeded its hard wall time") from exc
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise LatexWorkerError("internal_error", "document renderer failed its local boundary") from exc
+
+
 class LatexWorkerServer:
     def __init__(
         self,
@@ -297,15 +501,23 @@ class LatexWorkerServer:
                     },
                 )
                 return
-            if set(payload) != {"op", "latex"} or payload.get("op") != "render":
+            operation = payload.get("op")
+            if operation == "render":
+                if set(payload) != {"op", "latex"} or not isinstance(payload.get("latex"), str):
+                    raise ValueError("latex request invalid")
+                render_function = render_latex_png
+                render_input: str | RenderDocument = payload["latex"]
+            elif operation == "render_document":
+                if set(payload) != {"op", "document"} or not isinstance(payload.get("document"), dict):
+                    raise ValueError("document request invalid")
+                render_function = render_document_png
+                render_input = RenderDocument.model_validate(payload["document"])
+            else:
                 raise ValueError("request operation invalid")
-            latex = payload.get("latex")
-            if not isinstance(latex, str):
-                raise ValueError("latex must be text")
             async with self._render_lock:
                 content = await asyncio.to_thread(
-                    render_latex_png,
-                    latex,
+                    render_function,
+                    render_input,
                     work_root=self.work_root,
                     xelatex=self.xelatex,
                     pdftoppm=self.pdftoppm,

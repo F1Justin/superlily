@@ -29,7 +29,14 @@ from superlily_contracts import (
 )
 
 from .artifact_store import ArtifactStore, ArtifactStoreError
-from .models import ToolArtifact, ToolArtifactEvent, ToolAttempt, ToolInvocation, new_id
+from .models import (
+    RenderArtifactRecord,
+    ToolArtifact,
+    ToolArtifactEvent,
+    ToolAttempt,
+    ToolInvocation,
+    new_id,
+)
 from .settings import Settings
 from .tool_execution_service import (
     _append_attempt_event,
@@ -981,6 +988,12 @@ async def reap_expired_artifacts(
                     ToolArtifact.content_deleted_at.is_(None),
                 )
             )
+            render_blockers = await session.scalar(
+                select(func.count(RenderArtifactRecord.id)).where(
+                    RenderArtifactRecord.content_sha256 == artifact.content_sha256,
+                    RenderArtifactRecord.expires_at > now,
+                )
+            )
             artifact = await _transition_artifact(
                 session,
                 artifact,
@@ -991,12 +1004,12 @@ async def reap_expired_artifacts(
                 reason_code=reason_code,
                 evidence={
                     "storage_class": "content_addressed",
-                    "physical_delete_candidate": not bool(blockers),
+                    "physical_delete_candidate": not bool(blockers or render_blockers),
                 },
                 effective_at=now,
             )
             await session.commit()
-            if not blockers:
+            if not blockers and not render_blockers:
                 await store.remove(artifact.storage_key)
 
     known_keys = set(
@@ -1005,6 +1018,15 @@ async def reap_expired_artifacts(
                 select(ToolArtifact.storage_key).where(
                     ToolArtifact.storage_key.is_not(None),
                     ToolArtifact.content_deleted_at.is_(None),
+                )
+            )
+        ).all()
+    )
+    known_keys.update(
+        (
+            await session.scalars(
+                select(RenderArtifactRecord.storage_key).where(
+                    RenderArtifactRecord.expires_at > now,
                 )
             )
         ).all()
@@ -1021,8 +1043,14 @@ async def reap_expired_artifacts(
                         ToolArtifact.content_deleted_at.is_(None),
                     )
                 )
+                live_render_rows = await session.scalar(
+                    select(func.count(RenderArtifactRecord.id)).where(
+                        RenderArtifactRecord.content_sha256 == digest,
+                        RenderArtifactRecord.expires_at > now,
+                    )
+                )
                 await session.commit()
-                if not live_rows:
+                if not live_rows and not live_render_rows:
                     await store.remove_if_older(
                         key,
                         cutoff_timestamp=orphan_cutoff,

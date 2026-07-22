@@ -355,6 +355,35 @@ class ArtifactStore:
             and stat.S_IMODE(entry.st_mode) & 0o077 == 0
         )
 
+    async def read_object(
+        self,
+        key: str,
+        *,
+        byte_size: int,
+        content_sha256: str,
+    ) -> bytes:
+        """Read an authoritative content-addressed object and re-verify its digest."""
+
+        await self.initialize()
+        if self.digest_from_object_key(key) != content_sha256:
+            raise ArtifactStoreError("object_identity_mismatch", "artifact object identity is invalid")
+        path = self._path_for_key(key)
+        try:
+            entry = await asyncio.to_thread(path.lstat)
+        except FileNotFoundError as exc:
+            raise ArtifactStoreError("object_missing", "artifact object is missing") from exc
+        if (
+            not stat.S_ISREG(entry.st_mode)
+            or stat.S_ISLNK(entry.st_mode)
+            or entry.st_size != byte_size
+            or stat.S_IMODE(entry.st_mode) & 0o077
+        ):
+            raise ArtifactStoreError("unsafe_object_entry", "artifact object failed authority checks")
+        content = await asyncio.to_thread(path.read_bytes)
+        if len(content) != byte_size or hashlib.sha256(content).hexdigest() != content_sha256:
+            raise ArtifactStoreError("object_integrity_failure", "artifact object failed integrity checks")
+        return content
+
     async def remove(self, key: str) -> bool:
         await self.initialize()
         path = self._path_for_key(key)

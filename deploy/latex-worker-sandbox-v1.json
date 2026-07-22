@@ -20,16 +20,6 @@
       "source": "/usr/local/texlive/2024",
       "target": "/usr/local/texlive/2024",
       "read_only": true
-    },
-    {
-      "source": "/usr/share/fonts",
-      "target": "/usr/share/fonts",
-      "read_only": true
-    },
-    {
-      "source": "/var/cache/fontconfig",
-      "target": "/var/cache/fontconfig",
-      "read_only": true
     }
   ],
   "tmpfs": [

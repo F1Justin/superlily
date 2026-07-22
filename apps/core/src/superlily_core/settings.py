@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+import stat
 
 from .command_registry import DEFAULT_COMMAND_REGISTRY_PATH
 
@@ -57,6 +58,24 @@ def _string_set(value: str | None, *, variable: str) -> frozenset[str]:
     if not isinstance(parsed, list) or not all(isinstance(item, str) and item.strip() for item in parsed):
         raise ValueError(f"{variable} must be a JSON array of non-empty strings")
     return frozenset(item.strip() for item in parsed)
+
+
+def _secret_file(value: str | None, *, variable: str) -> str:
+    if not value:
+        return ""
+    path = Path(value)
+    if not path.is_absolute() or ".." in path.parts or "\x00" in value:
+        raise ValueError(f"{variable} must be an absolute secret file path")
+    try:
+        entry = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"{variable} is unavailable") from exc
+    if not stat.S_ISREG(entry.st_mode) or path.is_symlink() or entry.st_mode & 0o022:
+        raise ValueError(f"{variable} failed authority checks")
+    secret = path.read_text(encoding="utf-8").strip()
+    if len(secret) < 32:
+        raise ValueError(f"{variable} must contain at least 32 characters")
+    return secret
 
 
 def _group_modes(value: str | None, *, variable: str) -> dict[str, str]:
@@ -166,6 +185,12 @@ class Settings:
     artifact_root: str = ""
     artifact_secret_pepper: str = field(default="", repr=False)
     artifact_orphan_grace_seconds: int = 300
+    render_mode: str = "off"
+    render_canary_conversations: frozenset[str] = field(default_factory=frozenset)
+    render_backend_url: str = ""
+    render_backend_token: str = field(default="", repr=False)
+    render_timeout_seconds: int = 30
+    render_artifact_ttl_seconds: int = 3_600
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
@@ -245,6 +270,24 @@ class Settings:
                 raise ValueError("artifact_secret_pepper must contain at least 32 characters")
         if not 60 <= self.artifact_orphan_grace_seconds <= 86_400:
             raise ValueError("artifact_orphan_grace_seconds must be between 60 and 86400")
+        if self.render_mode not in {"off", "canary"}:
+            raise ValueError("render_mode must be off or canary")
+        if self.render_mode == "canary" and (
+            not self.render_canary_conversations
+            or not self.render_backend_url
+            or not self.render_backend_token
+        ):
+            raise ValueError("render canary requires conversations, backend URL, and token")
+        if self.render_backend_url and not re.fullmatch(
+            r"http://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", self.render_backend_url
+        ):
+            raise ValueError("render_backend_url must be an exact internal HTTP origin")
+        if self.render_backend_token and len(self.render_backend_token) < 32:
+            raise ValueError("render_backend_token must contain at least 32 characters")
+        if not 5 <= self.render_timeout_seconds <= 120:
+            raise ValueError("render_timeout_seconds must be between 5 and 120")
+        if not 300 <= self.render_artifact_ttl_seconds <= 86_400:
+            raise ValueError("render_artifact_ttl_seconds must be between 300 and 86400")
         if any(
             not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
             or "/" in host
@@ -303,6 +346,10 @@ class Settings:
     def artifact_enabled(self) -> bool:
         return bool(self.artifact_root and self.artifact_secret_pepper)
 
+    @property
+    def render_enabled(self) -> bool:
+        return self.render_mode == "canary" and self.artifact_enabled
+
     @classmethod
     def from_env(cls) -> "Settings":
         tokens = _token_map(
@@ -359,6 +406,20 @@ class Settings:
             artifact_secret_pepper=os.getenv("SUPERLILY_ARTIFACT_SECRET_PEPPER", ""),
             artifact_orphan_grace_seconds=int(
                 os.getenv("SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS", "300")
+            ),
+            render_mode=os.getenv("SUPERLILY_RENDER_MODE", "off").strip().lower(),
+            render_canary_conversations=_string_set(
+                os.getenv("SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON"),
+                variable="SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON",
+            ),
+            render_backend_url=os.getenv("SUPERLILY_RENDER_BACKEND_URL", ""),
+            render_backend_token=_secret_file(
+                os.getenv("SUPERLILY_RENDER_BACKEND_TOKEN_FILE"),
+                variable="SUPERLILY_RENDER_BACKEND_TOKEN_FILE",
+            ),
+            render_timeout_seconds=int(os.getenv("SUPERLILY_RENDER_TIMEOUT_SECONDS", "30")),
+            render_artifact_ttl_seconds=int(
+                os.getenv("SUPERLILY_RENDER_ARTIFACT_TTL_SECONDS", "3600")
             ),
             control_operators=_control_operators(
                 os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),

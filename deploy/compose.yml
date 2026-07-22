@@ -42,6 +42,12 @@ services:
       SUPERLILY_ARTIFACT_ROOT: ${SUPERLILY_ARTIFACT_ROOT:-}
       SUPERLILY_ARTIFACT_SECRET_PEPPER: ${SUPERLILY_ARTIFACT_SECRET_PEPPER:-}
       SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS: ${SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS:-300}
+      SUPERLILY_RENDER_MODE: ${SUPERLILY_RENDER_MODE:-off}
+      SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON: ${SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON:-[]}
+      SUPERLILY_RENDER_BACKEND_URL: ${SUPERLILY_RENDER_BACKEND_URL:-}
+      SUPERLILY_RENDER_BACKEND_TOKEN_FILE: /run/secrets/render_backend_token
+      SUPERLILY_RENDER_TIMEOUT_SECONDS: ${SUPERLILY_RENDER_TIMEOUT_SECONDS:-30}
+      SUPERLILY_RENDER_ARTIFACT_TTL_SECONDS: ${SUPERLILY_RENDER_ARTIFACT_TTL_SECONDS:-3600}
       SUPERLILY_CONTROL_OPERATORS_JSON: ${SUPERLILY_CONTROL_OPERATORS_JSON:-}
       SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON: ${SUPERLILY_CONTROL_ALLOWED_HOSTS_JSON:-[]}
       SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON: ${SUPERLILY_CONTROL_ALLOWED_ORIGINS_JSON:-[]}
@@ -63,6 +69,8 @@ services:
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn superlily_core.app:app --host 0.0.0.0 --port 8000"]
     volumes:
       - superlily_artifacts:/var/lib/superlily/artifacts
+    secrets:
+      - render_backend_token
     depends_on:
       postgres:
         condition: service_healthy
@@ -163,8 +171,6 @@ services:
     volumes:
       - ${SUPERLILY_LATEX_WORKER_RUN_DIR:-/home/justin/superlily/run/latex}:/latex-ipc
       - ${SUPERLILY_TEXLIVE_ROOT:-/usr/local/texlive/2024}:/usr/local/texlive/2024:ro
-      - /usr/share/fonts:/usr/share/fonts:ro
-      - /var/cache/fontconfig:/var/cache/fontconfig:ro
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -212,6 +218,46 @@ services:
     security_opt: [no-new-privileges:true]
     networks: [bus]
 
+  document-renderer:
+    profiles: [latex]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      SUPERLILY_DOCUMENT_RENDERER_TOKEN_FILE: /run/secrets/render_backend_token
+      SUPERLILY_DOCUMENT_RENDERER_WORKER_SOCKET: /latex-ipc/worker.sock
+      SUPERLILY_DOCUMENT_RENDERER_TIMEOUT_SECONDS: ${SUPERLILY_RENDER_TIMEOUT_SECONDS:-40}
+    command: ["superlily-document-renderer"]
+    user: "1000:1000"
+    group_add:
+      - "65532"
+    volumes:
+      - ${SUPERLILY_LATEX_WORKER_RUN_DIR:-/home/justin/superlily/run/latex}:/latex-ipc:ro
+    secrets:
+      - render_backend_token
+    depends_on:
+      latex-worker:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bus]
+
 volumes:
   superlily_postgres_data:
   superlily_artifacts:
@@ -220,3 +266,7 @@ networks:
   core:
   bus:
     name: superlily_bus
+
+secrets:
+  render_backend_token:
+    file: ${SUPERLILY_RENDER_BACKEND_TOKEN_FILE:-../run/render/backend.token}

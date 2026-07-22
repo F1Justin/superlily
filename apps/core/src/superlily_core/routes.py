@@ -14,6 +14,8 @@ from superlily_contracts import (
     ProviderHeartbeatIn,
     ProviderInventorySnapshotIn,
     ResponseIn,
+    DeliveryAttemptIn,
+    RenderDocument,
     ToolInvocationCancelIn,
     ToolInvocationConfirmIn,
     ToolInvocationCreateIn,
@@ -64,6 +66,12 @@ from .service import (
     ingest_response,
     ingress_receipt_view,
     resolve_pending_links,
+)
+from .render_service import (
+    RenderServiceError,
+    get_render_artifact,
+    record_delivery_attempt,
+    submit_render_document,
 )
 from .tool_registry_service import (
     ingest_provider_heartbeat,
@@ -192,6 +200,99 @@ async def post_response(
     if duplicate:
         response.status_code = status.HTTP_200_OK
     return {"response_id": record.id, "source_response_id": record.source_response_id, "duplicate": duplicate}
+
+
+def _render_http_error(exc: RenderServiceError) -> HTTPException:
+    if exc.code in {"conversation_not_canary", "artifact_forbidden", "delivery_forbidden"}:
+        code = status.HTTP_403_FORBIDDEN
+    elif exc.code in {"artifact_not_found"}:
+        code = status.HTTP_404_NOT_FOUND
+    elif exc.code in {"idempotency_conflict"}:
+        code = status.HTTP_409_CONFLICT
+    elif exc.code in {"render_disabled", "render_in_progress", "artifact_expired"}:
+        code = status.HTTP_503_SERVICE_UNAVAILABLE
+    else:
+        code = status.HTTP_502_BAD_GATEWAY
+    return HTTPException(status_code=code, detail=exc.safe_detail)
+
+
+@router.post("/v1/render-documents", status_code=status.HTTP_201_CREATED)
+async def post_render_document(
+    payload: RenderDocument,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    _verify_identity(authenticated_instance, payload.instance_id)
+    try:
+        record, artifact, duplicate = await submit_render_document(
+            session,
+            session.info["settings"],
+            payload,
+            idempotency_key,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return {
+        "render_id": record.id,
+        "artifact_id": artifact.id,
+        "request_sha256": record.request_sha256,
+        "content_sha256": artifact.content_sha256,
+        "mime_type": artifact.mime_type,
+        "byte_size": artifact.byte_size,
+        "width_pixels": artifact.width_pixels,
+        "height_pixels": artifact.height_pixels,
+        "render_duration_ms": record.render_duration_ms or 0,
+        "content_path": f"/v1/render-artifacts/{artifact.id}/content",
+        "duplicate": duplicate,
+    }
+
+
+@router.get("/v1/render-artifacts/{artifact_id}/content")
+async def get_render_artifact_content(
+    artifact_id: str,
+    session: Session,
+    authenticated_instance: Identity,
+) -> Response:
+    try:
+        artifact, content = await get_render_artifact(
+            session,
+            session.info["settings"],
+            artifact_id,
+            authenticated_instance,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-SHA256": artifact.content_sha256,
+        },
+    )
+
+
+@router.post("/v1/render-artifacts/{artifact_id}/delivery-attempts", status_code=201)
+async def post_render_delivery_attempt(
+    artifact_id: str,
+    payload: DeliveryAttemptIn,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict[str, str]:
+    try:
+        attempt = await record_delivery_attempt(
+            session,
+            artifact_id,
+            authenticated_instance,
+            payload,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    return {"attempt_id": attempt.id, "outcome": attempt.outcome}
 
 
 @router.post("/v1/heartbeats", status_code=status.HTTP_200_OK)

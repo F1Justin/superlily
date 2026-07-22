@@ -8,6 +8,8 @@ from functools import wraps
 from typing import Any
 from uuid import uuid4
 
+import httpx
+
 import nonebot.message as nonebot_message
 from nonebot import get_bots
 from nonebot.adapters.onebot.v11 import Bot as OneBotBot
@@ -18,7 +20,7 @@ from nonebot.message import event_postprocessor, event_preprocessor
 from pydantic import Field
 
 from nekro_agent.api.core import logger
-from nekro_agent.api.plugin import ConfigBase, NekroPlugin
+from nekro_agent.api.plugin import ConfigBase, NekroPlugin, SandboxMethodType
 from nekro_agent.schemas.agent_ctx import AgentCtx
 from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
@@ -43,7 +45,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.5.1"
+BRIDGE_VERSION = "0.6.1"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -104,6 +106,12 @@ class BridgeConfig(ConfigBase):
         title="Maximum durable event bytes",
     )
     CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
+    RENDER_ENABLED: bool = Field(default=False, title="Enable Core document rendering")
+    RENDER_CANARY_CHAT_KEYS: str = Field(
+        default="",
+        title="Comma-separated exact Nekro chat keys allowed to render",
+    )
+    RENDER_TIMEOUT_SECONDS: float = Field(default=40.0, ge=5, le=120, title="Render timeout")
 
 
 config: BridgeConfig = plugin.get_config(BridgeConfig)
@@ -155,6 +163,20 @@ def utc_iso(timestamp: int | float | None = None) -> str:
 
 def stable_key(*parts: Any) -> str:
     return hashlib.sha256("\x1f".join(str(part) for part in parts).encode()).hexdigest()
+
+
+def _render_canary_chat_keys() -> frozenset[str]:
+    return frozenset(
+        item.strip() for item in config.RENDER_CANARY_CHAT_KEYS.split(",") if item.strip()
+    )
+
+
+def _render_allowed(ctx: AgentCtx) -> bool:
+    return bool(
+        config.RENDER_ENABLED
+        and config.CORE_TOKEN
+        and ctx.chat_key in _render_canary_chat_keys()
+    )
 
 
 def instance(bot_id: str | None = None) -> dict[str, Any]:
@@ -792,6 +814,117 @@ async def heartbeat_loop() -> None:
                 "Lily Core heartbeat iteration failed; the loop will continue"
             )
         await asyncio.sleep(config.HEARTBEAT_SECONDS)
+
+
+@plugin.mount_prompt_inject_method(
+    name="Lily Core document renderer policy",
+    description="Use the reviewed renderer for mixed Chinese text and mathematics in canary chats",
+)
+async def render_prompt_policy(_ctx: AgentCtx) -> str:
+    if not _render_allowed(_ctx):
+        return ""
+    return """
+本频道已启用 Lily Core 统一文档渲染器。需要发送含中文长文、公式、题目列表的图片时，
+必须调用 `submit_render_document(document_json)`；document_json 只包含可选 title 和 blocks。
+blocks 支持：{"kind":"heading","text":"...","level":1}、
+{"kind":"text","text":"..."}、{"kind":"math","latex":"...","display":true}、
+{"kind":"list","ordered":true,"items":["..."]}。title、heading、text 和 list 的文本中都可直接
+用单个美元符号写行内公式，例如："已知 $f(x)=x^3+px^2+qx+r$，其根为
+$\\lambda_1,\\lambda_2,\\lambda_3$。"；不要为了行内公式把一句话拆成多个 block。
+只有矩阵、长推导或需要独占一行的公式才使用 math block；不要在文本中使用 $$...$$。
+不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
+该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
+""".strip()
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.BEHAVIOR,
+    name="submit_render_document",
+    description="Render and send a mixed Chinese/math document through Lily Core",
+)
+async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
+    """提交结构化文档并将 Core 生成的 PNG 直接发送到当前频道。
+
+    Args:
+        document_json: JSON 对象字符串，只能包含可选 title 与 blocks。
+    """
+
+    if not _render_allowed(_ctx):
+        return "统一文档渲染器未对当前频道开放。"
+    try:
+        raw = json.loads(document_json)
+        if not isinstance(raw, dict) or not set(raw).issubset({"title", "blocks"}):
+            return "文档结构无效：只允许 title 和 blocks。"
+        payload = {
+            "schema_version": "1.0",
+            "instance_id": config.INSTANCE_ID,
+            "conversation_key": _ctx.chat_key,
+            **raw,
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        idempotency_key = f"nekro-render:{stable_key(_ctx.chat_key, canonical)}"
+        headers = {
+            "Authorization": f"Bearer {config.CORE_TOKEN}",
+            "Idempotency-Key": idempotency_key,
+        }
+        timeout = httpx.Timeout(
+            config.RENDER_TIMEOUT_SECONDS,
+            connect=min(5.0, config.RENDER_TIMEOUT_SECONDS),
+        )
+        async with httpx.AsyncClient(base_url=config.CORE_URL, timeout=timeout) as client:
+            response = await client.post("/v1/render-documents", json=payload, headers=headers)
+            response.raise_for_status()
+            receipt = response.json()
+            expected_hash = receipt.get("content_sha256")
+            content_path = receipt.get("content_path")
+            if (
+                not isinstance(expected_hash, str)
+                or len(expected_hash) != 64
+                or not isinstance(content_path, str)
+                or not content_path.startswith("/v1/render-artifacts/")
+            ):
+                return "统一文档渲染失败：Core 返回了无效制品凭证。"
+            artifact_response = await client.get(
+                content_path,
+                headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
+            )
+            artifact_response.raise_for_status()
+            content = artifact_response.content
+            if (
+                not content.startswith(b"\x89PNG\r\n\x1a\n")
+                or hashlib.sha256(content).hexdigest() != expected_hash
+            ):
+                return "统一文档渲染失败：制品完整性校验未通过。"
+            sandbox_path = await _ctx.fs.mixed_forward_file(
+                content,
+                file_name=f"lily-render-{receipt['artifact_id']}.png",
+            )
+            await _ctx.send_image(sandbox_path)
+            try:
+                delivery_response = await client.post(
+                    f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-attempts",
+                    json={
+                        "instance_id": config.INSTANCE_ID,
+                        "outcome": "ambiguous",
+                        "safe_error_code": "platform_message_id_unavailable",
+                    },
+                    headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
+                )
+                delivery_response.raise_for_status()
+            except httpx.HTTPError:
+                logger.warning("Lily Core render delivery receipt could not be recorded")
+        return "统一文档已渲染并发送。"
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return "文档结构无效，请按约定的 blocks JSON 重试。"
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Lily Core rejected render request with status %s", exc.response.status_code)
+        return "统一文档渲染暂时不可用，请改用普通文本回复，不要自行绘制文字图片。"
+    except httpx.HTTPError:
+        logger.warning("Lily Core render request failed safely")
+        return "统一文档渲染暂时不可用，请改用普通文本回复，不要自行绘制文字图片。"
+    except Exception:
+        logger.exception("Lily Core render delivery failed")
+        return "统一文档发送失败，请改用普通文本回复，不要自行绘制文字图片。"
 
 
 @plugin.mount_init_method()
