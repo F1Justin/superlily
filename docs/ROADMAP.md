@@ -268,7 +268,8 @@ Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-4-unified-renderer-and-deli
 
 Current canary status (2026-07-22): the RenderDocument 1.1 contract, retryable fenced
 render attempts, capability-aware image/text plans, idempotent delivery intents, and
-Nekro OneBot receipt capture are deployed only for `onebot_v11-group_1080353942`.
+Nekro OneBot receipt capture are deployed only for `onebot_v11-group_1080353942`
+and `onebot_v11-group_861651713`.
 The compatibility migration and constrained-adapter proof below remain open.
 
 ### Deliverables

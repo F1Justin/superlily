@@ -3,8 +3,9 @@
 ## Goal
 
 The Phase 4 canary replaces model-written Pillow/Matplotlib prose images with a
-reviewed, deterministic path for mixed Chinese text, lists, and mathematics. The first
-canary target is the Nekro conversation `onebot_v11-group_1080353942`.
+reviewed, deterministic path for mixed Chinese text, lists, and mathematics. The active
+canary targets are the Nekro conversations `onebot_v11-group_1080353942` and
+`onebot_v11-group_861651713`.
 
 This slice is deliberately separate from Phase 5 natural-language tool selection.
 `submit_render_document` is a terminal Nekro behavior, and Core authenticates the real
@@ -61,7 +62,7 @@ Core defaults to `SUPERLILY_RENDER_MODE=off`. A deployment-ready canary uses:
 SUPERLILY_ARTIFACT_ROOT=/var/lib/superlily/artifacts
 SUPERLILY_ARTIFACT_SECRET_PEPPER=<independent-random-secret-at-least-32-chars>
 SUPERLILY_RENDER_MODE=canary
-SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON=["onebot_v11-group_1080353942"]
+SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON=["onebot_v11-group_1080353942","onebot_v11-group_861651713"]
 SUPERLILY_RENDER_BACKEND_URL=http://document-renderer:8000
 SUPERLILY_RENDER_BACKEND_TOKEN_FILE=/run/secrets/render_backend_token
 SUPERLILY_RENDER_IMPLEMENTATION_HASH=<reviewed-worker-identity-sha256>
@@ -72,7 +73,7 @@ The Nekro bridge remains off independently. Its plugin configuration must set:
 
 ```text
 RENDER_ENABLED = true
-RENDER_CANARY_CHAT_KEYS = onebot_v11-group_1080353942
+RENDER_CANARY_CHAT_KEYS = onebot_v11-group_1080353942,onebot_v11-group_861651713
 ```
 
 Do not enable only one side, broaden the allowlist, restart live services, or send a
@@ -112,12 +113,15 @@ The generic compatibility migration and exit proof are still separate work packe
   documents were backfilled to 80 attempts and all 76 artifact rows are attempt-bound.
 - Core, the document gateway, the provider, and the no-network worker use reviewed
   worker identity `b989b1a5935e7dff10247dd5ad6ad32692b09545dbb9d43d9dda7a035f04678d`.
-- Nekro bridge `0.7.0` is online and still allows only
-  `onebot_v11-group_1080353942`.
+- Nekro bridge `0.7.0` is online and allows exactly
+  `onebot_v11-group_1080353942` and `onebot_v11-group_861651713`.
 - A production RenderDocument 1.1 probe completed in 1087 ms and selected an image plan
   without degradation. The deploy probe intentionally did not send a group message;
   the first natural canary delivery still needs confirmation that the OneBot completion
   hook records its real platform message ID.
+- After adding `onebot_v11-group_861651713`, a scoped production probe completed in
+  1009 ms and likewise selected an image plan without degradation. It created no
+  delivery intent and therefore sent no test message to the group.
 - `image` and `artifact_ref` nodes currently render bounded accessibility placeholders.
   Resolver-backed composition of existing artifacts remains part of the compatibility
   migration rather than granting the worker Core credentials or filesystem authority.
