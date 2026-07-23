@@ -992,6 +992,7 @@ async def reap_expired_artifacts(
                 select(func.count(RenderArtifactRecord.id)).where(
                     RenderArtifactRecord.content_sha256 == artifact.content_sha256,
                     RenderArtifactRecord.expires_at > now,
+                    RenderArtifactRecord.content_deleted_at.is_(None),
                 )
             )
             artifact = await _transition_artifact(
@@ -1027,6 +1028,7 @@ async def reap_expired_artifacts(
             await session.scalars(
                 select(RenderArtifactRecord.storage_key).where(
                     RenderArtifactRecord.expires_at > now,
+                    RenderArtifactRecord.content_deleted_at.is_(None),
                 )
             )
         ).all()
@@ -1047,6 +1049,7 @@ async def reap_expired_artifacts(
                     select(func.count(RenderArtifactRecord.id)).where(
                         RenderArtifactRecord.content_sha256 == digest,
                         RenderArtifactRecord.expires_at > now,
+                        RenderArtifactRecord.content_deleted_at.is_(None),
                     )
                 )
                 await session.commit()

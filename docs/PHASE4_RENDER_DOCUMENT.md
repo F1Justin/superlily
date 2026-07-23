@@ -1,137 +1,159 @@
-# Phase 4: RenderDocument and delivery canary
+# 第四阶段：统一 Renderer 与投递边界
 
-## Goal
+## 目标与用户入口
 
-The Phase 4 canary replaces model-written Pillow/Matplotlib prose images with a
-reviewed, deterministic path for mixed Chinese text, lists, and mathematics. The active
-canary targets are the Nekro conversations `onebot_v11-group_1080353942` and
-`onebot_v11-group_861651713`.
+第四阶段把内容、排版、平台能力和实际发送拆开。工具只返回经过 descriptor
+校验的结构化结果；Core 把结果转换成 `RenderDocument`，选择与目标 adapter
+能力相符的 `DeliveryPlan`，平台 bridge 只执行计划并回报真实平台结果。
 
-This slice is deliberately separate from Phase 5 natural-language tool selection.
-`submit_render_document` is a terminal Nekro behavior, and Core authenticates the real
-ingest instance and checks the exact conversation allowlist.
+Nekro 的模型入口不再要求模型逐段选择 `text`、`math` 或 `list`。0.9.0 bridge
+提供 `submit_rendered_markdown(markdown_text)`：模型提交一整段普通 Markdown，
+Core 再确定性转换为安全 AST。支持：
 
-## Why not "Markdown rendering" directly?
+- `#` / `##` 标题、自然段、`-` / `1.` 列表和 `>` 引用；
+- 成对 `**加粗**` 与 `$行内公式$`，无需拆分段落；
+- 独占行的 `$$...$$`、代码围栏和简单管道表格；
+- 未受信 HTML、链接和 Markdown 图片只显示为经过转义的文字，不访问网络、
+  本地文件或回调。
 
-Markdown is an input syntax, not a rasterizer. A Markdown solution still needs an HTML
-engine, CSS fonts, a math engine such as KaTeX or MathJax, and a browser/screenshot
-process. The initial backend reuses the existing no-network XeLaTeX worker because its
-Chinese font set, mathematical glyphs, process limits, and PNG validation are already
-reviewed.
+旧 `submit_render_document(document_json)` 仍保留为结构化兼容入口，但不再注入
+模型提示。这样既减少模型 token，又避免截图中 `**` 和 `$...$` 被当作普通文本。
 
-Core speaks to an authenticated internal document-renderer gateway. The gateway alone
-owns access to the private `render_document` worker socket. The public contract is
-the `RenderDocument` AST, not TeX or unrestricted Markdown, so an HTML/KaTeX worker can
-replace the initial backend without changing Nekro, the Core API, artifact storage, or
-delivery receipts. RenderDocument 1.2 recognizes only paired `**strong**` markers inside
-reviewed prose fields; block Markdown, HTML, links, images, and code fences remain escaped
-text or explicit structural nodes.
+## RenderDocument 1.3
 
-Local warm-process measurements for a representative mixed CJK/math document were
-1.16 s, 0.84 s, and 0.89 s. Core records `render_duration_ms` on every request. The
-canary should use observed p50/p95 latency and failure rate before deciding whether the
-extra Chromium/KaTeX runtime is justified.
+当前版本为 1.3，继续读取 1.0–1.2，并包含以下有界节点：
 
-## Flow
+- `text`、`paragraph`、`heading`、`list`、`quote`；
+- `math`、`code`、`table`；
+- `notice`、`warning`、`error_summary`、`progress`；
+- 仅含展示字段和不可执行 action ID 的 `card`；
+- `image`、`artifact_ref`、`group`、`alternative`。
 
-1. The canary prompt tells Nekro to call `submit_render_document(document_json)` for
-   long prose/math images and forbids Pillow/ImageDraw/Matplotlib text layout.
-2. The bridge overwrites `instance_id` and `conversation_key`; the model cannot choose
-   either authority value.
-3. Core validates the bounded AST, ingest token, idempotency key, render mode, and exact
-   canary conversation.
-4. Prose fields may mix ordinary text, paired `**strong**` spans, and single-dollar
-   inline math, for example `**结论：** 已知 $f(x)=x^3+px^2+qx+r$`. The contract reviews
-   each inline expression with the same restrictions as a standalone math block.
-   Unmatched strong markers remain literal, code blocks never interpret them, and the
-   text fallback removes only recognized presentation markers. The worker escapes the
-   prose segments and renders one bounded PNG with no network or shell escape.
-   Standalone math blocks remain for matrices and long display equations.
-5. Core creates a fenced `RenderAttempt` with an exact renderer snapshot. Failed,
-   abandoned, missing-object, and expired-artifact states can create a new attempt;
-   a still-live lease cannot be executed twice.
-6. Core independently validates and content-addresses the PNG, then creates an immutable
-   `DeliveryPlan` from the instance's latest heartbeat capability snapshot. QQ currently
-   selects image; an adapter with only `send_text` gets bounded plain text plus an explicit
-   `image_unsupported_fallback_to_text` degradation.
-7. Before sending, Nekro creates an idempotent delivery intent. Its NoneBot API-completion
-   hook captures the OneBot `message_id`; Core then records a confirmed success, bounded
-   failure, or ambiguous completion. A pending/ambiguous intent is never retried blindly.
+1.1 起所有节点必须具有唯一稳定 `node_id`；1.2 起文本字段识别成对
+`**strong**` 和单美元行内公式；1.3 加入段落、卡片、警告和显式错误摘要。
+节点不能包含脚本、平台原生 segment、可执行 callback、远程资源或本地路径。
 
-## Safe defaults and canary configuration
+## 内容寻址 artifact
 
-Core defaults to `SUPERLILY_RENDER_MODE=off`. A deployment-ready canary uses:
+每份制品保存并独立校验：
+
+- SHA-256、MIME、字节数、像素尺寸和存储对象键；
+- renderer/tool producer、source invocation、render attempt 和 fence；
+- data classification、canonical scope、无害文件名和 accessibility text；
+- expiry、retention、逻辑删除时间和删除原因。
+
+逻辑删除立即令下载返回 410，但保留最小审计元数据。同一 digest 仍被活跃 tool
+artifact 或其他未到期 render artifact 引用时，只删除当前逻辑引用；最后一个引用
+消失后才移除物理对象。LaTeX 工具结果通过 `tool-artifact-passthrough-v1`
+直接复用原始 PNG 字节，不重新编译、压缩或改变 hash。
+
+## 能力规划与第二 adapter 证明
+
+Core 在 renderer 执行前规范化目标能力，并保存：
+
+- capability snapshot hash；
+- 选中及拒绝的 `alternative`、拒绝原因和缺失能力；
+- resolved document hash、decision hash；
+- 有序 payload、最终 family 和全部 degradation reason。
+
+QQ profile 支持图片时选择内容寻址 PNG；固定的受限 adapter simulator 只支持
+文本，因此确定性退化为 semantic plain text。相同 fixture 在两种 profile 下具有
+相同语义文本 hash，simulator 不含平台连接或发送权限。
+
+## 兼容命令迁移
+
+以下转换只接受精确 tool ID、descriptor 版本和已成功 invocation 的服务端保存结果：
+
+| 路径 | RenderDocument | 发送前验证 | 回滚 |
+| --- | --- | --- | --- |
+| `status.inspect@1.0.2` | 状态 `card` | principal、output schema/hash | 关闭 status flag |
+| `wolfram.run@1.0.0` | 有界 Wolfram `code` | principal、output schema/hash | 旧 `/wf` matcher |
+| `latex.render@1.0.0` | 原 artifact `image` | invocation/attempt/artifact 六项绑定 | 旧 `/tex` matcher |
+| `/help` | 结构化命令 `list` | bridge 身份与 exact conversation | 旧 help matcher |
+
+Lily bridge 0.6.0 的新 matcher 为 `block=False`。在 Core 成功创建 delivery intent
+以前，它不会阻断旧 matcher；计划未命中、`ledger_only`、网络失败或无效凭证都会
+安全回到旧路径。一旦 intent 已存在，bridge 才停止传播并执行一次平台发送。平台
+可能已经接受但未返回 message ID 时记为 `ambiguous`，绝不盲目重发。
+
+Git authority `phase4-command-canary-20260723@1.0.0` 只包含：
+
+- 群 `1080353942` 与 `861651713`；
+- caller `command`；
+- 上述三个精确 descriptor hash 和三个精确 Provider；
+- 总计 200 次调用、最长 23 小时 59 分钟；
+- 硬回滚目标 `ledger_only`。
+
+`/help` 不执行工具，只受 Renderer allowlist 和独立 bridge flag 约束。
+
+## API
+
+- `POST /v1/render-documents`：提交已验证 AST；
+- `POST /v1/markdown-documents`：提交有界 Markdown 并在 Core 内降为 AST；
+- `POST /v1/tool-invocations/{id}/render-result`：从保存的成功工具结果渲染；
+- `POST /v1/help-documents`：渲染结构化命令帮助；
+- `GET/DELETE /v1/render-artifacts/{id}/content`：受 scope 约束的读取与删除；
+- `POST /v1/render-artifacts/{id}/delivery-intents`：创建一次性投递意图；
+- `POST /v1/render-delivery-intents/{id}/complete`：记录成功、失败或不明确完成。
+
+所有创建接口都有稳定幂等身份。重复 delivery intent 不会获得第二次发送许可；
+过期 pending intent 原子变为 `ambiguous` 并追加投递证据。
+
+## 安全与故障矩阵
+
+自动化覆盖：
+
+- Markdown/HTML/SVG、远程 URL、本地路径和未知字段均不会变成主动内容；
+- LaTeX 文件、网络、字体、Lua、宏定义和展开循环命令被拒绝；
+- 图片字节、MIME、尺寸、symlink、对象键和 canonical document 大小受限；
+- 超量 blocks、节点、表格、代码、数学和 artifact 引用失败关闭；
+- 重复请求、renderer 失败、过期 artifact、stale render fence 和恢复；
+- stale tool fence、取消竞态、unknown completion；
+- delivery intent 过期、重复 completion 和冲突 completion；
+- 共享与非共享 artifact 的逻辑/物理删除。
+
+2026-07-23 的实现证据：
+
+- SQLite 全量：509 passed，4 skipped；
+- PostgreSQL 17 Alembic：`upgrade head -> downgrade base -> upgrade head ->
+  alembic check` 通过，head 为 `0019_phase4_planning`；
+- PostgreSQL 17 全量：512 passed；
+- PostgreSQL 测试发现并修复 passthrough artifact 在无 ORM relationship 时的
+  外键写入顺序：同一事务显式先 flush fenced attempt，再插入 artifact。
+
+## 部署配置与回滚
+
+Core 继续保持精确 Renderer allowlist：
 
 ```dotenv
-SUPERLILY_ARTIFACT_ROOT=/var/lib/superlily/artifacts
-SUPERLILY_ARTIFACT_SECRET_PEPPER=<independent-random-secret-at-least-32-chars>
 SUPERLILY_RENDER_MODE=canary
 SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON=["onebot_v11-group_1080353942","onebot_v11-group_861651713"]
-SUPERLILY_RENDER_BACKEND_URL=http://document-renderer:8000
-SUPERLILY_RENDER_BACKEND_TOKEN_FILE=/run/secrets/render_backend_token
-SUPERLILY_RENDER_IMPLEMENTATION_HASH=<reviewed-worker-identity-sha256>
-SUPERLILY_RENDER_DELIVERY_INTENT_SECONDS=60
 ```
 
-The Nekro bridge remains off independently. Its plugin configuration must set:
+Nekro：
 
 ```text
 RENDER_ENABLED = true
 RENDER_CANARY_CHAT_KEYS = onebot_v11-group_1080353942,onebot_v11-group_861651713
 ```
 
-Do not enable only one side, broaden the allowlist, restart live services, or send a
-real canary message as part of a repository-only rollout. Those are separate operational
-changes requiring an explicit deployment decision.
+Lily：
 
-## Exit checks for this slice
+```dotenv
+LILY_CORE_PHASE4_COMMANDS_ENABLED=true
+LILY_CORE_PHASE4_COMMAND_CANARY_GROUPS=1080353942,861651713
+LILY_CORE_PHASE4_STATUS_ENABLED=true
+LILY_CORE_PHASE4_WOLFRAM_ENABLED=true
+LILY_CORE_PHASE4_LATEX_ENABLED=true
+LILY_CORE_PHASE4_HELP_ENABLED=true
+```
 
-- Contract 1.2 provides stable node IDs and bounded text, heading, math, list, quote,
-  code, table, notice, progress, group, alternative, image, and artifact-reference nodes.
-- Contract 1.2 adds only paired `**strong**` inline presentation, preserves 1.0/1.1
-  literal-marker semantics, and keeps image and plain-text delivery semantically aligned.
-- Contract rejects unknown fields, duplicate node IDs, inaccessible artifact references,
-  oversized documents, invalid chat keys, and TeX file I/O/control commands.
-- Core stores immutable request identity, fenced attempts, renderer snapshots,
-  content-addressed artifacts, capability plans, delivery intents, and append-only evidence.
-- Artifact download is restricted to the submitting ingest instance and expires.
-- Exact retries reuse a live artifact; an expired artifact or terminal failure re-renders
-  under a new attempt without changing document identity.
-- QQ success is confirmed only when OneBot returns a platform message ID. Unknown
-  completion remains ambiguous and at-most-once.
-- The golden mixed Chinese/math sample contains `≅`, `⊗`, `⊕`, and `∩` without missing
-  glyph boxes and wraps within a fixed document width.
+回滚分三层且互不依赖：
 
-## Remaining Phase 4 work after this canary
+1. 任一命令 flag 设为 false，立即恢复对应旧 matcher；
+2. 暂停 rollout plan 或把 Core 上限恢复 `ledger_only`，三个工具均不再执行；
+3. `SUPERLILY_RENDER_MODE=off` / bridge Renderer flag 关闭统一渲染。
 
-The generic compatibility migration and exit proof are still separate work packets:
-
-1. move status, Wolfram, LaTeX command output, and help paths one by one to
-   structured result -> RenderDocument -> DeliveryPlan, retaining rollback paths;
-2. add a deterministic constrained-adapter simulator and run the same fixtures through
-   QQ-image and text-only profiles;
-3. complete malicious-input, crash/fence, deletion, and PostgreSQL fault matrices, then
-   hold a measured exact-conversation stable window before widening any canary.
-
-## 2026-07-22 deployment state
-
-- Production is at migration `0018_render_attempt_delivery`; the 80 legacy render
-  documents were backfilled to 80 attempts and all 76 artifact rows are attempt-bound.
-- Core, the document gateway, the provider, and the no-network worker use reviewed
-  worker identity `cd49f0e444eb6d1f973340c1ae597f5955051add347a191e03ecdf922f679fe2`.
-- Nekro bridge `0.8.0` is online and allows exactly
-  `onebot_v11-group_1080353942` and `onebot_v11-group_861651713`.
-- A production RenderDocument 1.1 probe completed in 1087 ms and selected an image plan
-  without degradation. The deploy probe intentionally did not send a group message;
-  the first natural canary delivery still needs confirmation that the OneBot completion
-  hook records its real platform message ID.
-- After adding `onebot_v11-group_861651713`, a scoped production probe completed in
-  1009 ms and likewise selected an image plan without degradation. It created no
-  delivery intent and therefore sent no test message to the group.
-- The RenderDocument 1.2 Markdown-lite production probe completed in 1116 ms with no
-  degradation or delivery intent. Visual inspection confirmed paired strong markers,
-  strong text containing inline math, literal unmatched markers, and literal code-block
-  markers all follow their reviewed semantics.
-- `image` and `artifact_ref` nodes currently render bounded accessibility placeholders.
-  Resolver-backed composition of existing artifacts remains part of the compatibility
-  migration rather than granting the worker Core credentials or filesystem authority.
+生产签署还需要完成 `0019` 部署、导入并激活精确 command plan、两群四条兼容路径
+的真实平台回执、稳定窗口及一次无发送的回滚演练。完成这些证据以前，不扩大群范围，
+也不开放自然语言工具调用；后者属于第五阶段。

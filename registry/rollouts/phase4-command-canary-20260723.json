@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "phase4-command-canary-20260723",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-23T18:30:00+08:00",
+  "expires_at": "2026-07-24T18:29:00+08:00",
+  "max_invocations": 200,
+  "rollback_mode": "ledger_only",
+  "reason": "第四阶段 status、Wolfram 与 LaTeX 命令在两个已批准群聊中的精确兼容迁移与稳定窗口",
+  "items": [
+    {
+      "item_id": "phase4-status-1080353942",
+      "tool_id": "status.inspect",
+      "descriptor_version": "1.0.2",
+      "descriptor_hash": "0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "command",
+      "provider_id": "provider-status-primary",
+      "expected_descriptor_resource_version": 4,
+      "expected_provider_resource_version": 3
+    },
+    {
+      "item_id": "phase4-status-861651713",
+      "tool_id": "status.inspect",
+      "descriptor_version": "1.0.2",
+      "descriptor_hash": "0cd74138941492d37651d9640d1528bf337bf94b643e76fc0f59585feaec77cd",
+      "canonical_conversation": "qq:group:861651713",
+      "caller": "command",
+      "provider_id": "provider-status-primary",
+      "expected_descriptor_resource_version": 4,
+      "expected_provider_resource_version": 3
+    },
+    {
+      "item_id": "phase4-wolfram-1080353942",
+      "tool_id": "wolfram.run",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "aa6e9b1c930406bab11500de6c7653219aa9e8b831ee5fc7d08b1ab3d239ddaa",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "command",
+      "provider_id": "provider-wolfram-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    },
+    {
+      "item_id": "phase4-wolfram-861651713",
+      "tool_id": "wolfram.run",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "aa6e9b1c930406bab11500de6c7653219aa9e8b831ee5fc7d08b1ab3d239ddaa",
+      "canonical_conversation": "qq:group:861651713",
+      "caller": "command",
+      "provider_id": "provider-wolfram-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    },
+    {
+      "item_id": "phase4-latex-1080353942",
+      "tool_id": "latex.render",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "adad493e24444f8a09215180dc90839102646fe069e2d767f9d1cab9ef826b36",
+      "canonical_conversation": "qq:group:1080353942",
+      "caller": "command",
+      "provider_id": "provider-latex-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    },
+    {
+      "item_id": "phase4-latex-861651713",
+      "tool_id": "latex.render",
+      "descriptor_version": "1.0.0",
+      "descriptor_hash": "adad493e24444f8a09215180dc90839102646fe069e2d767f9d1cab9ef826b36",
+      "canonical_conversation": "qq:group:861651713",
+      "caller": "command",
+      "provider_id": "provider-latex-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    }
+  ]
+}

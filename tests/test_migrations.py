@@ -156,6 +156,18 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "PRAGMA table_info(render_delivery_attempts)"
             ).fetchall()
         }
+        render_plan_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(render_delivery_plans)"
+            ).fetchall()
+        }
+        render_intent_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(render_delivery_intents)"
+            ).fetchall()
+        }
         render_delivery_triggers = {
             row[0]
             for row in connection.execute(
@@ -164,7 +176,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             ).fetchall()
         }
 
-    assert version == ("0018_render_attempt_delivery",)
+    assert version == ("0019_phase4_planning",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -297,7 +309,33 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "render_delivery_intents",
         "render_delivery_attempts",
     }
-    assert "attempt_id" in render_artifact_columns
+    assert {
+        "attempt_id",
+        "producer_kind",
+        "producer_id",
+        "source_invocation_id",
+        "data_classification",
+        "canonical_scope",
+        "safe_filename",
+        "accessibility_text",
+        "retention_until",
+        "content_deleted_at",
+        "deletion_reason",
+    }.issubset(render_artifact_columns)
+    assert {
+        "decision_hash",
+        "resolved_document_hash",
+        "selected_alternatives_json",
+        "rejected_alternatives_json",
+        "ordered_payloads_json",
+    }.issubset(render_plan_columns)
+    assert {
+        "conversation_key",
+        "capability_hash",
+        "ordered_payloads_json",
+        "reply_to_platform_message_id",
+        "mention_ids_json",
+    }.issubset(render_intent_columns)
     assert {"plan_id", "intent_id"}.issubset(render_delivery_columns)
     assert render_delivery_triggers == {
         "render_delivery_attempts_no_update",
@@ -513,7 +551,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-    assert version == ("0018_render_attempt_delivery",)
+    assert version == ("0019_phase4_planning",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -689,7 +727,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0018_render_attempt_delivery"
+        assert version == "0019_phase4_planning"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -799,6 +837,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0018_render_attempt_delivery"
+        assert asyncio.run(snapshot())[0] == "0019_phase4_planning"
     finally:
         alembic("downgrade", "base", check=False)

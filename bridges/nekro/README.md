@@ -1,5 +1,17 @@
 # Nekro bridge
 
+## 0.9.0 普通 Markdown 模型入口
+
+模型不再构造逐段 blocks JSON。canary prompt 只要求调用
+`submit_rendered_markdown(markdown_text)`，直接提交一整段普通 Markdown；Core
+确定性转换标题、段落、列表、引用、代码、表格和 display math，文本字段继续支持
+`**加粗**` 与 `$行内公式$`。HTML、链接和 Markdown 图片只显示为普通文字，不访问
+远程或本地资源。
+
+旧 `submit_render_document(document_json)` 保留为兼容回滚入口，但不再出现在模型
+提示中。0.9.0 不改变现有两个 exact chat allowlist、一次性 delivery intent 或
+OneBot completion 语义。
+
 ## 0.5.1 后台任务自恢复
 
 从 0.5.1 起，普通上报 worker 与 durable spool worker 都会观察异常退出、记录不含异常正文的错误类型，并在一秒退避后自动重建。正常 shutdown 不计为故障。heartbeat 的单轮构造也有独立异常边界；累计失败数、最后异常类型、两个 worker 的运行状态和重启次数会进入后续 heartbeat 元数据。修复只提高采集链路的可观测性与自恢复能力，不改变 Nekro 的 matcher、claim、回复或 fail-open 行为。

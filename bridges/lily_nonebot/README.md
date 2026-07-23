@@ -1,5 +1,31 @@
 # Lily NoneBot bridge
 
+## 0.6.0 第四阶段命令兼容
+
+0.6.0 为 `/status`、纯文本 `/wf`、`/tex` 和 `/help` 增加统一 Renderer
+兼容入口。bridge 固定三个经过 Git 审阅的 descriptor 身份，创建 command
+invocation，等待独立 Provider 完成，再请求 Core 生成 capability-aware
+delivery plan。工具和 Provider 不持有 QQ 发送能力。
+
+新 matcher 默认关闭且 `block=False`。在精确 canary 命中并成功创建 delivery
+intent 以前，Core 超时、`ledger_only`、rollout 未命中和其他失败都会让旧 matcher
+继续处理；intent 创建以后才阻断旧路径，防止双发。平台完成不明确时记录
+`ambiguous`，不自动重试。
+
+```dotenv
+LILY_CORE_PHASE4_COMMANDS_ENABLED=false
+LILY_CORE_PHASE4_COMMAND_CANARY_GROUPS=1080353942,861651713
+LILY_CORE_PHASE4_STATUS_ENABLED=true
+LILY_CORE_PHASE4_WOLFRAM_ENABLED=true
+LILY_CORE_PHASE4_LATEX_ENABLED=true
+LILY_CORE_PHASE4_HELP_ENABLED=true
+LILY_CORE_PHASE4_COMMAND_TIMEOUT_SECONDS=10
+```
+
+任一命令 flag 都是独立回滚开关；全局 flag 关闭后，所有命令恢复旧路径。图片输入、
+Wolfram 图片/音频输出仍留在旧 `/wf`，当前 reviewed `wolfram.run@1.0.0` 只迁移
+有界文本表达式与文本结果。
+
 ## 0.5.1 后台任务自恢复
 
 从 0.5.1 起，普通上报 worker 与 durable spool worker 都会观察异常退出、记录不含异常正文的错误类型，并在一秒退避后自动重建。正常 shutdown 不计为故障。heartbeat 的单轮构造也有独立异常边界；累计失败数、最后异常类型、两个 worker 的运行状态和重启次数会进入后续 heartbeat 元数据。这样即使 bot 仍在收消息，也不会再让一个悄然退出的后台协程长期把实例显示成假离线。bridge 仍然 fail-open，不因 Core 或 reporter 故障阻断原有命令。

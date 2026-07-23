@@ -18,14 +18,18 @@ from typing import Any
 from superlily_contracts import (
     AlternativeBlock,
     ArtifactRefBlock,
+    CardBlock,
     CodeBlock,
+    ErrorSummaryBlock,
     GroupBlock,
     ImageBlock,
     NoticeBlock,
+    ParagraphBlock,
     ProgressBlock,
     QuoteBlock,
     RenderDocument,
     TableBlock,
+    WarningBlock,
     canonicalize_json_value,
     split_inline_content,
     strict_json_loads,
@@ -200,7 +204,7 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
             + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
             + "}\\par\n"
         )
-    if block.kind == "text":
+    if block.kind in {"text", "paragraph"}:
         return _mixed_text_latex(block.text, markdown_lite=markdown_lite) + "\\par\n"
     if block.kind == "math":
         if block.display:
@@ -273,6 +277,83 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
             + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
             + "}}\\par\n"
         )
+    if isinstance(block, WarningBlock):
+        title = (
+            _mixed_text_latex(block.title, markdown_lite=markdown_lite) + r"\quad "
+            if block.title
+            else ""
+        )
+        return (
+            r"\noindent\fcolorbox{orange!70!black}{white}{"
+            r"\parbox{0.92\linewidth}{\bfseries "
+            + title
+            + r"\normalfont "
+            + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
+            + "}}\\par\n"
+        )
+    if isinstance(block, ErrorSummaryBlock):
+        items = ""
+        if block.items:
+            items = (
+                r"\begin{itemize}"
+                + "".join(
+                    r"\item "
+                    + _mixed_text_latex(item, markdown_lite=markdown_lite)
+                    for item in block.items
+                )
+                + r"\end{itemize}"
+            )
+        return (
+            r"\noindent\fcolorbox{red!65!black}{white}{"
+            r"\parbox{0.92\linewidth}{\bfseries "
+            + _mixed_text_latex(block.title, markdown_lite=markdown_lite)
+            + r"\par\normalfont "
+            + _mixed_text_latex(block.summary, markdown_lite=markdown_lite)
+            + items
+            + "}}\\par\n"
+        )
+    if isinstance(block, CardBlock):
+        colors = {
+            "neutral": "black!55",
+            "info": "blue!45!black",
+            "success": "green!45!black",
+            "warning": "orange!70!black",
+            "error": "red!65!black",
+        }
+        body = (
+            r"\par\normalfont "
+            + _mixed_text_latex(block.body, markdown_lite=markdown_lite)
+            if block.body
+            else ""
+        )
+        fields = "".join(
+            r"\par\textbf{"
+            + _mixed_text_latex(field.label, markdown_lite=markdown_lite)
+            + r"}: \normalfont "
+            + _mixed_text_latex(field.value, markdown_lite=markdown_lite)
+            for field in block.fields
+        )
+        actions = (
+            r"\par\small "
+            + r"\quad ".join(
+                r"\fbox{"
+                + _mixed_text_latex(action.label, markdown_lite=markdown_lite)
+                + "}"
+                for action in block.actions
+            )
+            if block.actions
+            else ""
+        )
+        return (
+            r"\noindent\fcolorbox{"
+            + colors[block.status]
+            + r"}{white}{\parbox{0.92\linewidth}{\bfseries "
+            + _mixed_text_latex(block.title, markdown_lite=markdown_lite)
+            + body
+            + fields
+            + actions
+            + "}}\\par\n"
+        )
     if isinstance(block, ProgressBlock):
         detail = (
             r"\quad " + _mixed_text_latex(block.detail, markdown_lite=markdown_lite)
@@ -334,7 +415,7 @@ def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
 def document_latex(document: RenderDocument) -> str:
     """Compile the reviewed RenderDocument AST into a bounded TeX document."""
 
-    markdown_lite = document.schema_version == "1.2"
+    markdown_lite = document.schema_version in {"1.2", "1.3"}
     parts = [DOCUMENT_TEMPLATE_PREFIX]
     if document.title:
         parts.append(

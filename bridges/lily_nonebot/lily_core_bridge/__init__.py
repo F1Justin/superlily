@@ -4,15 +4,24 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Any
 from uuid import uuid4
 
-from nonebot import get_bots, get_driver, get_plugin_config
+from nonebot import get_bots, get_driver, get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import Bot as OneBotBot
 from nonebot.adapters.onebot.v11 import Event as OneBotEvent
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
 from nonebot.exception import MockApiException
 from nonebot.log import logger
 from nonebot.matcher import current_event
 from nonebot.message import event_postprocessor, event_preprocessor
+from nonebot.params import CommandArg
 from pydantic import BaseModel, BeforeValidator, Field, SecretStr
 
+from .command_rendering import (
+    Phase4CommandClient,
+    Phase4CommandFallback,
+    Phase4CommandSuppressed,
+    PreparedDelivery,
+    command_idempotency_key,
+)
 from .platform_actions import platform_action_event_payload
 from .payloads import (
     conversation_from_api,
@@ -29,7 +38,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.5.1"
+BRIDGE_VERSION = "0.6.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -64,6 +73,17 @@ class Config(BaseModel):
     )
     lily_core_include_raw: bool = False
     lily_core_claim_enabled: bool = False
+    lily_core_phase4_commands_enabled: bool = False
+    lily_core_phase4_command_canary_groups: str = ""
+    lily_core_phase4_status_enabled: bool = True
+    lily_core_phase4_wolfram_enabled: bool = True
+    lily_core_phase4_latex_enabled: bool = True
+    lily_core_phase4_help_enabled: bool = True
+    lily_core_phase4_command_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1,
+        le=30,
+    )
 
 
 plugin_config = get_plugin_config(Config)
@@ -81,6 +101,11 @@ reporter = BackgroundReporter(
     plugin_config.lily_core_spool_quota_bytes,
     plugin_config.lily_core_spool_retention_seconds,
     plugin_config.lily_core_spool_max_record_bytes,
+)
+phase4_command_client = Phase4CommandClient(
+    plugin_config.lily_core_url,
+    plugin_config.lily_core_token.get_secret_value(),
+    request_timeout_seconds=plugin_config.lily_core_phase4_command_timeout_seconds,
 )
 driver = get_driver()
 event_contexts: dict[int, dict[str, Any]] = {}
@@ -306,6 +331,253 @@ async def observe_api_result(
             stable_key(plugin_config.lily_core_instance_id, source_response),
         )
     )
+
+
+phase4_status = on_command("status", priority=11, block=False)
+phase4_wolfram = on_command("wf", priority=11, block=False)
+phase4_latex = on_command("tex", priority=11, block=False)
+phase4_help = on_command("help", priority=11, block=False)
+_PHASE4_HELP_FLAGS = frozenset({"-h", "--help", "help", "/help"})
+_PHASE4_HELP_COMMANDS = [
+    {
+        "name": "/status",
+        "summary": "查看独立状态 Provider 的运行状态",
+        "usage": "/status",
+    },
+    {
+        "name": "/wf",
+        "summary": "执行受限 Wolfram 文本计算",
+        "usage": "/wf <表达式>",
+    },
+    {
+        "name": "/tex",
+        "summary": "在无网络 worker 中渲染 LaTeX 公式",
+        "usage": "/tex <公式>",
+    },
+]
+
+
+def _phase4_canary_groups() -> frozenset[str]:
+    return frozenset(
+        value.strip()
+        for value in plugin_config.lily_core_phase4_command_canary_groups.split(",")
+        if value.strip()
+    )
+
+
+def _phase4_command_allowed(event: GroupMessageEvent, enabled: bool) -> bool:
+    return bool(
+        plugin_config.lily_core_phase4_commands_enabled
+        and enabled
+        and plugin_config.lily_core_token.get_secret_value()
+        and str(event.group_id) in _phase4_canary_groups()
+    )
+
+
+def _phase4_command_context(event: GroupMessageEvent) -> tuple[str, str, list[str]]:
+    raw = model_dict(event)
+    conv = conversation_from_event(event)
+    source_id = source_event_id(event, conv, raw)
+    sender = getattr(event, "sender", None)
+    role = str(getattr(sender, "role", "member"))
+    return (
+        f"onebot_v11-group_{event.group_id}",
+        source_id,
+        [role],
+    )
+
+
+async def _send_phase4_delivery(
+    bot: OneBotBot,
+    event: GroupMessageEvent,
+    matcher,
+    prepared: PreparedDelivery,
+) -> None:
+    # Once an intent exists, the legacy matcher must not also send. Any
+    # uncertain OneBot completion remains ambiguous and is never retried.
+    matcher.stop_propagation()
+    outcome = "ambiguous"
+    platform_message_id: str | None = None
+    safe_error_code: str | None = "platform_completion_unknown"
+    try:
+        outbound = (
+            MessageSegment.image(prepared.content)
+            if prepared.selected_family == "image"
+            else MessageSegment.text(str(prepared.content))
+        )
+        result = await bot.send(event, outbound)
+        result_dict = result if isinstance(result, dict) else model_dict(result)
+        raw_message_id = result_dict.get("message_id") if result_dict else None
+        if raw_message_id is not None:
+            platform_message_id = str(raw_message_id)
+            outcome = "succeeded"
+            safe_error_code = None
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Phase 4 command delivery has unknown platform completion"
+        )
+    try:
+        recorded = await phase4_command_client.complete_delivery(
+            instance_id=plugin_config.lily_core_instance_id,
+            intent_id=prepared.intent_id,
+            outcome=outcome,
+            platform_message_id=platform_message_id,
+            safe_error_code=safe_error_code,
+        )
+        if not recorded:
+            logger.warning("Phase 4 command delivery completion was not accepted by Core")
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Phase 4 command delivery completion could not be recorded"
+        )
+
+
+async def _prepare_phase4_tool(
+    event: GroupMessageEvent,
+    *,
+    tool_id: str,
+    tool_input: dict[str, Any],
+) -> PreparedDelivery:
+    conversation_key, source_id, roles = _phase4_command_context(event)
+    idempotency_key = command_idempotency_key(
+        instance_id=plugin_config.lily_core_instance_id,
+        source_event_id=source_id,
+        command=tool_id,
+        arguments=tool_input,
+    )
+    return await phase4_command_client.prepare_tool_delivery(
+        instance_id=plugin_config.lily_core_instance_id,
+        conversation_key=conversation_key,
+        source_event_id=source_id,
+        sender_id=str(event.user_id),
+        platform_roles=roles,
+        tool_id=tool_id,
+        tool_input=tool_input,
+        idempotency_key=idempotency_key,
+    )
+
+
+@phase4_status.handle()
+async def handle_phase4_status(bot: OneBotBot, event: GroupMessageEvent) -> None:
+    if not _phase4_command_allowed(
+        event,
+        plugin_config.lily_core_phase4_status_enabled,
+    ):
+        return
+    try:
+        prepared = await _prepare_phase4_tool(
+            event,
+            tool_id="status.inspect",
+            tool_input={"scope": "provider_runtime"},
+        )
+    except Phase4CommandSuppressed:
+        phase4_status.stop_propagation()
+        return
+    except (Phase4CommandFallback, httpx.HTTPError):
+        return
+    except Exception:
+        logger.opt(exception=True).warning("Phase 4 status command fell back safely")
+        return
+    await _send_phase4_delivery(bot, event, phase4_status, prepared)
+
+
+@phase4_wolfram.handle()
+async def handle_phase4_wolfram(
+    bot: OneBotBot,
+    event: GroupMessageEvent,
+    msg: Message = CommandArg(),
+) -> None:
+    if not _phase4_command_allowed(
+        event,
+        plugin_config.lily_core_phase4_wolfram_enabled,
+    ):
+        return
+    expression = msg.extract_plain_text().strip()
+    if (
+        not expression
+        or expression.casefold() in _PHASE4_HELP_FLAGS
+        or any(segment.type == "image" for segment in msg)
+    ):
+        return
+    try:
+        prepared = await _prepare_phase4_tool(
+            event,
+            tool_id="wolfram.run",
+            tool_input={"expression": expression},
+        )
+    except Phase4CommandSuppressed:
+        phase4_wolfram.stop_propagation()
+        return
+    except (Phase4CommandFallback, httpx.HTTPError):
+        return
+    except Exception:
+        logger.opt(exception=True).warning("Phase 4 Wolfram command fell back safely")
+        return
+    await _send_phase4_delivery(bot, event, phase4_wolfram, prepared)
+
+
+@phase4_latex.handle()
+async def handle_phase4_latex(
+    bot: OneBotBot,
+    event: GroupMessageEvent,
+    msg: Message = CommandArg(),
+) -> None:
+    if not _phase4_command_allowed(
+        event,
+        plugin_config.lily_core_phase4_latex_enabled,
+    ):
+        return
+    latex = msg.extract_plain_text().strip().strip("$")
+    if not latex:
+        return
+    try:
+        prepared = await _prepare_phase4_tool(
+            event,
+            tool_id="latex.render",
+            tool_input={"latex": latex},
+        )
+    except Phase4CommandSuppressed:
+        phase4_latex.stop_propagation()
+        return
+    except (Phase4CommandFallback, httpx.HTTPError):
+        return
+    except Exception:
+        logger.opt(exception=True).warning("Phase 4 LaTeX command fell back safely")
+        return
+    await _send_phase4_delivery(bot, event, phase4_latex, prepared)
+
+
+@phase4_help.handle()
+async def handle_phase4_help(bot: OneBotBot, event: GroupMessageEvent) -> None:
+    if not _phase4_command_allowed(
+        event,
+        plugin_config.lily_core_phase4_help_enabled,
+    ):
+        return
+    conversation_key, source_id, _ = _phase4_command_context(event)
+    idempotency_key = command_idempotency_key(
+        instance_id=plugin_config.lily_core_instance_id,
+        source_event_id=source_id,
+        command="help.render",
+        arguments={"commands": _PHASE4_HELP_COMMANDS},
+    )
+    try:
+        prepared = await phase4_command_client.prepare_help_delivery(
+            instance_id=plugin_config.lily_core_instance_id,
+            conversation_key=conversation_key,
+            source_event_id=source_id,
+            commands=_PHASE4_HELP_COMMANDS,
+            idempotency_key=idempotency_key,
+        )
+    except Phase4CommandSuppressed:
+        phase4_help.stop_propagation()
+        return
+    except (Phase4CommandFallback, httpx.HTTPError):
+        return
+    except Exception:
+        logger.opt(exception=True).warning("Phase 4 help command fell back safely")
+        return
+    await _send_phase4_delivery(bot, event, phase4_help, prepared)
 
 
 async def heartbeat_loop() -> None:

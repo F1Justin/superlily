@@ -7,16 +7,20 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from uuid import uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from superlily_contracts import (
+    CapabilityPlanningError,
     DeliveryAttemptIn,
     DeliveryCompletionIn,
     DeliveryIntentIn,
+    DeliveryPlanDecision,
+    RenderArtifactDeletionIn,
     RenderDocument,
     canonicalize_json_value,
+    plan_render_delivery,
     render_document_hash,
     render_document_plain_text,
 )
@@ -31,6 +35,7 @@ from .models import (
     RenderDeliveryIntent,
     RenderDeliveryPlan,
     RenderDocumentRecord,
+    ToolArtifact,
     utc_now,
 )
 from .settings import Settings
@@ -55,11 +60,18 @@ def _attempt_duration(started: float) -> int:
     return min(120_000, round((monotonic() - started) * 1_000))
 
 
-def _renderer_snapshot(settings: Settings, document: RenderDocument) -> dict[str, str]:
+def _renderer_snapshot(
+    settings: Settings,
+    document: RenderDocument,
+    decision: DeliveryPlanDecision,
+) -> dict[str, str]:
     return {
         "profile": "xelatex-document-v1",
         "implementation_hash": settings.render_implementation_hash,
         "document_schema_version": document.schema_version,
+        "capability_hash": decision.capability_hash,
+        "delivery_decision_hash": decision.decision_hash,
+        "resolved_document_hash": decision.resolved_document_hash,
     }
 
 
@@ -123,19 +135,27 @@ async def _live_artifact(
     settings: Settings,
     render_id: str,
     now: datetime,
+    capability_hash: str,
 ) -> RenderArtifactRecord | None:
-    artifacts = (
-        await session.scalars(
-            select(RenderArtifactRecord)
+    rows = (
+        await session.execute(
+            select(RenderArtifactRecord, RenderAttemptRecord)
+            .join(
+                RenderAttemptRecord,
+                RenderAttemptRecord.id == RenderArtifactRecord.attempt_id,
+            )
             .where(
                 RenderArtifactRecord.render_id == render_id,
                 RenderArtifactRecord.expires_at > now,
+                RenderArtifactRecord.content_deleted_at.is_(None),
             )
             .order_by(desc(RenderArtifactRecord.created_at))
         )
     ).all()
     store = ArtifactStore(settings.artifact_root)
-    for artifact in artifacts:
+    for artifact, attempt in rows:
+        if attempt.renderer_snapshot_json.get("capability_hash") != capability_hash:
+            continue
         try:
             if (
                 store.digest_from_object_key(artifact.storage_key) == artifact.content_sha256
@@ -169,44 +189,37 @@ async def get_or_create_delivery_plan(
     session: AsyncSession,
     document: RenderDocument,
     artifact: RenderArtifactRecord,
+    decision: DeliveryPlanDecision,
 ) -> RenderDeliveryPlan:
-    instance = await session.get(BotInstance, document.instance_id)
-    if instance is None:
-        raise RenderServiceError("instance_not_found", "render instance was not found")
-    snapshot = _capability_snapshot(instance)
-    canonical = canonicalize_json_value(snapshot)
     existing = await session.scalar(
         select(RenderDeliveryPlan).where(
             RenderDeliveryPlan.artifact_id == artifact.id,
-            RenderDeliveryPlan.capability_hash == canonical.sha256,
+            RenderDeliveryPlan.capability_hash == decision.capability_hash,
         )
     )
     if existing is not None:
         return existing
 
-    supported = set(snapshot["supported"])
-    if "send_image" in supported:
-        selected_family = "image"
-        fallback_text = None
-        degradation_reasons: list[str] = []
-    elif "send_text" in supported:
-        selected_family = "text"
-        fallback_text = render_document_plain_text(document)
-        degradation_reasons = ["image_unsupported_fallback_to_text"]
-    else:
-        raise RenderServiceError(
-            "delivery_capability_unavailable",
-            "instance cannot deliver the rendered document",
-        )
     plan = RenderDeliveryPlan(
         artifact_id=artifact.id,
         instance_id=document.instance_id,
         conversation_key=document.conversation_key,
-        capability_snapshot_json=snapshot,
-        capability_hash=canonical.sha256,
-        selected_family=selected_family,
-        fallback_text=fallback_text,
-        degradation_reasons_json=degradation_reasons,
+        capability_snapshot_json=decision.capability_snapshot,
+        capability_hash=decision.capability_hash,
+        selected_family=decision.selected_family,
+        fallback_text=decision.fallback_text,
+        degradation_reasons_json=list(decision.degradation_reasons),
+        decision_hash=decision.decision_hash,
+        resolved_document_hash=decision.resolved_document_hash,
+        selected_alternatives_json=[
+            item.as_json() for item in decision.selected_alternatives
+        ],
+        rejected_alternatives_json=[
+            item.as_json() for item in decision.rejected_alternatives
+        ],
+        ordered_payloads_json=[
+            item.as_json() for item in decision.ordered_payloads
+        ],
         expires_at=artifact.expires_at,
     )
     session.add(plan)
@@ -218,7 +231,7 @@ async def get_or_create_delivery_plan(
         winner = await session.scalar(
             select(RenderDeliveryPlan).where(
                 RenderDeliveryPlan.artifact_id == artifact.id,
-                RenderDeliveryPlan.capability_hash == canonical.sha256,
+                RenderDeliveryPlan.capability_hash == decision.capability_hash,
             )
         )
         if winner is None:
@@ -266,6 +279,14 @@ async def submit_render_document(
     if document.conversation_key not in settings.render_canary_conversations:
         raise RenderServiceError("conversation_not_canary", "conversation is not in the render canary")
 
+    instance = await session.get(BotInstance, document.instance_id)
+    if instance is None:
+        raise RenderServiceError("instance_not_found", "render instance was not found")
+    try:
+        decision = plan_render_delivery(document, _capability_snapshot(instance))
+    except CapabilityPlanningError as exc:
+        raise RenderServiceError(exc.code, exc.safe_detail) from exc
+
     request_sha256 = render_document_hash(document)
     record, _duplicate_document = await _get_or_create_document(
         session, document, idempotency_key, request_sha256
@@ -279,13 +300,21 @@ async def submit_render_document(
         .with_for_update()
     )
     assert record is not None
-    artifact = await _live_artifact(session, settings, record.id, now)
+    artifact = await _live_artifact(
+        session,
+        settings,
+        record.id,
+        now,
+        decision.capability_hash,
+    )
     if artifact is not None:
         attempt = await session.get(RenderAttemptRecord, artifact.attempt_id)
         if attempt is None:
             raise RenderServiceError("attempt_missing", "render attempt is unavailable")
         await session.commit()
-        plan = await get_or_create_delivery_plan(session, document, artifact)
+        plan = await get_or_create_delivery_plan(
+            session, document, artifact, decision
+        )
         return record, attempt, artifact, plan, True
 
     latest = await _latest_attempt(session, record.id)
@@ -298,7 +327,7 @@ async def submit_render_document(
         latest.completed_at = now
 
     next_number = (latest.attempt_number if latest is not None else 0) + 1
-    snapshot = _renderer_snapshot(settings, document)
+    snapshot = _renderer_snapshot(settings, document, decision)
     snapshot_hash = canonicalize_json_value(snapshot).sha256
     attempt = RenderAttemptRecord(
         render_id=record.id,
@@ -335,7 +364,7 @@ async def submit_render_document(
             settings.render_backend_token,
         )
         result = await worker.render_document(
-            document,
+            decision.resolved_document,
             timeout_seconds=float(settings.render_timeout_seconds),
         )
         duration_ms = _attempt_duration(render_started)
@@ -377,6 +406,9 @@ async def submit_render_document(
             byte_size=upload.byte_size,
         )
         completed = utc_now()
+        expires_at = completed + timedelta(
+            seconds=settings.render_artifact_ttl_seconds
+        )
         artifact = RenderArtifactRecord(
             id=artifact_id,
             render_id=locked_record.id,
@@ -387,8 +419,17 @@ async def submit_render_document(
             byte_size=upload.byte_size,
             width_pixels=upload.width_pixels,
             height_pixels=upload.height_pixels,
+            producer_kind="document_renderer",
+            producer_id=snapshot["profile"],
+            data_classification="conversation",
+            canonical_scope=document.conversation_key,
+            safe_filename=f"render-{locked_record.id}.png",
+            accessibility_text=render_document_plain_text(
+                decision.resolved_document
+            )[:2_000],
             created_at=completed,
-            expires_at=completed + timedelta(seconds=settings.render_artifact_ttl_seconds),
+            expires_at=expires_at,
+            retention_until=expires_at,
         )
         locked_attempt.state = "succeeded"
         locked_attempt.render_duration_ms = duration_ms
@@ -399,7 +440,9 @@ async def submit_render_document(
         locked_record.completed_at = completed
         session.add(artifact)
         await session.commit()
-        plan = await get_or_create_delivery_plan(session, document, artifact)
+        plan = await get_or_create_delivery_plan(
+            session, document, artifact, decision
+        )
         return locked_record, locked_attempt, artifact, plan, False
     except RenderServiceError as exc:
         await _mark_attempt_failed(
@@ -429,6 +472,205 @@ async def submit_render_document(
         ) from exc
 
 
+async def submit_passthrough_render_document(
+    session: AsyncSession,
+    settings: Settings,
+    document: RenderDocument,
+    idempotency_key: str,
+    *,
+    source_artifact: ToolArtifact,
+    source_invocation_id: str,
+    producer_id: str,
+) -> tuple[
+    RenderDocumentRecord,
+    RenderAttemptRecord,
+    RenderArtifactRecord,
+    RenderDeliveryPlan,
+    bool,
+]:
+    """Publish a reviewed tool PNG as a render artifact without recompression."""
+
+    if not settings.render_enabled:
+        raise RenderServiceError("render_disabled", "document rendering is disabled")
+    if document.conversation_key not in settings.render_canary_conversations:
+        raise RenderServiceError(
+            "conversation_not_canary", "conversation is not in the render canary"
+        )
+    if (
+        source_artifact.state != "finalized"
+        or source_artifact.content_deleted_at is not None
+        or source_artifact.storage_key is None
+        or source_artifact.content_sha256 is None
+        or source_artifact.byte_size is None
+        or source_artifact.width_pixels is None
+        or source_artifact.height_pixels is None
+        or source_artifact.mime_type != "image/png"
+    ):
+        raise RenderServiceError(
+            "source_artifact_unavailable",
+            "tool result artifact is not available for rendering",
+        )
+
+    instance = await session.get(BotInstance, document.instance_id)
+    if instance is None:
+        raise RenderServiceError("instance_not_found", "render instance was not found")
+    try:
+        decision = plan_render_delivery(document, _capability_snapshot(instance))
+    except CapabilityPlanningError as exc:
+        raise RenderServiceError(exc.code, exc.safe_detail) from exc
+
+    request_sha256 = render_document_hash(document)
+    record, _ = await _get_or_create_document(
+        session, document, idempotency_key, request_sha256
+    )
+    record_id = record.id
+    now = utc_now()
+    await session.rollback()
+    record = await session.scalar(
+        select(RenderDocumentRecord)
+        .where(RenderDocumentRecord.id == record_id)
+        .with_for_update()
+    )
+    assert record is not None
+    artifact = await _live_artifact(
+        session,
+        settings,
+        record.id,
+        now,
+        decision.capability_hash,
+    )
+    if artifact is not None:
+        attempt = await session.get(RenderAttemptRecord, artifact.attempt_id)
+        if attempt is None:
+            raise RenderServiceError("attempt_missing", "render attempt is unavailable")
+        await session.commit()
+        plan = await get_or_create_delivery_plan(
+            session, document, artifact, decision
+        )
+        return record, attempt, artifact, plan, True
+
+    latest = await _latest_attempt(session, record.id)
+    if latest is not None and latest.state == "running":
+        if _as_utc(latest.lease_expires_at) > now:
+            await session.rollback()
+            raise RenderServiceError(
+                "render_in_progress", "render request is still running"
+            )
+        latest.state = "abandoned"
+        latest.safe_error_code = "render_lease_expired"
+        latest.completed_at = now
+
+    retention_seconds = source_artifact.policy_snapshot_json.get(
+        "result_retention_seconds"
+    )
+    if (
+        not isinstance(retention_seconds, int)
+        or isinstance(retention_seconds, bool)
+        or retention_seconds < 1
+    ):
+        raise RenderServiceError(
+            "source_artifact_policy_invalid",
+            "tool result artifact retention policy is invalid",
+        )
+    retention_origin = source_artifact.referenced_at or source_artifact.finalized_at
+    if retention_origin is None:
+        raise RenderServiceError(
+            "source_artifact_unavailable",
+            "tool result artifact is not referenced by a completed result",
+        )
+    source_retention_until = _as_utc(retention_origin) + timedelta(
+        seconds=retention_seconds
+    )
+    expires_at = min(
+        now + timedelta(seconds=settings.render_artifact_ttl_seconds),
+        source_retention_until,
+    )
+    if expires_at <= now:
+        raise RenderServiceError(
+            "source_artifact_expired", "tool result artifact retention has elapsed"
+        )
+    store = ArtifactStore(settings.artifact_root)
+    if not await store.object_exists(
+        source_artifact.storage_key,
+        byte_size=source_artifact.byte_size,
+    ):
+        raise RenderServiceError(
+            "source_artifact_unavailable",
+            "tool result artifact bytes are unavailable",
+        )
+
+    next_number = (latest.attempt_number if latest is not None else 0) + 1
+    snapshot = {
+        "profile": "tool-artifact-passthrough-v1",
+        "implementation_hash": source_artifact.producer_descriptor_hash,
+        "document_schema_version": document.schema_version,
+        "capability_hash": decision.capability_hash,
+        "delivery_decision_hash": decision.decision_hash,
+        "resolved_document_hash": decision.resolved_document_hash,
+        "source_invocation_id": source_invocation_id,
+        "source_artifact_id": source_artifact.id,
+    }
+    completed = utc_now()
+    attempt = RenderAttemptRecord(
+        id=str(uuid4()),
+        render_id=record.id,
+        attempt_number=next_number,
+        fencing_token=next_number,
+        state="succeeded",
+        renderer_profile=snapshot["profile"],
+        renderer_snapshot_json=snapshot,
+        renderer_snapshot_hash=canonicalize_json_value(snapshot).sha256,
+        lease_expires_at=completed,
+        render_duration_ms=0,
+        started_at=completed,
+        completed_at=completed,
+    )
+    artifact = RenderArtifactRecord(
+        id=str(uuid4()),
+        render_id=record.id,
+        attempt_id=attempt.id,
+        content_sha256=source_artifact.content_sha256,
+        storage_key=source_artifact.storage_key,
+        mime_type=source_artifact.mime_type,
+        byte_size=source_artifact.byte_size,
+        width_pixels=source_artifact.width_pixels,
+        height_pixels=source_artifact.height_pixels,
+        producer_kind="tool_artifact_passthrough",
+        producer_id=producer_id,
+        source_invocation_id=source_invocation_id,
+        data_classification=source_artifact.data_classification,
+        canonical_scope=document.conversation_key,
+        safe_filename=f"{source_artifact.producer_tool_id}-result.png",
+        accessibility_text=render_document_plain_text(
+            decision.resolved_document
+        )[:2_000],
+        created_at=completed,
+        expires_at=expires_at,
+        retention_until=expires_at,
+    )
+    record.status = "succeeded"
+    record.safe_error_code = None
+    record.render_duration_ms = 0
+    record.completed_at = completed
+    # The models deliberately do not expose mutable ORM relationships. Flush
+    # the fenced attempt first so PostgreSQL can enforce the artifact FK in the
+    # same transaction; SQLite's deferred behavior otherwise hides this order.
+    session.add(attempt)
+    try:
+        await session.flush()
+        session.add(artifact)
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise RenderServiceError(
+            "render_in_progress", "another passthrough attempt won the execution fence"
+        ) from exc
+    plan = await get_or_create_delivery_plan(
+        session, document, artifact, decision
+    )
+    return record, attempt, artifact, plan, False
+
+
 async def get_render_artifact(
     session: AsyncSession,
     settings: Settings,
@@ -448,12 +690,67 @@ async def get_render_artifact(
         raise RenderServiceError("artifact_forbidden", "render artifact belongs to another instance")
     if _as_utc(artifact.expires_at) <= utc_now():
         raise RenderServiceError("artifact_expired", "render artifact has expired")
+    if artifact.content_deleted_at is not None:
+        raise RenderServiceError("artifact_deleted", "render artifact content was deleted")
     content = await ArtifactStore(settings.artifact_root).read_object(
         artifact.storage_key,
         byte_size=artifact.byte_size,
         content_sha256=artifact.content_sha256,
     )
     return artifact, content
+
+
+async def delete_render_artifact_content(
+    session: AsyncSession,
+    settings: Settings,
+    artifact_id: str,
+    authenticated_instance: str,
+    payload: RenderArtifactDeletionIn,
+) -> tuple[RenderArtifactRecord, bool, bool]:
+    """Logically delete one artifact and remove unshared bytes under a digest lock."""
+
+    if payload.instance_id != authenticated_instance:
+        raise RenderServiceError("artifact_forbidden", "artifact identity does not match token")
+    row = await session.execute(
+        select(RenderArtifactRecord, RenderDocumentRecord)
+        .join(RenderDocumentRecord, RenderDocumentRecord.id == RenderArtifactRecord.render_id)
+        .where(RenderArtifactRecord.id == artifact_id)
+        .with_for_update()
+    )
+    result = row.one_or_none()
+    if result is None:
+        raise RenderServiceError("artifact_not_found", "render artifact was not found")
+    artifact, document = result
+    if document.instance_id != authenticated_instance:
+        raise RenderServiceError("artifact_forbidden", "render artifact belongs to another instance")
+    if artifact.content_deleted_at is not None:
+        return artifact, False, True
+
+    store = ArtifactStore(settings.artifact_root)
+    now = utc_now()
+    physical_removed = False
+    async with store.object_lock(artifact.content_sha256):
+        tool_blockers = await session.scalar(
+            select(func.count(ToolArtifact.id)).where(
+                ToolArtifact.content_sha256 == artifact.content_sha256,
+                ToolArtifact.state.in_({"uploading", "finalized"}),
+                ToolArtifact.content_deleted_at.is_(None),
+            )
+        )
+        render_blockers = await session.scalar(
+            select(func.count(RenderArtifactRecord.id)).where(
+                RenderArtifactRecord.id != artifact.id,
+                RenderArtifactRecord.content_sha256 == artifact.content_sha256,
+                RenderArtifactRecord.content_deleted_at.is_(None),
+                RenderArtifactRecord.retention_until > now,
+            )
+        )
+        artifact.content_deleted_at = now
+        artifact.deletion_reason = payload.reason
+        await session.commit()
+        if not tool_blockers and not render_blockers:
+            physical_removed = await store.remove(artifact.storage_key)
+    return artifact, physical_removed, False
 
 
 async def record_delivery_attempt(
@@ -509,7 +806,12 @@ async def create_delivery_intent(
     )
     now = utc_now()
     if existing is not None:
-        if existing.plan_id != plan.id:
+        if (
+            existing.plan_id != plan.id
+            or existing.reply_to_platform_message_id
+            != payload.reply_to_platform_message_id
+            or existing.mention_ids_json != payload.mention_ids
+        ):
             raise RenderServiceError("idempotency_conflict", "delivery key was reused")
         if existing.status == "pending" and _as_utc(existing.deadline_at) <= now:
             existing.status = "ambiguous"
@@ -531,6 +833,11 @@ async def create_delivery_intent(
     intent = RenderDeliveryIntent(
         plan_id=plan.id,
         instance_id=authenticated_instance,
+        conversation_key=plan.conversation_key,
+        capability_hash=plan.capability_hash,
+        ordered_payloads_json=plan.ordered_payloads_json,
+        reply_to_platform_message_id=payload.reply_to_platform_message_id,
+        mention_ids_json=payload.mention_ids,
         idempotency_key=payload.idempotency_key,
         status="pending",
         deadline_at=now + timedelta(seconds=settings.render_delivery_intent_seconds),
@@ -550,7 +857,12 @@ async def create_delivery_intent(
         )
         if winner is None:
             raise
-        if winner.plan_id != plan.id:
+        if (
+            winner.plan_id != plan.id
+            or winner.reply_to_platform_message_id
+            != payload.reply_to_platform_message_id
+            or winner.mention_ids_json != payload.mention_ids
+        ):
             raise RenderServiceError("idempotency_conflict", "delivery key was reused")
         return winner, False
 

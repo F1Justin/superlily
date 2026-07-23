@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from superlily_core.models import (
+    BotInstance,
     RenderArtifactRecord,
     RenderAttemptRecord,
     RenderDocumentRecord,
@@ -357,6 +358,16 @@ async def test_artifact_reaper_preserves_live_render_document_objects(
     os.utime(object_path, (old, old))
     now = datetime.now(timezone.utc)
     async with app.state.database.sessions() as session:
+        session.add(
+            BotInstance(
+                id="nekro-agent",
+                platform="qq",
+                adapter="onebot_v11",
+                bot_id="2022692714",
+                role="talk",
+            )
+        )
+        await session.flush()
         document = RenderDocumentRecord(
             instance_id="nekro-agent",
             conversation_key="onebot_v11-group_1080353942",
@@ -395,8 +406,11 @@ async def test_artifact_reaper_preserves_live_render_document_objects(
                 byte_size=len(body),
                 width_pixels=1,
                 height_pixels=1,
+                canonical_scope=document.conversation_key,
+                accessibility_text="render reaper regression",
                 created_at=now,
                 expires_at=now + timedelta(hours=1),
+                retention_until=now + timedelta(hours=1),
             )
         )
         await session.commit()

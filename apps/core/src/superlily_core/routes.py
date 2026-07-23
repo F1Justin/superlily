@@ -13,14 +13,18 @@ from superlily_contracts import (
     DeliveryIntentIn,
     EventIn,
     HeartbeatIn,
+    HelpDocumentIn,
+    MarkdownDocumentIn,
     ProviderHeartbeatIn,
     ProviderInventorySnapshotIn,
     ResponseIn,
     DeliveryAttemptIn,
+    RenderArtifactDeletionIn,
     RenderDocument,
     ToolInvocationCancelIn,
     ToolInvocationConfirmIn,
     ToolInvocationCreateIn,
+    ToolResultRenderIn,
     ToolArtifactFinalizeIn,
     ToolArtifactReserveIn,
     ToolExecutionCompleteIn,
@@ -73,9 +77,15 @@ from .render_service import (
     RenderServiceError,
     complete_delivery_intent,
     create_delivery_intent,
+    delete_render_artifact_content,
     get_render_artifact,
     record_delivery_attempt,
     submit_render_document,
+)
+from .compatibility_render_service import (
+    submit_help_render,
+    submit_markdown_render,
+    submit_tool_result_render,
 )
 from .tool_registry_service import (
     ingest_provider_heartbeat,
@@ -207,24 +217,62 @@ async def post_response(
 
 
 def _render_http_error(exc: RenderServiceError) -> HTTPException:
-    if exc.code in {"conversation_not_canary", "artifact_forbidden", "delivery_forbidden"}:
+    if exc.code.startswith("markdown_"):
+        code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    elif exc.code in {"conversation_not_canary", "artifact_forbidden", "delivery_forbidden"}:
         code = status.HTTP_403_FORBIDDEN
     elif exc.code in {
         "artifact_not_found",
         "delivery_intent_not_found",
         "delivery_plan_not_found",
+        "tool_invocation_not_found",
     }:
         code = status.HTTP_404_NOT_FOUND
     elif exc.code in {
         "delivery_completion_conflict",
         "idempotency_conflict",
+        "conversation_mismatch",
+        "source_event_mismatch",
+        "tool_result_unavailable",
     }:
         code = status.HTTP_409_CONFLICT
+    elif exc.code == "artifact_deleted":
+        code = status.HTTP_410_GONE
     elif exc.code in {"render_disabled", "render_in_progress", "artifact_expired"}:
         code = status.HTTP_503_SERVICE_UNAVAILABLE
     else:
         code = status.HTTP_502_BAD_GATEWAY
     return HTTPException(status_code=code, detail=exc.safe_detail)
+
+
+def _render_receipt(record, attempt, artifact, plan, duplicate: bool) -> dict:
+    return {
+        "render_id": record.id,
+        "artifact_id": artifact.id,
+        "attempt_id": attempt.id,
+        "delivery_plan_id": plan.id,
+        "request_sha256": record.request_sha256,
+        "content_sha256": artifact.content_sha256,
+        "mime_type": artifact.mime_type,
+        "byte_size": artifact.byte_size,
+        "width_pixels": artifact.width_pixels,
+        "height_pixels": artifact.height_pixels,
+        "render_duration_ms": record.render_duration_ms or 0,
+        "content_path": f"/v1/render-artifacts/{artifact.id}/content",
+        "delivery_plan": {
+            "delivery_plan_id": plan.id,
+            "capability_hash": plan.capability_hash,
+            "selected_family": plan.selected_family,
+            "fallback_text": plan.fallback_text,
+            "degradation_reasons": plan.degradation_reasons_json,
+            "decision_hash": plan.decision_hash,
+            "resolved_document_hash": plan.resolved_document_hash,
+            "selected_alternatives": plan.selected_alternatives_json,
+            "rejected_alternatives": plan.rejected_alternatives_json,
+            "ordered_payloads": plan.ordered_payloads_json,
+        },
+        "duplicate": duplicate,
+    }
 
 
 @router.post("/v1/render-documents", status_code=status.HTTP_201_CREATED)
@@ -247,28 +295,81 @@ async def post_render_document(
         raise _render_http_error(exc) from exc
     if duplicate:
         response.status_code = status.HTTP_200_OK
-    return {
-        "render_id": record.id,
-        "artifact_id": artifact.id,
-        "attempt_id": attempt.id,
-        "delivery_plan_id": plan.id,
-        "request_sha256": record.request_sha256,
-        "content_sha256": artifact.content_sha256,
-        "mime_type": artifact.mime_type,
-        "byte_size": artifact.byte_size,
-        "width_pixels": artifact.width_pixels,
-        "height_pixels": artifact.height_pixels,
-        "render_duration_ms": record.render_duration_ms or 0,
-        "content_path": f"/v1/render-artifacts/{artifact.id}/content",
-        "delivery_plan": {
-            "delivery_plan_id": plan.id,
-            "capability_hash": plan.capability_hash,
-            "selected_family": plan.selected_family,
-            "fallback_text": plan.fallback_text,
-            "degradation_reasons": plan.degradation_reasons_json,
-        },
-        "duplicate": duplicate,
-    }
+    return _render_receipt(record, attempt, artifact, plan, duplicate)
+
+
+@router.post("/v1/markdown-documents", status_code=status.HTTP_201_CREATED)
+async def post_markdown_document(
+    payload: MarkdownDocumentIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    try:
+        record, attempt, artifact, plan, duplicate = await submit_markdown_render(
+            session,
+            session.info["settings"],
+            authenticated_instance,
+            payload,
+            idempotency_key,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return _render_receipt(record, attempt, artifact, plan, duplicate)
+
+
+@router.post(
+    "/v1/tool-invocations/{invocation_id}/render-result",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_tool_result_render(
+    invocation_id: str,
+    payload: ToolResultRenderIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    try:
+        record, attempt, artifact, plan, duplicate = await submit_tool_result_render(
+            session,
+            session.info["settings"],
+            invocation_id,
+            authenticated_instance,
+            payload,
+            idempotency_key,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return _render_receipt(record, attempt, artifact, plan, duplicate)
+
+
+@router.post("/v1/help-documents", status_code=status.HTTP_201_CREATED)
+async def post_help_document(
+    payload: HelpDocumentIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    try:
+        record, attempt, artifact, plan, duplicate = await submit_help_render(
+            session,
+            session.info["settings"],
+            authenticated_instance,
+            payload,
+            idempotency_key,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return _render_receipt(record, attempt, artifact, plan, duplicate)
 
 
 @router.get("/v1/render-artifacts/{artifact_id}/content")
@@ -294,6 +395,31 @@ async def get_render_artifact_content(
             "Content-SHA256": artifact.content_sha256,
         },
     )
+
+
+@router.delete("/v1/render-artifacts/{artifact_id}/content")
+async def delete_render_artifact(
+    artifact_id: str,
+    payload: RenderArtifactDeletionIn,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict:
+    try:
+        artifact, physical_removed, duplicate = await delete_render_artifact_content(
+            session,
+            session.info["settings"],
+            artifact_id,
+            authenticated_instance,
+            payload,
+        )
+    except RenderServiceError as exc:
+        raise _render_http_error(exc) from exc
+    return {
+        "artifact_id": artifact.id,
+        "content_deleted": artifact.content_deleted_at is not None,
+        "physical_object_removed": physical_removed,
+        "duplicate": duplicate,
+    }
 
 
 @router.post("/v1/render-artifacts/{artifact_id}/delivery-attempts", status_code=201)

@@ -266,12 +266,15 @@ in `CONTROL_PLANE.md`.
 
 Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-4-unified-renderer-and-delivery-boundary`.
 
-Current canary status (2026-07-22): the RenderDocument 1.2 contract, including bounded
-paired `**strong**` inline presentation, retryable fenced
-render attempts, capability-aware image/text plans, idempotent delivery intents, and
-Nekro OneBot receipt capture are deployed only for `onebot_v11-group_1080353942`
-and `onebot_v11-group_861651713`.
-The compatibility migration and constrained-adapter proof below remain open.
+Current implementation status (2026-07-23): RenderDocument 1.3, deterministic
+capability planning, full artifact provenance/retention/deletion, QQ plus constrained
+text-adapter semantic proof, and explicit status/Wolfram/LaTeX/help converters are
+complete. Nekro 0.9.0 accepts one ordinary Markdown document instead of model-authored
+blocks JSON. Lily 0.6.0 retains the old command matchers as per-command rollback until
+an exact tool invocation has produced a delivery intent. SQLite full-suite, PostgreSQL
+Alembic round-trip, and the focused PostgreSQL fault matrix pass. Production still needs
+migration 0019, the Git-bound exact command rollout, real OneBot receipts, a stable
+window, and rollback evidence before Phase 4 can be signed off.
 
 ### Deliverables
 
@@ -285,6 +288,11 @@ The compatibility migration and constrained-adapter proof below remain open.
   degradation, such as Markdown to image or image to plain text.
 - Cache only deterministic, non-sensitive render results; include renderer
   version and normalized input in cache keys.
+
+Implementation authority and acceptance evidence live in
+`docs/PHASE4_RENDER_DOCUMENT.md`. The exact command canary is
+`registry/rollouts/phase4-command-canary-20260723.json`; it contains only groups
+1080353942 and 861651713, caller `command`, and the three reviewed descriptor hashes.
 
 ### Safety and exit gate
 

@@ -74,6 +74,7 @@ async def prepare_canary(
     implementation_hash: str = "a" * 64,
     descriptor_path: Path = DESCRIPTOR_PATH,
     budget_enforcement: dict[str, str] | None = None,
+    caller: str = "admin_api",
 ) -> tuple[ToolDescriptorRecord, str]:
     source = descriptor_path.read_bytes()
     authority = load_tool_descriptor(source).authority
@@ -187,12 +188,12 @@ async def prepare_canary(
             "reason": "Bounded test-only execution canary",
             "items": [
                 {
-                    "item_id": "status-inspect-admin",
+                    "item_id": f"status-inspect-{caller.replace('_', '-')}",
                     "tool_id": "status.inspect",
                     "descriptor_version": descriptor.version,
                     "descriptor_hash": descriptor.descriptor_hash,
                     "canonical_conversation": "qq:group:1080353942",
-                    "caller": "admin_api",
+                    "caller": caller,
                     "provider_id": "provider-status-primary",
                     "expected_descriptor_resource_version": 2,
                     "expected_provider_resource_version": 1,

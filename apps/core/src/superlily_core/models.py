@@ -171,8 +171,26 @@ class RenderArtifactRecord(Base):
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     width_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
     height_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    producer_kind: Mapped[str] = mapped_column(
+        String(32), default="document_renderer", nullable=False
+    )
+    producer_id: Mapped[str] = mapped_column(
+        String(128), default="xelatex-document-v1", nullable=False
+    )
+    source_invocation_id: Mapped[str | None] = mapped_column(String(36))
+    data_classification: Mapped[str] = mapped_column(
+        String(32), default="conversation", nullable=False
+    )
+    canonical_scope: Mapped[str] = mapped_column(String(512), nullable=False)
+    safe_filename: Mapped[str] = mapped_column(
+        String(255), default="rendered-document.png", nullable=False
+    )
+    accessibility_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retention_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_reason: Mapped[str | None] = mapped_column(String(64))
 
     __table_args__ = (
         CheckConstraint("mime_type = 'image/png'", name="ck_render_artifact_mime"),
@@ -182,8 +200,25 @@ class RenderArtifactRecord(Base):
             name="ck_render_artifact_dimensions",
         ),
         CheckConstraint("expires_at > created_at", name="ck_render_artifact_expiry"),
+        CheckConstraint(
+            "retention_until >= expires_at", name="ck_render_artifact_retention"
+        ),
+        CheckConstraint(
+            "data_classification IN ('public', 'conversation', 'sensitive', 'administrative')",
+            name="ck_render_artifact_classification",
+        ),
+        CheckConstraint(
+            "(content_deleted_at IS NULL AND deletion_reason IS NULL) OR "
+            "(content_deleted_at IS NOT NULL AND deletion_reason IS NOT NULL)",
+            name="ck_render_artifact_deletion",
+        ),
         Index("ix_render_artifacts_hash", "content_sha256"),
         Index("ix_render_artifacts_render_created", "render_id", "created_at"),
+        Index(
+            "ix_render_artifacts_retention",
+            "content_deleted_at",
+            "retention_until",
+        ),
     )
 
 
@@ -205,6 +240,17 @@ class RenderDeliveryPlan(Base):
     selected_family: Mapped[str] = mapped_column(String(32), nullable=False)
     fallback_text: Mapped[str | None] = mapped_column(Text)
     degradation_reasons_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    decision_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resolved_document_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    selected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
+    rejected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
+    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -233,6 +279,13 @@ class RenderDeliveryIntent(Base):
     instance_id: Mapped[str] = mapped_column(
         ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
     )
+    conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
+    capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
+    reply_to_platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    mention_ids_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     platform_message_id: Mapped[str | None] = mapped_column(String(512))

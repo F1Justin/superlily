@@ -46,7 +46,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 
-BRIDGE_VERSION = "0.8.0"
+BRIDGE_VERSION = "0.9.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -918,66 +918,41 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
         return ""
     return """
 本频道已启用 Lily Core 统一文档渲染器。需要发送含中文长文、公式、题目列表的图片时，
-必须调用 `submit_render_document(document_json)`；document_json 只包含可选 title 和 blocks。
-blocks 支持：{"kind":"heading","text":"...","level":1}、
-{"kind":"text","text":"..."}、{"kind":"math","latex":"...","display":true}、
-{"kind":"list","ordered":true,"items":["..."]}、{"kind":"quote","text":"..."}、
-{"kind":"code","code":"...","language":"python"}、
-{"kind":"table","columns":["列1"],"rows":[["值"]]}、
-{"kind":"notice","severity":"info","title":"...","text":"..."}、
-{"kind":"progress","label":"...","value":50}，也支持用 group 组织多个块、用 alternative
-声明按能力选择的备选内容。title、heading、text、quote、notice 和 list 的文本中都可直接
-使用成对的 **文字** 表示局部加粗，也可用单个美元符号写行内公式，例如：
-"**结论：** 已知 $f(x)=x^3+px^2+qx+r$。"；不要为了加粗或行内公式把一句话拆成多个 block。
-这是文本字段唯一支持的 Markdown 子集；标题、列表、表格和代码必须使用对应的结构化 block，
-不要在文本里添加 #、-、Markdown 表格、链接、图片或代码围栏。
-只有矩阵、长推导或需要独占一行的公式才使用 math block；不要在文本中使用 $$...$$。
+只需调用 `submit_rendered_markdown(markdown_text)`，传入一整段普通 Markdown，不要构造 JSON。
+可直接使用 #/## 标题、自然段、- 或 1. 列表、> 引用、``` 代码围栏和 Markdown 表格；
+用 **文字** 加粗，用单个美元符号写行内公式，例如
+`**结论：** 已知 $f(x)=x^3+px^2+qx+r$。`；矩阵或长推导才用成对的 $$ 独占成行。
+链接、Markdown 图片和原始 HTML 只会显示为文字，不会访问网络或本地文件。
 不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
 该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
 """.strip()
 
 
-@plugin.mount_sandbox_method(
-    SandboxMethodType.BEHAVIOR,
-    name="submit_render_document",
-    description="Render and send a structured Chinese/math document with safe **bold** text",
-)
-async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
-    """提交结构化文档并将 Core 生成的 PNG 直接发送到当前频道。
-
-    Args:
-        document_json: JSON 对象字符串，只能包含可选 title 与 blocks。
-    """
-
-    if not _render_allowed(_ctx):
-        return "统一文档渲染器未对当前频道开放。"
+async def _deliver_render_request(
+    _ctx: AgentCtx,
+    *,
+    endpoint: str,
+    payload: dict[str, Any],
+    request_context: str,
+) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    render_key = stable_key(_ctx.chat_key, request_context, canonical)
+    headers = {
+        "Authorization": f"Bearer {config.CORE_TOKEN}",
+        "Idempotency-Key": f"nekro-render:{render_key}",
+    }
+    timeout = httpx.Timeout(
+        config.RENDER_TIMEOUT_SECONDS,
+        connect=min(5.0, config.RENDER_TIMEOUT_SECONDS),
+    )
     try:
-        raw = json.loads(document_json)
-        if not isinstance(raw, dict) or not set(raw).issubset({"title", "blocks"}):
-            return "文档结构无效：只允许 title 和 blocks。"
-        source_event_id, request_context = _render_request_context(_ctx.chat_key)
-        payload = {
-            "schema_version": "1.2",
-            "instance_id": config.INSTANCE_ID,
-            "conversation_key": _ctx.chat_key,
-            "source_event_id": source_event_id,
-            "blocks": _version_render_blocks(raw.get("blocks")),
-        }
-        if raw.get("title") is not None:
-            payload["title"] = raw["title"]
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        render_key = stable_key(_ctx.chat_key, request_context, canonical)
-        idempotency_key = f"nekro-render:{render_key}"
-        headers = {
-            "Authorization": f"Bearer {config.CORE_TOKEN}",
-            "Idempotency-Key": idempotency_key,
-        }
-        timeout = httpx.Timeout(
-            config.RENDER_TIMEOUT_SECONDS,
-            connect=min(5.0, config.RENDER_TIMEOUT_SECONDS),
-        )
         async with httpx.AsyncClient(base_url=config.CORE_URL, timeout=timeout) as client:
-            response = await client.post("/v1/render-documents", json=payload, headers=headers)
+            response = await client.post(endpoint, json=payload, headers=headers)
             response.raise_for_status()
             receipt = response.json()
             expected_hash = receipt.get("content_sha256")
@@ -1085,10 +1060,13 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
             if send_receipt["outcome"] == "ambiguous":
                 return "统一文档已提交平台，但平台未返回可确认的消息 ID；为避免重复发送，不会自动重试。"
             return "统一文档发送失败，失败证据已记录；请改用普通文本回复。"
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return "文档结构无效，请按约定的 blocks JSON 重试。"
     except httpx.HTTPStatusError as exc:
-        logger.warning("Lily Core rejected render request with status %s", exc.response.status_code)
+        logger.warning(
+            "Lily Core rejected render request with status %s",
+            exc.response.status_code,
+        )
+        if exc.response.status_code == 422:
+            return "Markdown 超出安全边界，请缩短内容后重试；不要改用绘图库排版文字。"
         return "统一文档渲染暂时不可用，请改用普通文本回复，不要自行绘制文字图片。"
     except httpx.HTTPError:
         logger.warning("Lily Core render request failed safely")
@@ -1096,6 +1074,75 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
     except Exception:
         logger.exception("Lily Core render delivery failed")
         return "统一文档发送失败，请改用普通文本回复，不要自行绘制文字图片。"
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.BEHAVIOR,
+    name="submit_rendered_markdown",
+    description="Render and send one ordinary Markdown document with inline math",
+)
+async def submit_rendered_markdown(_ctx: AgentCtx, markdown_text: str) -> str:
+    """提交普通 Markdown；无需选择段落类型或构造 JSON。
+
+    Args:
+        markdown_text: 一整段普通 Markdown，支持标题、列表、加粗、代码和数学公式。
+    """
+
+    if not _render_allowed(_ctx):
+        return "统一文档渲染器未对当前频道开放。"
+    if not isinstance(markdown_text, str) or not markdown_text.strip():
+        return "Markdown 内容不能为空。"
+    source_event_id, request_context = _render_request_context(_ctx.chat_key)
+    return await _deliver_render_request(
+        _ctx,
+        endpoint="/v1/markdown-documents",
+        payload={
+            "schema_version": "1.0",
+            "instance_id": config.INSTANCE_ID,
+            "conversation_key": _ctx.chat_key,
+            "source_event_id": source_event_id,
+            "markdown": markdown_text,
+        },
+        request_context=request_context,
+    )
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.BEHAVIOR,
+    name="submit_render_document",
+    description="Legacy structured RenderDocument JSON compatibility entrypoint",
+)
+async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
+    """保留给旧会话的结构化兼容入口；新会话应提交普通 Markdown。
+
+    Args:
+        document_json: JSON 对象字符串，只能包含可选 title 与 blocks。
+    """
+
+    if not _render_allowed(_ctx):
+        return "统一文档渲染器未对当前频道开放。"
+    try:
+        raw = json.loads(document_json)
+        if not isinstance(raw, dict) or not set(raw).issubset({"title", "blocks"}):
+            return "文档结构无效：只允许 title 和 blocks。"
+        source_event_id, request_context = _render_request_context(_ctx.chat_key)
+        payload = {
+            "schema_version": "1.3",
+            "instance_id": config.INSTANCE_ID,
+            "conversation_key": _ctx.chat_key,
+            "source_event_id": source_event_id,
+            "blocks": _version_render_blocks(raw.get("blocks")),
+        }
+        if raw.get("title") is not None:
+            payload["title"] = raw["title"]
+        return await _deliver_render_request(
+            _ctx,
+            endpoint="/v1/render-documents",
+            payload=payload,
+            request_context=request_context,
+        )
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return "文档结构无效，请按约定的 blocks JSON 重试。"
 
 
 @plugin.mount_init_method()

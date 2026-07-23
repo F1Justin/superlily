@@ -340,6 +340,69 @@ def test_render_document_v11_supports_bounded_structural_nodes() -> None:
         RenderDocument.model_validate(raw)
 
 
+def test_render_document_v13_adds_cards_paragraphs_and_explicit_errors() -> None:
+    document = RenderDocument(
+        schema_version="1.3",
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_1080353942",
+        title="阶段四节点",
+        blocks=[
+            {
+                "kind": "paragraph",
+                "node_id": "paragraph",
+                "text": r"正文支持 **强调** 与 $x^2$。",
+            },
+            {
+                "kind": "card",
+                "node_id": "status-card",
+                "title": "运行状态",
+                "status": "success",
+                "body": "所有组件健康。",
+                "fields": [{"label": "延迟", "value": "12 ms"}],
+                "actions": [{"action_id": "details", "label": "查看详情"}],
+            },
+            {
+                "kind": "warning",
+                "node_id": "warning",
+                "title": "注意",
+                "text": "这是展示信息，不执行动作。",
+            },
+            {
+                "kind": "error_summary",
+                "node_id": "error",
+                "title": "执行失败",
+                "summary": "请求已安全终止。",
+                "items": ["未发送平台消息", "可以修改输入后重试"],
+            },
+        ],
+    )
+
+    source = document_latex(document)
+    assert r"\textbf{强调}" in source
+    assert r"\fcolorbox{green!45!black}" in source
+    assert r"\fbox{查看详情}" in source
+    assert r"\fcolorbox{orange!70!black}" in source
+    assert r"\fcolorbox{red!65!black}" in source
+    plain = render_document_plain_text(document)
+    assert "运行状态" in plain
+    assert "延迟：12 ms" in plain
+    assert "[查看详情]" in plain
+    assert "未发送平台消息" in plain
+
+    raw = document.model_dump(mode="json")
+    raw["blocks"][1]["actions"][0]["url"] = "https://example.com/"
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        RenderDocument.model_validate(raw)
+    raw = document.model_dump(mode="json")
+    raw["blocks"][1]["actions"][0]["callback"] = "send_platform_message"
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        RenderDocument.model_validate(raw)
+    raw = document.model_dump(mode="json")
+    raw["schema_version"] = "9.0"
+    with pytest.raises(ValidationError):
+        RenderDocument.model_validate(raw)
+
+
 @pytest.mark.asyncio
 async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
     tmp_path, monkeypatch
@@ -401,6 +464,18 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
             assert receipt["attempt_id"]
             assert receipt["delivery_plan"]["selected_family"] == "image"
             assert receipt["delivery_plan"]["degradation_reasons"] == []
+            assert receipt["delivery_plan"]["decision_hash"]
+            assert receipt["delivery_plan"]["resolved_document_hash"]
+            assert receipt["delivery_plan"]["selected_alternatives"] == []
+            assert receipt["delivery_plan"]["rejected_alternatives"] == []
+            assert receipt["delivery_plan"]["ordered_payloads"] == [
+                {
+                    "position": 0,
+                    "family": "image",
+                    "source": "render_artifact",
+                    "content_sha256": None,
+                }
+            ]
             duplicate = await client.post(
                 "/v1/render-documents",
                 json=_document().model_dump(mode="json"),
@@ -420,6 +495,8 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
                     "instance_id": "nekro-agent",
                     "delivery_plan_id": receipt["delivery_plan_id"],
                     "idempotency_key": "delivery-exercise-0001",
+                    "reply_to_platform_message_id": "qq-question-7",
+                    "mention_ids": ["123456"],
                 },
                 headers={"Authorization": "Bearer nekro-secret"},
             )
@@ -431,6 +508,8 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
                     "instance_id": "nekro-agent",
                     "delivery_plan_id": receipt["delivery_plan_id"],
                     "idempotency_key": "delivery-exercise-0001",
+                    "reply_to_platform_message_id": "qq-question-7",
+                    "mention_ids": ["123456"],
                 },
                 headers={"Authorization": "Bearer nekro-secret"},
             )
@@ -458,11 +537,59 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
             )
             assert delivered_again.status_code == 200
             assert delivered_again.json()["duplicate"] is True
+            conflicting_intent = await client.post(
+                f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-intents",
+                json={
+                    "instance_id": "nekro-agent",
+                    "delivery_plan_id": receipt["delivery_plan_id"],
+                    "idempotency_key": "delivery-exercise-0001",
+                    "reply_to_platform_message_id": "qq-question-8",
+                    "mention_ids": ["123456"],
+                },
+                headers={"Authorization": "Bearer nekro-secret"},
+            )
+            assert conflicting_intent.status_code == 409
+            deleted = await client.request(
+                "DELETE",
+                receipt["content_path"],
+                json={
+                    "instance_id": "nekro-agent",
+                    "reason": "user_request",
+                },
+                headers={"Authorization": "Bearer nekro-secret"},
+            )
+            assert deleted.status_code == 200
+            assert deleted.json()["content_deleted"] is True
+            assert deleted.json()["physical_object_removed"] is True
+            assert deleted.json()["duplicate"] is False
+            gone = await client.get(
+                receipt["content_path"],
+                headers={"Authorization": "Bearer nekro-secret"},
+            )
+            assert gone.status_code == 410
+            deleted_again = await client.request(
+                "DELETE",
+                receipt["content_path"],
+                json={
+                    "instance_id": "nekro-agent",
+                    "reason": "user_request",
+                },
+                headers={"Authorization": "Bearer nekro-secret"},
+            )
+            assert deleted_again.status_code == 200
+            assert deleted_again.json()["duplicate"] is True
+            assert deleted_again.json()["physical_object_removed"] is False
         async with app.state.database.sessions() as session:
             assert await session.get(RenderDeliveryAttempt, delivered.json()["attempt_id"])
             saved_intent = await session.get(RenderDeliveryIntent, intent.json()["intent_id"])
             assert saved_intent is not None
             assert saved_intent.platform_message_id == "qq-message-42"
+            assert saved_intent.reply_to_platform_message_id == "qq-question-7"
+            assert saved_intent.mention_ids_json == ["123456"]
+            artifact = await session.get(RenderArtifactRecord, receipt["artifact_id"])
+            assert artifact is not None
+            assert artifact.content_deleted_at is not None
+            assert artifact.deletion_reason == "user_request"
     finally:
         await app.state.database.drop_schema()
         await app.state.database.dispose()

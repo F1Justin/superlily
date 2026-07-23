@@ -11,12 +11,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .canonical_json import canonicalize_json_value
 
 
-RENDER_DOCUMENT_SCHEMA_VERSION = "1.2"
+RENDER_DOCUMENT_SCHEMA_VERSION = "1.3"
 _CONVERSATION_KEY_RE = re.compile(r"^[a-z0-9_]+-(?:group|private)_[A-Za-z0-9.-]{1,256}$")
 _FORBIDDEN_LATEX_RE = re.compile(
     r"\\(?:input|include|openin|openout|read|write|usepackage|documentclass|"
     r"newcommand|renewcommand|def|catcode|csname|endcsname|special|immediate|"
-    r"write18|includegraphics|href|url)\b",
+    r"write18|includegraphics|href|url|font|usefont|fontspec|setmainfont|"
+    r"setsansfont|setmonofont|setmathfont|setcjkmainfont|setcjksansfont|"
+    r"setcjkmonofont|setcjkmathfont|pdfmapfile|pdffontattr|directlua|"
+    r"everyjob|loop|repeat|futurelet)\b",
     re.IGNORECASE,
 )
 
@@ -206,6 +209,13 @@ class TextBlock(_RenderNode):
     _validate_inline_math = field_validator("text")(_validate_mixed_text)
 
 
+class ParagraphBlock(_RenderNode):
+    kind: Literal["paragraph"] = "paragraph"
+    text: str = Field(min_length=1, max_length=4_000)
+
+    _validate_inline_math = field_validator("text")(_validate_mixed_text)
+
+
 class HeadingBlock(_RenderNode):
     kind: Literal["heading"] = "heading"
     text: str = Field(min_length=1, max_length=240)
@@ -293,6 +303,76 @@ class NoticeBlock(_RenderNode):
     _validate_optional_inline_math = field_validator("title")(_validate_optional_mixed_text)
 
 
+class WarningBlock(_RenderNode):
+    kind: Literal["warning"] = "warning"
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=2_000)
+
+    _validate_inline_math = field_validator("text")(_validate_mixed_text)
+    _validate_optional_inline_math = field_validator("title")(
+        _validate_optional_mixed_text
+    )
+
+
+class ErrorSummaryBlock(_RenderNode):
+    kind: Literal["error_summary"] = "error_summary"
+    title: str = Field(default="执行失败", min_length=1, max_length=120)
+    summary: str = Field(min_length=1, max_length=1_000)
+    items: list[str] = Field(default_factory=list, max_length=16)
+
+    _validate_title_inline_math = field_validator("title")(_validate_mixed_text)
+    _validate_summary_inline_math = field_validator("summary")(_validate_mixed_text)
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 500 for item in value):
+            raise ValueError("error summary items must be non-empty bounded text")
+        for item in value:
+            _validate_mixed_text(item)
+        return value
+
+
+class CardField(_StrictModel):
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=500)
+
+    _validate_label_inline_math = field_validator("label")(_validate_mixed_text)
+    _validate_value_inline_math = field_validator("value")(_validate_mixed_text)
+
+
+class CardAction(_StrictModel):
+    action_id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    )
+    label: str = Field(min_length=1, max_length=120)
+
+    _validate_label_inline_math = field_validator("label")(_validate_mixed_text)
+
+
+class CardBlock(_RenderNode):
+    kind: Literal["card"] = "card"
+    title: str = Field(min_length=1, max_length=160)
+    status: Literal["neutral", "info", "success", "warning", "error"] = "neutral"
+    body: str | None = Field(default=None, min_length=1, max_length=2_000)
+    fields: list[CardField] = Field(default_factory=list, max_length=16)
+    actions: list[CardAction] = Field(default_factory=list, max_length=8)
+
+    _validate_title_inline_math = field_validator("title")(_validate_mixed_text)
+    _validate_body_inline_math = field_validator("body")(_validate_optional_mixed_text)
+
+    @model_validator(mode="after")
+    def validate_card(self) -> "CardBlock":
+        if not self.body and not self.fields:
+            raise ValueError("card requires body or fields")
+        action_ids = [item.action_id for item in self.actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError("card action identifiers must be unique")
+        return self
+
+
 class ProgressBlock(_RenderNode):
     kind: Literal["progress"] = "progress"
     label: str = Field(min_length=1, max_length=120)
@@ -322,6 +402,7 @@ class ArtifactRefBlock(_RenderNode):
 
 LeafRenderBlock = Annotated[
     TextBlock
+    | ParagraphBlock
     | HeadingBlock
     | MathBlock
     | ListBlock
@@ -329,6 +410,9 @@ LeafRenderBlock = Annotated[
     | CodeBlock
     | TableBlock
     | NoticeBlock
+    | WarningBlock
+    | ErrorSummaryBlock
+    | CardBlock
     | ProgressBlock
     | ImageBlock
     | ArtifactRefBlock,
@@ -377,6 +461,7 @@ class AlternativeBlock(_RenderNode):
 
 RenderBlock = Annotated[
     TextBlock
+    | ParagraphBlock
     | HeadingBlock
     | MathBlock
     | ListBlock
@@ -384,6 +469,9 @@ RenderBlock = Annotated[
     | CodeBlock
     | TableBlock
     | NoticeBlock
+    | WarningBlock
+    | ErrorSummaryBlock
+    | CardBlock
     | ProgressBlock
     | ImageBlock
     | ArtifactRefBlock
@@ -394,7 +482,7 @@ RenderBlock = Annotated[
 
 
 class RenderDocument(_StrictModel):
-    schema_version: Literal["1.0", "1.1", "1.2"] = RENDER_DOCUMENT_SCHEMA_VERSION
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = RENDER_DOCUMENT_SCHEMA_VERSION
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_key: str = Field(min_length=1, max_length=320)
     source_event_id: str | None = Field(default=None, min_length=1, max_length=512)
@@ -450,6 +538,25 @@ class RenderDocumentReceipt(_StrictModel):
     duplicate: bool = False
 
 
+class RenderArtifactDeletionIn(_StrictModel):
+    instance_id: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$"
+    )
+    reason: Literal[
+        "user_request",
+        "retention_elapsed",
+        "security_response",
+        "test_cleanup",
+    ]
+
+
+class RenderArtifactDeletionReceipt(_StrictModel):
+    artifact_id: str = Field(min_length=36, max_length=36)
+    content_deleted: bool
+    physical_object_removed: bool
+    duplicate: bool = False
+
+
 class DeliveryAttemptIn(_StrictModel):
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     outcome: Literal["succeeded", "failed", "ambiguous"]
@@ -473,6 +580,23 @@ class DeliveryIntentIn(_StrictModel):
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     delivery_plan_id: str = Field(min_length=36, max_length=36)
     idempotency_key: str = Field(min_length=1, max_length=256)
+    reply_to_platform_message_id: str | None = Field(
+        default=None, min_length=1, max_length=512
+    )
+    mention_ids: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("mention_ids")
+    @classmethod
+    def validate_mentions(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or any(
+            not item
+            or len(item) > 256
+            or item != item.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in item)
+            for item in value
+        ):
+            raise ValueError("mention identifiers must be unique bounded visible strings")
+        return value
 
 
 class DeliveryIntentReceipt(_StrictModel):
@@ -505,6 +629,11 @@ class DeliveryPlanReceipt(_StrictModel):
     selected_family: Literal["image", "text"]
     fallback_text: str | None = Field(default=None, max_length=8_000)
     degradation_reasons: list[str] = Field(default_factory=list, max_length=16)
+    decision_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    resolved_document_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    selected_alternatives: list[dict] = Field(default_factory=list, max_length=64)
+    rejected_alternatives: list[dict] = Field(default_factory=list, max_length=64)
+    ordered_payloads: list[dict] = Field(default_factory=list, max_length=16)
 
 
 def _leaf_plain_text(block: LeafRenderBlock, *, markdown_lite: bool) -> str:
@@ -513,7 +642,7 @@ def _leaf_plain_text(block: LeafRenderBlock, *, markdown_lite: bool) -> str:
 
     if block.accessibility_text:
         return plain(block.accessibility_text)
-    if isinstance(block, (TextBlock, HeadingBlock, QuoteBlock)):
+    if isinstance(block, (TextBlock, ParagraphBlock, HeadingBlock, QuoteBlock)):
         return plain(block.text)
     if isinstance(block, MathBlock):
         return block.latex
@@ -528,6 +657,26 @@ def _leaf_plain_text(block: LeafRenderBlock, *, markdown_lite: bool) -> str:
         )
     if isinstance(block, NoticeBlock):
         return "：".join(plain(item) for item in (block.title, block.text) if item)
+    if isinstance(block, WarningBlock):
+        return "：".join(plain(item) for item in (block.title, block.text) if item)
+    if isinstance(block, ErrorSummaryBlock):
+        return "\n".join(
+            [
+                plain(block.title),
+                plain(block.summary),
+                *(plain(item) for item in block.items),
+            ]
+        )
+    if isinstance(block, CardBlock):
+        parts = [plain(block.title)]
+        if block.body:
+            parts.append(plain(block.body))
+        parts.extend(
+            f"{plain(field.label)}：{plain(field.value)}"
+            for field in block.fields
+        )
+        parts.extend(f"[{plain(action.label)}]" for action in block.actions)
+        return "\n".join(parts)
     if isinstance(block, ProgressBlock):
         return f"{plain(block.label)}：{block.value}%" + (
             f"（{plain(block.detail)}）" if block.detail else ""
@@ -540,7 +689,7 @@ def _leaf_plain_text(block: LeafRenderBlock, *, markdown_lite: bool) -> str:
 
 
 def render_document_plain_text(document: RenderDocument) -> str:
-    markdown_lite = document.schema_version == "1.2"
+    markdown_lite = document.schema_version in {"1.2", "1.3"}
 
     def plain(value: str) -> str:
         return inline_content_plain_text(value, markdown_lite=markdown_lite)
