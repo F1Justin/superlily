@@ -272,9 +272,18 @@ text-adapter semantic proof, and explicit status/Wolfram/LaTeX/help converters a
 complete. Nekro 0.9.0 accepts one ordinary Markdown document instead of model-authored
 blocks JSON. Lily 0.6.0 retains the old command matchers as per-command rollback until
 an exact tool invocation has produced a delivery intent. SQLite full-suite, PostgreSQL
-Alembic round-trip, and the focused PostgreSQL fault matrix pass. Production still needs
-migration 0019, the Git-bound exact command rollout, real OneBot receipts, a stable
-window, and rollback evidence before Phase 4 can be signed off.
+Alembic round-trip, and the focused PostgreSQL fault matrix pass. Production is on
+`0019_phase4_planning`; the Git-bound exact command plan is active, the control plane
+has returned to zero operators, four compatibility paths have terminal platform
+receipts, and the no-send `recorded_only` rollback path is proven. A production
+status pickup race found during canary was fixed by bounding all provider idle pickup
+to one second and re-running the full suite. Scoped render reuse now binds the exact
+renderer snapshot hash, so an implementation/font bundle, normalized input, capability
+decision, source artifact, or idempotency scope change cannot reuse a stale artifact;
+there is no cross-conversation global render cache. The final SQLite suite is
+512 passed / 4 skipped, the exact-snapshot regression also passes on an isolated
+PostgreSQL 17 instance, and the post-provider-fix production window has no restarts,
+active invocations, pending delivery intents, or new failed/timed-out/ambiguous records.
 
 ### Deliverables
 
@@ -300,6 +309,9 @@ Untrusted HTML/SVG/Markdown is sanitized; local-file and remote-fetch policy is
 explicit; font and image work has resource limits. Wolfram, LaTeX, status, and
 help results render identically through command and tool paths, with QQ text
 and image fallbacks tested. Tools no longer call platform send APIs directly.
+Synthetic validation must not send to public conversations without explicit
+authorization for that specific action; default production proof uses automated
+tests, append-only ledgers, and no-send probes.
 
 ## Phase 5: Natural-language Tool Calling
 

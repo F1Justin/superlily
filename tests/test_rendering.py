@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
+import os
 import struct
 import zlib
 
@@ -593,6 +595,145 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
     finally:
         await app.state.database.drop_schema()
         await app.state.database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_render_cache_is_scoped_and_binds_exact_renderer_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    calls = 0
+
+    async def render_document(self, document, *, timeout_seconds):
+        nonlocal calls
+        del self, document, timeout_seconds
+        calls += 1
+        body = _png(width=calls + 1, height=3)
+        return RenderedDocument(
+            content=body,
+            content_sha256=sha256(body).hexdigest(),
+            width_pixels=calls + 1,
+            height_pixels=3,
+        )
+
+    monkeypatch.setattr(DocumentRendererClient, "render_document", render_document)
+    database_url = os.getenv("SUPERLILY_TEST_DATABASE_URL")
+    if not database_url:
+        database_url = f"sqlite+aiosqlite:///{tmp_path / 'cache.db'}"
+    settings = Settings(
+        database_url=database_url,
+        ingest_tokens={"nekro-agent": "nekro-secret"},
+        group_default_mode="full",
+        artifact_root=str(tmp_path / "artifacts"),
+        artifact_secret_pepper="p" * 32,
+        render_mode="canary",
+        render_canary_conversations=frozenset(
+            {"onebot_v11-group_1080353942"}
+        ),
+        render_backend_url="http://document-renderer:8000",
+        render_backend_token="r" * 32,
+        render_implementation_hash="a" * 64,
+    )
+    app = create_app(settings)
+    await app.state.database.create_schema()
+    upgraded_app = None
+    try:
+        async with app.state.database.sessions() as session:
+            session.add(
+                BotInstance(
+                    id="nekro-agent",
+                    platform="qq",
+                    adapter="onebot_v11",
+                    bot_id="2022692714",
+                    role="talk",
+                    metadata_json={
+                        "capabilities": {
+                            "profile": "onebot_v11.qq.v1",
+                            "supported": ["send_image", "send_text"],
+                            "limits": {},
+                        }
+                    },
+                )
+            )
+            await session.commit()
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            headers = {
+                "Authorization": "Bearer nekro-secret",
+                "Idempotency-Key": "renderer-cache-scope-0001",
+            }
+            first = await client.post(
+                "/v1/render-documents",
+                json=_document().model_dump(mode="json"),
+                headers=headers,
+            )
+            assert first.status_code == 201, first.text
+
+            duplicate = await client.post(
+                "/v1/render-documents",
+                json=_document().model_dump(mode="json"),
+                headers=headers,
+            )
+            assert duplicate.status_code == 200, duplicate.text
+            assert duplicate.json()["artifact_id"] == first.json()["artifact_id"]
+            assert calls == 1
+
+        upgraded_app = create_app(
+            replace(settings, render_implementation_hash="b" * 64)
+        )
+        upgraded_transport = httpx.ASGITransport(app=upgraded_app)
+        async with httpx.AsyncClient(
+            transport=upgraded_transport, base_url="http://test"
+        ) as client:
+            after_upgrade = await client.post(
+                "/v1/render-documents",
+                json=_document().model_dump(mode="json"),
+                headers=headers,
+            )
+            assert after_upgrade.status_code == 201, after_upgrade.text
+            assert after_upgrade.json()["artifact_id"] != first.json()["artifact_id"]
+            assert after_upgrade.json()["attempt_id"] != first.json()["attempt_id"]
+            assert calls == 2
+
+            separate_scope = await client.post(
+                "/v1/render-documents",
+                json=_document().model_dump(mode="json"),
+                headers={
+                    **headers,
+                    "Idempotency-Key": "renderer-cache-scope-0002",
+                },
+            )
+            assert separate_scope.status_code == 201, separate_scope.text
+            assert (
+                separate_scope.json()["artifact_id"]
+                != after_upgrade.json()["artifact_id"]
+            )
+            assert calls == 3
+
+        async with upgraded_app.state.database.sessions() as session:
+            attempts = (
+                await session.scalars(
+                    select(RenderAttemptRecord).order_by(
+                        RenderAttemptRecord.started_at
+                    )
+                )
+            ).all()
+            assert len(attempts) == 3
+            assert (
+                attempts[0].renderer_snapshot_hash
+                != attempts[1].renderer_snapshot_hash
+            )
+            assert (
+                attempts[1].renderer_snapshot_hash
+                == attempts[2].renderer_snapshot_hash
+            )
+    finally:
+        await app.state.database.drop_schema()
+        await app.state.database.dispose()
+        if upgraded_app is not None:
+            await upgraded_app.state.database.dispose()
 
 
 @pytest.mark.asyncio

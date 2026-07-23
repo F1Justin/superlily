@@ -135,7 +135,7 @@ async def _live_artifact(
     settings: Settings,
     render_id: str,
     now: datetime,
-    capability_hash: str,
+    renderer_snapshot_hash: str,
 ) -> RenderArtifactRecord | None:
     rows = (
         await session.execute(
@@ -154,7 +154,11 @@ async def _live_artifact(
     ).all()
     store = ArtifactStore(settings.artifact_root)
     for artifact, attempt in rows:
-        if attempt.renderer_snapshot_json.get("capability_hash") != capability_hash:
+        # Reuse is deliberately scoped to one canonical RenderDocument record
+        # and only valid for the exact deterministic renderer inputs.  The
+        # snapshot hash binds the schema/input decision, capability profile,
+        # renderer profile, and implementation/font bundle identity.
+        if attempt.renderer_snapshot_hash != renderer_snapshot_hash:
             continue
         try:
             if (
@@ -288,6 +292,8 @@ async def submit_render_document(
         raise RenderServiceError(exc.code, exc.safe_detail) from exc
 
     request_sha256 = render_document_hash(document)
+    snapshot = _renderer_snapshot(settings, document, decision)
+    snapshot_hash = canonicalize_json_value(snapshot).sha256
     record, _duplicate_document = await _get_or_create_document(
         session, document, idempotency_key, request_sha256
     )
@@ -305,7 +311,7 @@ async def submit_render_document(
         settings,
         record.id,
         now,
-        decision.capability_hash,
+        snapshot_hash,
     )
     if artifact is not None:
         attempt = await session.get(RenderAttemptRecord, artifact.attempt_id)
@@ -327,8 +333,6 @@ async def submit_render_document(
         latest.completed_at = now
 
     next_number = (latest.attempt_number if latest is not None else 0) + 1
-    snapshot = _renderer_snapshot(settings, document, decision)
-    snapshot_hash = canonicalize_json_value(snapshot).sha256
     attempt = RenderAttemptRecord(
         render_id=record.id,
         attempt_number=next_number,
@@ -520,6 +524,17 @@ async def submit_passthrough_render_document(
         raise RenderServiceError(exc.code, exc.safe_detail) from exc
 
     request_sha256 = render_document_hash(document)
+    snapshot = {
+        "profile": "tool-artifact-passthrough-v1",
+        "implementation_hash": source_artifact.producer_descriptor_hash,
+        "document_schema_version": document.schema_version,
+        "capability_hash": decision.capability_hash,
+        "delivery_decision_hash": decision.decision_hash,
+        "resolved_document_hash": decision.resolved_document_hash,
+        "source_invocation_id": source_invocation_id,
+        "source_artifact_id": source_artifact.id,
+    }
+    snapshot_hash = canonicalize_json_value(snapshot).sha256
     record, _ = await _get_or_create_document(
         session, document, idempotency_key, request_sha256
     )
@@ -537,7 +552,7 @@ async def submit_passthrough_render_document(
         settings,
         record.id,
         now,
-        decision.capability_hash,
+        snapshot_hash,
     )
     if artifact is not None:
         attempt = await session.get(RenderAttemptRecord, artifact.attempt_id)
@@ -600,16 +615,6 @@ async def submit_passthrough_render_document(
         )
 
     next_number = (latest.attempt_number if latest is not None else 0) + 1
-    snapshot = {
-        "profile": "tool-artifact-passthrough-v1",
-        "implementation_hash": source_artifact.producer_descriptor_hash,
-        "document_schema_version": document.schema_version,
-        "capability_hash": decision.capability_hash,
-        "delivery_decision_hash": decision.decision_hash,
-        "resolved_document_hash": decision.resolved_document_hash,
-        "source_invocation_id": source_invocation_id,
-        "source_artifact_id": source_artifact.id,
-    }
     completed = utc_now()
     attempt = RenderAttemptRecord(
         id=str(uuid4()),
@@ -619,7 +624,7 @@ async def submit_passthrough_render_document(
         state="succeeded",
         renderer_profile=snapshot["profile"],
         renderer_snapshot_json=snapshot,
-        renderer_snapshot_hash=canonicalize_json_value(snapshot).sha256,
+        renderer_snapshot_hash=snapshot_hash,
         lease_expires_at=completed,
         render_duration_ms=0,
         started_at=completed,
