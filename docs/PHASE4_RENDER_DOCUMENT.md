@@ -148,6 +148,11 @@ LILY_CORE_PHASE4_LATEX_ENABLED=true
 LILY_CORE_PHASE4_HELP_ENABLED=true
 ```
 
+三类独立 Provider 的空闲领取退避上限统一为 1 秒。原先 5 秒上限会与
+`status.inspect` 的 5 秒总期限形成竞态：请求若恰好落在最长空闲窗口，可能尚未被领取
+就先由 Core 收敛为 `timed_out`。1 秒上限同时降低 status、Wolfram 与 LaTeX 的首包
+等待，不改变每个工具的执行预算、并发上限或安全边界。
+
 回滚分三层且互不依赖：
 
 1. 任一命令 flag 设为 false，立即恢复对应旧 matcher；

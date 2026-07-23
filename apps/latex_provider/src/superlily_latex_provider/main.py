@@ -70,7 +70,7 @@ class LatexProviderConfig:
     http_timeout_seconds: float = 8.0
     connect_timeout_seconds: float = 3.0
     poll_seconds: float = 0.25
-    max_idle_poll_seconds: float = 5.0
+    max_idle_poll_seconds: float = 1.0
     execution_heartbeat_seconds: float = 1.0
 
     def __post_init__(self) -> None:
@@ -121,7 +121,7 @@ class LatexProviderConfig:
             ),
             poll_seconds=float(os.getenv("SUPERLILY_LATEX_PROVIDER_POLL_SECONDS", "0.25")),
             max_idle_poll_seconds=float(
-                os.getenv("SUPERLILY_LATEX_PROVIDER_MAX_IDLE_POLL_SECONDS", "5")
+                os.getenv("SUPERLILY_LATEX_PROVIDER_MAX_IDLE_POLL_SECONDS", "1")
             ),
             execution_heartbeat_seconds=float(
                 os.getenv("SUPERLILY_LATEX_PROVIDER_EXECUTION_HEARTBEAT_SECONDS", "1")

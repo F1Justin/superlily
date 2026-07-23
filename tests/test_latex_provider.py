@@ -91,6 +91,16 @@ def _config(socket_path: Path) -> LatexProviderConfig:
     )
 
 
+def test_latex_provider_production_idle_poll_is_bounded_for_fast_pickup() -> None:
+    config = LatexProviderConfig(
+        core_url="http://core.test",
+        token="provider-token",
+        worker_identity_hash=WORKER_IDENTITY,
+    )
+    assert config.poll_seconds == 0.25
+    assert config.max_idle_poll_seconds == 1
+
+
 def test_latex_descriptor_binds_one_png_and_all_hard_artifact_bounds() -> None:
     loaded = load_tool_descriptor(DESCRIPTOR_PATH.read_bytes())
     descriptor = loaded.descriptor

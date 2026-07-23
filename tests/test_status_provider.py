@@ -57,6 +57,12 @@ def test_real_status_authority_is_bound_to_the_standalone_implementation() -> No
 
 
 def test_status_provider_idle_poll_backoff_is_bounded_and_resets_after_work() -> None:
+    production = StatusProviderConfig(
+        core_url="http://core.test",
+        token="provider-token",
+    )
+    assert production.max_idle_poll_seconds == 1
+
     config = StatusProviderConfig(
         core_url="http://core.test",
         token="provider-token",
