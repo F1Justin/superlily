@@ -266,15 +266,16 @@ in `CONTROL_PLANE.md`.
 
 Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-4-unified-renderer-and-delivery-boundary`.
 
-Current implementation status (2026-07-23): RenderDocument 1.3, deterministic
+Current implementation status (2026-07-26): RenderDocument 1.3, deterministic
 capability planning, full artifact provenance/retention/deletion, QQ plus constrained
 text-adapter semantic proof, and explicit status/Wolfram/LaTeX/help converters are
 complete. Nekro 0.9.0 accepts one ordinary Markdown document instead of model-authored
 blocks JSON. Lily 0.6.0 retains the old command matchers as per-command rollback until
 an exact tool invocation has produced a delivery intent. SQLite full-suite, PostgreSQL
 Alembic round-trip, and the focused PostgreSQL fault matrix pass. Production is on
-`0019_phase4_planning`; the Git-bound exact command plan is active, the control plane
-has returned to zero operators, four compatibility paths have terminal platform
+`0019_phase4_planning`; the Git-bound exact command plan was activated and has now
+window-expired into deterministic `ledger_only` fallback, the control plane has no
+unexpired session, four compatibility paths have terminal platform
 receipts, and the no-send `recorded_only` rollback path is proven. A production
 status pickup race found during canary was fixed by bounding all provider idle pickup
 to one second and re-running the full suite. Scoped render reuse now binds the exact
@@ -284,6 +285,14 @@ there is no cross-conversation global render cache. The final SQLite suite is
 512 passed / 4 skipped, the exact-snapshot regression also passes on an isolated
 PostgreSQL 17 instance, and the post-provider-fix production window has no restarts,
 active invocations, pending delivery intents, or new failed/timed-out/ambiguous records.
+After action-specific restart approval, production Core was replaced at 19:44 CST
+with the exact-snapshot image from `c38d6f0`; it returned healthy on migration
+`0019`, both bridges and all three providers re-established fresh heartbeats, and
+the switch created no tool invocation or delivery intent. The 2026-07-26 closing
+audit, more than 61 hours after that switch, still shows zero relevant restarts,
+healthy readiness and fresh heartbeats, no active invocation or pending delivery,
+and no tool invocation after rollout expiry. Post-expiry ordinary chat rendering
+continued independently with 22 successful delivery intents.
 
 ### Deliverables
 

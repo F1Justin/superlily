@@ -133,7 +133,9 @@ Git authority `phase4-command-canary-20260723@1.0.0` 只包含：
 ## 生产部署与签署
 
 2026-07-23 的生产部署以提交 `a63940b6a8f82420c0c22e41ad5005af215d0c64`
-为 Core/Renderer authority，并在提交 `aa84f62` 收入生产发现的领取延迟修复：
+为初始 Core/Renderer authority，在提交 `aa84f62` 收入生产发现的领取延迟修复，
+并以提交 `c38d6f05eec9b07f10e98d034d1ce901b3418bc4` 完成精确 Renderer snapshot
+缓存约束：
 
 - 迁移前 PostgreSQL 自定义格式备份位于
   `/home/justin/backups/superlily/20260723-phase4-complete/`，备份大小
@@ -174,6 +176,33 @@ Git authority `phase4-command-canary-20260723@1.0.0` 只包含：
 `healthy/current_concurrency=0/self_test=ok`，Core readiness 为
 `status=ok/database=ok`，控制面 operator 数为 0，账本中没有 active invocation
 或 pending delivery intent。该窗口内没有新的 failed/timed_out/ambiguous 记录。
+
+获得生产 Core 重启的当次明确授权后，19:44:26 CST 只替换
+`deploy-lily-core-1`，其余 Bridge、Renderer、Provider、worker 与数据库均未重启。
+新 Core 镜像为
+`sha256:6160347a47a3d509b97607e6914abbe9fdf02da5191b7c36fcbbb12ca2114adb`；
+运行容器内 `render_service.py` 的 SHA-256 为
+`e8261e0457836120d5912becf60d2913e2c7a2c402dc86b2d690bcb5c4e0917a`，
+与提交后的工作树文件一致。切换后 Core 为 healthy、restart count 0，
+`/health/ready` 返回 `status=ok/database=ok`，生产 head 仍为
+`0019_phase4_planning` 且 `alembic check` 无 drift。Lily 与 Nekro 均重新上报
+online heartbeat，三个 Provider 均重新上报
+`healthy/current_concurrency=0/self_test=ok`；切换后没有产生 tool invocation
+或 delivery intent，账本仍无 active invocation 或 pending delivery intent。
+
+2026-07-26 09:18 CST 的收尾复核距最终 Core 切换超过 61 小时。Core、
+Renderer、Nekro、PostgreSQL、三个 Provider 与 LaTeX worker 的 restart count
+仍全部为 0；Core、Renderer、Nekro 与 PostgreSQL 均 healthy，Lily user service
+持续 `active/running` 且 `NRestarts=0`。Core readiness 仍为
+`status=ok/database=ok`，Lily 与 Nekro heartbeat 均为 online，三个 Provider
+heartbeat 均为 `healthy/current_concurrency=0/self_test=ok`，账本仍无 active
+invocation 或 pending delivery intent，控制面也没有未过期且未撤销的 session。
+精确 command canary 已于 2026-07-24 18:29 CST 到期；数据库保留其
+`lifecycle=active` 作为不可变审计事实，但有效计划查询要求
+`starts_at <= database_time < expires_at`，因此到期记录不再具有执行 authority，
+未命中时确定性回落 `recorded_only/rollout_fallback_ledger_only`。到期后没有
+tool invocation；同期 22 条普通聊天 render delivery intent 均为
+`succeeded`，与工具执行账本相互独立。
 
 生产操作员随后明确指出，不应把阶段验收理解为可以向公开群主动发送合成测试内容。
 从该纠正起停止所有公开群测试；后续生产验证默认只使用自动化、后台账本和无发送探针。
