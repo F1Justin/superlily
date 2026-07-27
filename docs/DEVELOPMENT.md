@@ -33,6 +33,20 @@ same database after pytest has torn its tables down: it may still report
 `public` schema (or use a fresh test container) before a migration round trip,
 then run `upgrade head -> downgrade base -> upgrade head -> alembic check`.
 
+Phase 5a 的重点回归不需要真实 LLM endpoint。测试导入一份本地 reviewed profile，
+通过独立模型 Provider 身份提交结构化 proposal，并断言零工具调用和零发送：
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_agent_runtime_contracts.py \
+  tests/test_agent_run_api.py \
+  tests/test_migrations.py
+```
+
+运行时默认 `SUPERLILY_AGENT_MODE=off`。本地启用 `shadow` 时必须同时配置非空且不与
+任何现有认证域重用的 `SUPERLILY_MODEL_PROVIDER_TOKENS_JSON`；这不会开放
+`caller=agent`，也不会执行提案。
+
 Production schema changes use Alembic; `create_schema` and `drop_schema` exist
 only for disposable tests. The constraints files are the verified resolver
 input; `pyproject.toml` ranges remain the package compatibility declaration.

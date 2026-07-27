@@ -25,9 +25,12 @@ artifact store、reviewer 激活和最多一次的 Git-bound canary：
 reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。唯一 attempt
 得到 finalized/referenced 的 34,883 字节、2048×499 PNG，计划随即暂停并耗尽；旧
 `/tex` 串行对比成功且保持不变。最终 SQLite 为 463 通过、4 跳过，PostgreSQL 17
-为 467 通过，稳定窗口和零关联平台 response 均已签署。第四阶段的首个灰度切片是
-统一 `RenderDocument` Renderer，不是直接开放自然语言工具调用；实现边界、速度取舍
-与精确群灰度配置见 [`docs/PHASE4_RENDER_DOCUMENT.md`](docs/PHASE4_RENDER_DOCUMENT.md)。
+为 467 通过，稳定窗口和零关联平台 response 均已签署。Phase 4 又于
+2026-07-26 完成 RenderDocument 1.3、能力规划、artifact 溯源、四条兼容路径和
+61 小时稳定窗口的生产签署。当前 Phase 5a 只实现 planner-only `AgentRun` shadow：
+默认关闭，模型可提交提案但 Core 的工具调用和平台发送均固定为 0，也没有开放
+`caller=agent`。实现边界见
+[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -58,6 +61,8 @@ reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。�
   [`docs/PHASE3_WOLFRAM_TEXT.md`](docs/PHASE3_WOLFRAM_TEXT.md)
 - LaTeX artifact 实施与上线验收：
   [`docs/PHASE3_LATEX_RENDER.md`](docs/PHASE3_LATEX_RENDER.md)
+- 第五阶段 AgentRun 实施合同：
+  [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)
 - 采集与 agent 共识：
   [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
 - C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)

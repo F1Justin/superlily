@@ -104,7 +104,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; frame-ancestors 'none'"
             )
-        if request.url.path.startswith(("/v1/tool-executions", "/v1/tool-artifacts", "/v1/render-")):
+        if request.url.path.startswith(
+            ("/v1/tool-executions", "/v1/tool-artifacts", "/v1/render-", "/v1/agent-")
+        ):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -113,6 +115,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def redact_control_validation_error(request: Request, exc: RequestValidationError):
         if request.url.path.startswith("/v1/control/"):
             return JSONResponse(status_code=422, content={"detail": "invalid control request"})
+        if request.url.path.startswith("/v1/agent-"):
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "invalid agent request"},
+            )
         if request.url.path.startswith(("/v1/tool-executions", "/v1/tool-artifacts", "/v1/render-")):
             return JSONResponse(
                 status_code=422,

@@ -8,6 +8,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from superlily_contracts import (
+    AgentAttemptReportIn,
+    AgentRunCreateIn,
     CommandRegistrySnapshotIn,
     DeliveryCompletionIn,
     DeliveryIntentIn,
@@ -39,6 +41,7 @@ from .auth import (
     InvocationIdentity,
     ingest_identity,
     invocation_identity,
+    model_provider_identity,
     provider_identity,
     require_admin,
 )
@@ -112,11 +115,19 @@ from .tool_artifact_service import (
     reserve_tool_artifact,
     upload_tool_artifact,
 )
+from .agent_run_service import (
+    agent_run_view,
+    create_agent_run,
+    get_agent_run_for_admin,
+    planner_input_for_provider,
+    record_agent_attempt,
+)
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
 Identity = Annotated[str, Depends(ingest_identity)]
 ProviderIdentity = Annotated[str, Depends(provider_identity)]
+ModelProviderIdentity = Annotated[str, Depends(model_provider_identity)]
 ToolInvocationIdentity = Annotated[InvocationIdentity, Depends(invocation_identity)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=256)]
 _ARTIFACT_UPLOAD_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
@@ -1432,6 +1443,98 @@ async def tool_detail(tool_id: str, request: Request, session: Session) -> dict:
         "tool_id": tool_id,
         "versions": result["tools"],
     }
+
+
+@router.post("/v1/agent-runs", status_code=status.HTTP_201_CREATED)
+async def post_agent_run(
+    payload: AgentRunCreateIn,
+    response: Response,
+    session: Session,
+    authenticated_caller: ToolInvocationIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    run, duplicate = await create_agent_run(
+        session,
+        payload,
+        authenticated_caller,
+        idempotency_key,
+        session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await agent_run_view(session, run)
+    result["duplicate"] = duplicate
+    return result
+
+
+@router.get(
+    "/v1/agent-runs/{run_id}",
+    dependencies=[Depends(require_admin)],
+)
+async def get_agent_run(
+    run_id: str,
+    session: Session,
+) -> dict:
+    return await agent_run_view(
+        session,
+        await get_agent_run_for_admin(session, run_id),
+    )
+
+
+@router.get("/v1/agent-runs/{run_id}/planner-input")
+async def get_agent_planner_input(
+    run_id: str,
+    session: Session,
+    authenticated_provider: ModelProviderIdentity,
+) -> dict:
+    context = await planner_input_for_provider(
+        session,
+        run_id,
+        authenticated_provider,
+        session.info["settings"],
+    )
+    run = await get_agent_run_for_admin(session, run_id)
+    return {
+        "schema_version": "1.0",
+        "run_id": run.id,
+        "context_hash": run.context_hash,
+        "context": context.model_dump(mode="json"),
+        "budget": run.budget_snapshot_json,
+        "budget_hash": run.budget_hash,
+        "model_profile": run.model_profile_snapshot_json,
+        "model_profile_hash": run.model_profile_hash,
+        "deadline_at": run.deadline_at,
+        "tool_execution_authority": False,
+        "delivery_authority": False,
+    }
+
+
+@router.post(
+    "/v1/agent-runs/{run_id}/attempts",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_agent_attempt(
+    run_id: str,
+    payload: AgentAttemptReportIn,
+    response: Response,
+    session: Session,
+    authenticated_provider: ModelProviderIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    attempt, run, duplicate = await record_agent_attempt(
+        session,
+        run_id,
+        payload,
+        provider_id=authenticated_provider,
+        idempotency_key=idempotency_key,
+        settings=session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await agent_run_view(session, run)
+    result["attempt_id"] = attempt.id
+    result["duplicate"] = duplicate
+    return result
 
 
 @router.post("/v1/tool-invocations", status_code=status.HTTP_201_CREATED)

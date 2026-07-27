@@ -93,6 +93,17 @@ active plan/attempt，控制面关闭。至此第三阶段退出门全部通过�
 Renderer。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、`PHASE3_LATEX_RENDER.md`、
 `DEPLOYMENT.md` 第 17–18 节、ADR 0013 与 ADR 0014。
 
+Phase 4 已于 2026-07-26 完成生产签署：RenderDocument 1.3、能力规划、artifact
+溯源、Nekro 0.9.0 Markdown 入口、Lily 0.6.0 逐命令回滚和四条兼容路径终态回执均已
+验收，61 小时稳定窗口结束后生产回落 `ledger_only`。
+
+Phase 5a 的首个实现切片现位于 `codex/phase5-agent-runtime`：`0020_agent_runs`
+提供不可变模型 profile、AgentRun/event/attempt/proposal 账本，有界 context recipe
+和独立模型 Provider 身份。它仍是 planner-only shadow，默认 `off`，数据库把工具
+调用和 delivery 固定为 0，且不开放 `caller=agent`。实施权威见
+`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；此状态不代表默认禁用部署、
+双库全量回归、shadow canary、稳定窗口或生产签署已经完成。
+
 ## Sequencing rules
 
 1. A phase begins only after the previous phase's acceptance evidence exists,

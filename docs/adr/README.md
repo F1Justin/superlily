@@ -18,3 +18,6 @@
 - `0011-git-bound-rollout-plans.md`
 - `0012-confirmation-artifact-protocol.md`
 - `0013-wolfram-text-provider-boundary.md`
+- `0014-latex-artifact-provider-boundary.md`
+- `0015-agent-run-authority-boundary.md`
+- `0016-model-provider-registration.md`

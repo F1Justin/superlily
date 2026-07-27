@@ -169,6 +169,7 @@ class Settings:
     admin_token: str = ""
     ingest_tokens: dict[str, str] = field(default_factory=dict)
     provider_tokens: dict[str, str] = field(default_factory=dict)
+    model_provider_tokens: dict[str, str] = field(default_factory=dict, repr=False)
     stale_after_seconds: int = 90
     correlation_window_seconds: int = 2
     raw_enabled: bool = False
@@ -193,6 +194,10 @@ class Settings:
     render_timeout_seconds: int = 30
     render_artifact_ttl_seconds: int = 3_600
     render_delivery_intent_seconds: int = 60
+    agent_mode: str = "off"
+    agent_context_window_messages: int = 12
+    agent_context_message_chars: int = 4_096
+    agent_context_retention_seconds: int = 2_592_000
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
@@ -215,10 +220,15 @@ class Settings:
     def __post_init__(self) -> None:
         active_ingest_tokens = [token for token in self.ingest_tokens.values() if token]
         active_provider_tokens = [token for token in self.provider_tokens.values() if token]
+        active_model_provider_tokens = [
+            token for token in self.model_provider_tokens.values() if token
+        ]
         if len(active_ingest_tokens) != len(set(active_ingest_tokens)):
             raise ValueError("ingest tokens must be unique per instance")
         if len(active_provider_tokens) != len(set(active_provider_tokens)):
             raise ValueError("provider tokens must be unique per provider")
+        if len(active_model_provider_tokens) != len(set(active_model_provider_tokens)):
+            raise ValueError("model provider tokens must be unique per provider")
         if self.admin_token and self.admin_token in active_ingest_tokens:
             raise ValueError("admin and ingest tokens must be unrelated")
         all_bot_admin_tokens = set(active_ingest_tokens)
@@ -226,6 +236,11 @@ class Settings:
             all_bot_admin_tokens.add(self.admin_token)
         if set(active_provider_tokens) & all_bot_admin_tokens:
             raise ValueError("provider, admin, and ingest tokens must be unrelated")
+        all_existing_tokens = all_bot_admin_tokens | set(active_provider_tokens)
+        if set(active_model_provider_tokens) & all_existing_tokens:
+            raise ValueError(
+                "model provider, tool provider, admin, and ingest tokens must be unrelated"
+            )
         if not 1 <= self.stale_after_seconds <= 86_400:
             raise ValueError("stale_after_seconds must be between 1 and 86400")
         if not 0 <= self.correlation_window_seconds <= 60:
@@ -295,6 +310,18 @@ class Settings:
             raise ValueError("render_artifact_ttl_seconds must be between 300 and 86400")
         if not 10 <= self.render_delivery_intent_seconds <= 300:
             raise ValueError("render_delivery_intent_seconds must be between 10 and 300")
+        if self.agent_mode not in {"off", "shadow"}:
+            raise ValueError("agent_mode must be off or shadow")
+        if self.agent_mode == "shadow" and not active_model_provider_tokens:
+            raise ValueError("agent shadow mode requires at least one model provider token")
+        if not 1 <= self.agent_context_window_messages <= 32:
+            raise ValueError("agent_context_window_messages must be between 1 and 32")
+        if not 256 <= self.agent_context_message_chars <= 8_192:
+            raise ValueError("agent_context_message_chars must be between 256 and 8192")
+        if not 0 <= self.agent_context_retention_seconds <= 31_536_000:
+            raise ValueError(
+                "agent_context_retention_seconds must be between 0 and 31536000"
+            )
         if any(
             not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
             or "/" in host
@@ -367,6 +394,10 @@ class Settings:
             os.getenv("SUPERLILY_PROVIDER_TOKENS_JSON", "{}"),
             variable="SUPERLILY_PROVIDER_TOKENS_JSON",
         )
+        model_provider_tokens = _token_map(
+            os.getenv("SUPERLILY_MODEL_PROVIDER_TOKENS_JSON", "{}"),
+            variable="SUPERLILY_MODEL_PROVIDER_TOKENS_JSON",
+        )
         claim_mode = os.getenv("SUPERLILY_CLAIM_MODE", "off").strip().lower()
         if claim_mode not in {"off", "shadow", "canary", "enforce"}:
             raise ValueError("SUPERLILY_CLAIM_MODE must be off, shadow, canary, or enforce")
@@ -383,6 +414,7 @@ class Settings:
             admin_token=os.getenv("SUPERLILY_ADMIN_TOKEN", ""),
             ingest_tokens=tokens,
             provider_tokens=provider_tokens,
+            model_provider_tokens=model_provider_tokens,
             stale_after_seconds=int(os.getenv("SUPERLILY_STALE_AFTER_SECONDS", "90")),
             correlation_window_seconds=int(os.getenv("SUPERLILY_CORRELATION_WINDOW_SECONDS", "2")),
             raw_enabled=_as_bool(os.getenv("SUPERLILY_RAW_ENABLED")),
@@ -433,6 +465,16 @@ class Settings:
             ),
             render_delivery_intent_seconds=int(
                 os.getenv("SUPERLILY_RENDER_DELIVERY_INTENT_SECONDS", "60")
+            ),
+            agent_mode=os.getenv("SUPERLILY_AGENT_MODE", "off").strip().lower(),
+            agent_context_window_messages=int(
+                os.getenv("SUPERLILY_AGENT_CONTEXT_WINDOW_MESSAGES", "12")
+            ),
+            agent_context_message_chars=int(
+                os.getenv("SUPERLILY_AGENT_CONTEXT_MESSAGE_CHARS", "4096")
+            ),
+            agent_context_retention_seconds=int(
+                os.getenv("SUPERLILY_AGENT_CONTEXT_RETENTION_SECONDS", "2592000")
             ),
             control_operators=_control_operators(
                 os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),

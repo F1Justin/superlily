@@ -31,6 +31,16 @@ def test_settings_reject_reused_authentication_tokens() -> None:
         Settings(provider_tokens={"provider-a": "same", "provider-b": "same"})
     with pytest.raises(ValueError, match="provider, admin, and ingest"):
         Settings(ingest_tokens={"lily-command": "same"}, provider_tokens={"provider-a": "same"})
+    with pytest.raises(ValueError, match="model provider tokens must be unique"):
+        Settings(model_provider_tokens={"model-a": "same", "model-b": "same"})
+    with pytest.raises(
+        ValueError,
+        match="model provider, tool provider, admin, and ingest",
+    ):
+        Settings(
+            provider_tokens={"provider-a": "same"},
+            model_provider_tokens={"model-a": "same"},
+        )
 
 
 def test_settings_reject_empty_environment_token(monkeypatch) -> None:
@@ -52,6 +62,24 @@ def test_provider_tokens_and_freshness_load_from_separate_environment(monkeypatc
     assert settings.provider_tokens == {"provider-status-primary": "provider-only-secret"}
     assert settings.provider_inventory_stale_seconds == 321
     assert settings.provider_heartbeat_stale_seconds == 45
+
+
+def test_agent_shadow_requires_an_independent_model_provider_token(monkeypatch) -> None:
+    monkeypatch.setenv("SUPERLILY_AGENT_MODE", "shadow")
+    with pytest.raises(ValueError, match="requires at least one model provider token"):
+        Settings.from_env()
+
+    monkeypatch.setenv(
+        "SUPERLILY_MODEL_PROVIDER_TOKENS_JSON",
+        '{"provider-model-shadow":"model-only-secret"}',
+    )
+    settings = Settings.from_env()
+
+    assert settings.agent_mode == "shadow"
+    assert settings.model_provider_tokens == {
+        "provider-model-shadow": "model-only-secret"
+    }
+    assert settings.agent_context_window_messages == 12
 
 
 def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> None:

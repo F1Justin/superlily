@@ -46,6 +46,18 @@ async def provider_identity(
     raise _unauthorized()
 
 
+async def model_provider_identity(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise _unauthorized()
+    for provider_id, expected in request.app.state.settings.model_provider_tokens.items():
+        if expected and secrets.compare_digest(credentials.credentials, expected):
+            return provider_id
+    raise _unauthorized()
+
+
 async def invocation_identity(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),

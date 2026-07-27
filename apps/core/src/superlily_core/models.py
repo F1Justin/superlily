@@ -1824,6 +1824,280 @@ class ControlPlanePreview(Base):
     )
 
 
+class AgentModelProfileRecord(Base):
+    """Immutable reviewed model-provider data-handling authority."""
+
+    __tablename__ = "agent_model_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    profile_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    profile_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    source_commit: Mapped[str] = mapped_column(String(40), nullable=False)
+    bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(128), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "version",
+            name="uq_agent_model_profile_version",
+        ),
+        UniqueConstraint("profile_hash", name="uq_agent_model_profile_hash"),
+        Index("ix_agent_model_profiles_provider", "provider_id", "version"),
+    )
+
+
+class AgentRun(Base):
+    """One bounded planner-only response attempt with zero execution authority."""
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    creator_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    creator_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str] = mapped_column(
+        ForeignKey("source_events.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    principal_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    principal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    context_recipe_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    eligible_tools_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    eligible_tools_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    budget_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    budget_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_model_profiles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    model_profile_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    model_profile_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_invocation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    delivery_intent_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "creator_type",
+            "creator_id",
+            "idempotency_key",
+            name="uq_agent_run_idempotency",
+        ),
+        CheckConstraint(
+            "creator_type IN ('admin_api', 'system')",
+            name="ck_agent_run_creator_type",
+        ),
+        CheckConstraint("mode = 'shadow'", name="ck_agent_run_mode"),
+        CheckConstraint(
+            "state IN ('context_ready', 'model_running', 'shadow_complete', "
+            "'rejected', 'failed', 'timed_out', 'budget_exhausted', 'cancelled')",
+            name="ck_agent_run_state",
+        ),
+        CheckConstraint("resource_version >= 1", name="ck_agent_run_resource_version"),
+        CheckConstraint("attempt_count >= 0", name="ck_agent_run_attempt_count"),
+        CheckConstraint(
+            "tool_invocation_count = 0",
+            name="ck_agent_run_zero_tool_execution",
+        ),
+        CheckConstraint(
+            "delivery_intent_count = 0",
+            name="ck_agent_run_zero_delivery",
+        ),
+        CheckConstraint(
+            "((state IN ('shadow_complete', 'rejected', 'failed', 'timed_out', "
+            "'budget_exhausted', 'cancelled') AND terminal_at IS NOT NULL) OR "
+            "(state IN ('context_ready', 'model_running') AND terminal_at IS NULL))",
+            name="ck_agent_run_terminal",
+        ),
+        Index("ix_agent_runs_source_created", "source_event_id", "created_at"),
+        Index("ix_agent_runs_state_deadline", "state", "deadline_at"),
+        Index("ix_agent_runs_model_profile", "model_profile_id", "created_at"),
+    )
+
+
+class AgentRunEvent(Base):
+    __tablename__ = "agent_run_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_run_event_sequence"),
+        CheckConstraint("sequence >= 1", name="ck_agent_run_event_sequence"),
+        CheckConstraint(
+            "event IN ('context_ready', 'model_start', 'model_retry', "
+            "'shadow_complete', 'reject', 'fail', 'timeout', "
+            "'budget_exhaust', 'cancel')",
+            name="ck_agent_run_event_type",
+        ),
+        CheckConstraint(
+            "state IN ('context_ready', 'model_running', 'shadow_complete', "
+            "'rejected', 'failed', 'timed_out', 'budget_exhausted', 'cancelled')",
+            name="ck_agent_run_event_state",
+        ),
+        CheckConstraint(
+            "actor_type IN ('admin_api', 'model_provider', 'system')",
+            name="ck_agent_run_event_actor",
+        ),
+        Index("ix_agent_run_events_created", "run_id", "created_at"),
+    )
+
+
+class AgentRunAttempt(Base):
+    """Terminal model-attempt evidence; retries insert another row."""
+
+    __tablename__ = "agent_run_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_profile_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_request_id: Mapped[str | None] = mapped_column(String(256))
+    raw_output_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposal_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True)
+    )
+    proposal_hash: Mapped[str | None] = mapped_column(String(64))
+    usage_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    usage_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    safe_error_code: Mapped[str | None] = mapped_column(String(128))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "attempt_number",
+            name="uq_agent_run_attempt_number",
+        ),
+        UniqueConstraint(
+            "provider_id",
+            "idempotency_key",
+            name="uq_agent_run_attempt_idempotency",
+        ),
+        CheckConstraint("attempt_number >= 1", name="ck_agent_run_attempt_number"),
+        CheckConstraint(
+            "outcome IN ('succeeded', 'provider_error', 'invalid_output', "
+            "'timed_out', 'cancelled')",
+            name="ck_agent_run_attempt_outcome",
+        ),
+        CheckConstraint(
+            "completed_at >= started_at",
+            name="ck_agent_run_attempt_time",
+        ),
+        CheckConstraint(
+            "((outcome = 'succeeded' AND proposal_json IS NOT NULL "
+            "AND proposal_hash IS NOT NULL AND safe_error_code IS NULL) OR "
+            "(outcome <> 'succeeded' AND proposal_json IS NULL "
+            "AND proposal_hash IS NULL AND safe_error_code IS NOT NULL))",
+            name="ck_agent_run_attempt_result",
+        ),
+        Index("ix_agent_run_attempts_run_created", "run_id", "created_at"),
+    )
+
+
+class AgentToolProposalRecord(Base):
+    __tablename__ = "agent_tool_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_run_attempts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    arguments_json: Mapped[Any] = mapped_column(JSON, nullable=False)
+    arguments_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    proposal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    validation: Mapped[str] = mapped_column(String(32), nullable=False)
+    validation_reasons_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id",
+            "ordinal",
+            name="uq_agent_tool_proposal_ordinal",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_agent_tool_proposal_ordinal"),
+        CheckConstraint(
+            "validation IN ('valid', 'invalid_arguments', "
+            "'forbidden_tool', 'duplicate_loop')",
+            name="ck_agent_tool_proposal_validation",
+        ),
+        Index("ix_agent_tool_proposals_run_created", "run_id", "created_at"),
+        Index("ix_agent_tool_proposals_tool", "tool_id", "descriptor_version"),
+    )
+
+
 _CONFIRMATION_SQLITE_AUTHORITY_UPDATE = DDL(
     """
     CREATE TRIGGER tool_confirmations_authority_no_update
@@ -3196,3 +3470,227 @@ event.listen(
     ).execute_if(dialect="postgresql"),
 )
 event.listen(RenderDeliveryAttempt.__table__, "after_drop", _RENDER_DELIVERY_POSTGRES_DROP)
+
+
+_AGENT_EVIDENCE_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION reject_agent_evidence_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'agent evidence is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_AGENT_EVIDENCE_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS reject_agent_evidence_mutation()"
+).execute_if(dialect="postgresql")
+
+
+def _install_agent_append_only_triggers(table) -> None:
+    name = table.name
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_update
+            BEFORE UPDATE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'agent evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_delete
+            BEFORE DELETE ON {name}
+            BEGIN
+                SELECT RAISE(ABORT, 'agent evidence is append-only');
+            END
+            """
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            f"""
+            CREATE TRIGGER {name}_no_mutation
+            BEFORE UPDATE OR DELETE ON {name}
+            FOR EACH ROW EXECUTE FUNCTION reject_agent_evidence_mutation()
+            """
+        ).execute_if(dialect="postgresql"),
+    )
+
+
+event.listen(
+    AgentModelProfileRecord.__table__,
+    "after_create",
+    _AGENT_EVIDENCE_POSTGRES_FUNCTION,
+)
+for _agent_evidence_table in (
+    AgentModelProfileRecord.__table__,
+    AgentRunEvent.__table__,
+    AgentRunAttempt.__table__,
+    AgentToolProposalRecord.__table__,
+):
+    _install_agent_append_only_triggers(_agent_evidence_table)
+event.listen(
+    AgentModelProfileRecord.__table__,
+    "after_drop",
+    _AGENT_EVIDENCE_POSTGRES_DROP,
+)
+
+
+_AGENT_RUN_SQLITE_AUTHORITY_UPDATE = DDL(
+    """
+    CREATE TRIGGER agent_runs_authority_no_update
+    BEFORE UPDATE OF creator_type, creator_id, idempotency_key, request_hash,
+        source_event_id, conversation_key, principal_snapshot_json, principal_hash,
+        context_snapshot_json, context_recipe_version, context_hash,
+        eligible_tools_json, eligible_tools_hash,
+        budget_snapshot_json, budget_hash, model_profile_id,
+        model_profile_snapshot_json, model_profile_hash, mode,
+        tool_invocation_count, delivery_intent_count, deadline_at, created_at
+    ON agent_runs
+    BEGIN
+        SELECT RAISE(ABORT, 'agent run authority is immutable');
+    END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_RUN_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER agent_runs_no_delete
+    BEFORE DELETE ON agent_runs
+    BEGIN
+        SELECT RAISE(ABORT, 'agent run evidence cannot be deleted');
+    END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_RUN_SQLITE_STATE_GUARD = DDL(
+    """
+    CREATE TRIGGER agent_runs_state_guard
+    BEFORE UPDATE OF state, resource_version, attempt_count, reason_code,
+        terminal_at, updated_at
+    ON agent_runs
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'agent run resource version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.state = 'context_ready' AND NEW.state = 'model_running') OR
+            (OLD.state = 'model_running' AND NEW.state = 'context_ready') OR
+            (OLD.state = 'model_running' AND NEW.state = 'shadow_complete') OR
+            (OLD.state = 'model_running' AND NEW.state = 'failed') OR
+            (OLD.state = 'model_running' AND NEW.state = 'timed_out') OR
+            (OLD.state = 'model_running' AND NEW.state = 'budget_exhausted') OR
+            (OLD.state = 'model_running' AND NEW.state = 'cancelled')
+        ) THEN RAISE(ABORT, 'agent run state transition is not allowed') END;
+        SELECT CASE WHEN (
+            OLD.state = 'context_ready'
+            AND NEW.state = 'model_running'
+            AND NEW.attempt_count != OLD.attempt_count + 1
+        ) OR (
+            OLD.state = 'model_running'
+            AND NEW.attempt_count != OLD.attempt_count
+        ) THEN RAISE(ABORT, 'agent run attempt count is invalid') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM agent_run_events
+            WHERE run_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN RAISE(ABORT, 'agent run event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_RUN_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_agent_run_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'agent run evidence cannot be deleted';
+        END IF;
+        IF NEW.creator_type IS DISTINCT FROM OLD.creator_type
+           OR NEW.creator_id IS DISTINCT FROM OLD.creator_id
+           OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+           OR NEW.request_hash IS DISTINCT FROM OLD.request_hash
+           OR NEW.source_event_id IS DISTINCT FROM OLD.source_event_id
+           OR NEW.conversation_key IS DISTINCT FROM OLD.conversation_key
+           OR NEW.principal_snapshot_json::text IS DISTINCT FROM OLD.principal_snapshot_json::text
+           OR NEW.principal_hash IS DISTINCT FROM OLD.principal_hash
+           OR NEW.context_snapshot_json::text IS DISTINCT FROM OLD.context_snapshot_json::text
+           OR NEW.context_recipe_version IS DISTINCT FROM OLD.context_recipe_version
+           OR NEW.context_hash IS DISTINCT FROM OLD.context_hash
+           OR NEW.eligible_tools_json::text IS DISTINCT FROM OLD.eligible_tools_json::text
+           OR NEW.eligible_tools_hash IS DISTINCT FROM OLD.eligible_tools_hash
+           OR NEW.budget_snapshot_json::text IS DISTINCT FROM OLD.budget_snapshot_json::text
+           OR NEW.budget_hash IS DISTINCT FROM OLD.budget_hash
+           OR NEW.model_profile_id IS DISTINCT FROM OLD.model_profile_id
+           OR NEW.model_profile_snapshot_json::text IS DISTINCT FROM OLD.model_profile_snapshot_json::text
+           OR NEW.model_profile_hash IS DISTINCT FROM OLD.model_profile_hash
+           OR NEW.mode IS DISTINCT FROM OLD.mode
+           OR NEW.tool_invocation_count IS DISTINCT FROM OLD.tool_invocation_count
+           OR NEW.delivery_intent_count IS DISTINCT FROM OLD.delivery_intent_count
+           OR NEW.deadline_at IS DISTINCT FROM OLD.deadline_at
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'agent run authority is immutable';
+        END IF;
+        IF NEW.resource_version != OLD.resource_version + 1 THEN
+            RAISE EXCEPTION 'agent run resource version must increase by one';
+        END IF;
+        IF NOT (
+            (OLD.state = 'context_ready' AND NEW.state = 'model_running') OR
+            (OLD.state = 'model_running' AND NEW.state IN (
+                'context_ready', 'shadow_complete', 'failed', 'timed_out',
+                'budget_exhausted', 'cancelled'
+            ))
+        ) THEN
+            RAISE EXCEPTION 'agent run state transition is not allowed';
+        END IF;
+        IF (OLD.state = 'context_ready'
+            AND NEW.state = 'model_running'
+            AND NEW.attempt_count != OLD.attempt_count + 1)
+           OR (OLD.state = 'model_running'
+               AND NEW.attempt_count != OLD.attempt_count) THEN
+            RAISE EXCEPTION 'agent run attempt count is invalid';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM agent_run_events
+            WHERE run_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN
+            RAISE EXCEPTION 'agent run event is required';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_AGENT_RUN_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER agent_runs_guard
+    BEFORE UPDATE OR DELETE ON agent_runs
+    FOR EACH ROW EXECUTE FUNCTION guard_agent_run_mutation()
+    """
+).execute_if(dialect="postgresql")
+_AGENT_RUN_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_agent_run_mutation()"
+).execute_if(dialect="postgresql")
+
+for _agent_run_guard in (
+    _AGENT_RUN_SQLITE_AUTHORITY_UPDATE,
+    _AGENT_RUN_SQLITE_DELETE,
+    _AGENT_RUN_SQLITE_STATE_GUARD,
+    _AGENT_RUN_POSTGRES_FUNCTION,
+    _AGENT_RUN_POSTGRES_TRIGGER,
+):
+    event.listen(AgentRun.__table__, "after_create", _agent_run_guard)
+event.listen(AgentRun.__table__, "after_drop", _AGENT_RUN_POSTGRES_DROP)
