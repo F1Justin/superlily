@@ -1060,7 +1060,10 @@ class ToolRolloutPlanItemRecord(Base):
             "caller",
             name="uq_tool_rollout_plan_execution_target",
         ),
-        CheckConstraint("caller IN ('command', 'admin_api')", name="ck_rollout_item_caller"),
+        CheckConstraint(
+            "caller IN ('command', 'agent', 'admin_api')",
+            name="ck_rollout_item_caller",
+        ),
         CheckConstraint(
             "expected_descriptor_resource_version >= 1",
             name="ck_rollout_item_descriptor_version",
@@ -1172,7 +1175,7 @@ class ToolInvocation(Base):
             name="uq_tool_invocation_idempotency",
         ),
         CheckConstraint(
-            "creator_type IN ('command', 'admin_api')",
+            "creator_type IN ('command', 'agent', 'admin_api')",
             name="ck_tool_invocation_creator_type",
         ),
         CheckConstraint(
@@ -1249,7 +1252,7 @@ class ToolInvocationTransition(Base):
             name="ck_tool_invocation_transition_state",
         ),
         CheckConstraint(
-            "actor_type IN ('command', 'admin_api', 'provider', 'reaper', 'system')",
+            "actor_type IN ('command', 'agent', 'admin_api', 'provider', 'reaper', 'system')",
             name="ck_tool_invocation_transition_actor",
         ),
         CheckConstraint(
@@ -2095,6 +2098,125 @@ class AgentToolProposalRecord(Base):
         ),
         Index("ix_agent_tool_proposals_run_created", "run_id", "created_at"),
         Index("ix_agent_tool_proposals_tool", "tool_id", "descriptor_version"),
+    )
+
+
+class AgentToolLoop(Base):
+    """One explicitly promoted Phase 5b proposal and its bounded continuation."""
+
+    __tablename__ = "agent_tool_loops"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    proposal_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tool_proposals.id", ondelete="RESTRICT"), nullable=False
+    )
+    invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    result_json: Mapped[Any | None] = mapped_column(JSON(none_as_null=True))
+    result_hash: Mapped[str | None] = mapped_column(String(64))
+    result_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_agent_tool_loop_run"),
+        UniqueConstraint("proposal_id", name="uq_agent_tool_loop_proposal"),
+        UniqueConstraint("invocation_id", name="uq_agent_tool_loop_invocation"),
+        CheckConstraint(
+            "state IN ('tool_pending', 'result_ready', 'complete', 'failed', "
+            "'budget_exhausted')",
+            name="ck_agent_tool_loop_state",
+        ),
+        CheckConstraint("resource_version >= 1", name="ck_agent_tool_loop_version"),
+        CheckConstraint("result_bytes >= 0", name="ck_agent_tool_loop_result_bytes"),
+        CheckConstraint(
+            "((state = 'result_ready' AND result_json IS NOT NULL "
+            "AND result_hash IS NOT NULL AND terminal_at IS NULL) OR "
+            "(state IN ('complete', 'failed', 'budget_exhausted') "
+            "AND terminal_at IS NOT NULL) OR "
+            "(state = 'tool_pending' AND result_json IS NULL "
+            "AND result_hash IS NULL AND terminal_at IS NULL))",
+            name="ck_agent_tool_loop_result_state",
+        ),
+        Index("ix_agent_tool_loops_state", "state", "updated_at"),
+    )
+
+
+class AgentToolLoopEvent(Base):
+    __tablename__ = "agent_tool_loop_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    loop_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("loop_id", "sequence", name="uq_agent_tool_loop_event"),
+        CheckConstraint("sequence >= 1", name="ck_agent_tool_loop_event_sequence"),
+    )
+
+
+class AgentToolContinuation(Base):
+    __tablename__ = "agent_tool_continuations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    loop_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "loop_id",
+            "attempt_number",
+            name="uq_agent_tool_continuation_attempt",
+        ),
+        UniqueConstraint(
+            "provider_id",
+            "idempotency_key",
+            name="uq_agent_tool_continuation_idempotency",
+        ),
+        CheckConstraint(
+            "attempt_number >= 1",
+            name="ck_agent_tool_continuation_attempt",
+        ),
     )
 
 

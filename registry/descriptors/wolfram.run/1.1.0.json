@@ -1,0 +1,97 @@
+{
+  "tool_id": "wolfram.run",
+  "version": "1.1.0",
+  "title": "Run a bounded Wolfram Language expression",
+  "description": "Evaluate one exact Wolfram Language expression in the existing persistent network-isolated worker and return a bounded text result. This version accepts Git-gated AgentRun proposals and rejects image, audio, remote-fetch and platform-send outputs.",
+  "provider_selector": {
+    "provider_ids": [
+      "provider-wolfram-primary"
+    ],
+    "protocol": "superlily-provider-pull-v1"
+  },
+  "source_plugin": "superlily_wolfram_provider.runtime",
+  "schema_profile": "json-schema-2020-12-superlily-v1",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "expression": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "required": [
+      "expression"
+    ],
+    "additionalProperties": false,
+    "minProperties": 1,
+    "maxProperties": 1
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "minLength": 4,
+        "maxLength": 4,
+        "const": "text"
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "required": [
+      "kind",
+      "text"
+    ],
+    "additionalProperties": false,
+    "minProperties": 2,
+    "maxProperties": 2
+  },
+  "side_effect": "compute",
+  "determinism": "may_vary",
+  "retry_policy": "no_automatic_retry",
+  "permission": "public",
+  "confirmation": "never",
+  "allowed_callers": [
+    "command",
+    "agent",
+    "admin_api"
+  ],
+  "natural_language": true,
+  "timeout_ms": 60000,
+  "concurrency_limit": 1,
+  "rate_limit": {
+    "requests": 5,
+    "window_seconds": 60,
+    "scope": "sender"
+  },
+  "resource_budget": {
+    "cpu_ms": null,
+    "memory_bytes": 4294967296,
+    "input_bytes": 32768,
+    "output_bytes": 16384,
+    "artifact_bytes": null
+  },
+  "required_budget_enforcement": [
+    "wall_time",
+    "memory",
+    "input_bytes",
+    "output_bytes"
+  ],
+  "execution_permissions": {
+    "network": "deny",
+    "filesystem": "sandbox_only",
+    "subprocess": "sandbox_only",
+    "secrets": [],
+    "remote_fetch": "deny",
+    "artifacts": []
+  },
+  "required_capabilities": [],
+  "data_classification": "conversation",
+  "result_retention_seconds": 2592000
+}

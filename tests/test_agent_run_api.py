@@ -62,7 +62,8 @@ def profile() -> ModelProviderProfile:
         permitted_data_classifications=["conversation"],
         pricing={
             "currency": "USD",
-            "input_microunits_per_million_tokens": 1_000_000,
+            "input_cache_hit_microunits_per_million_tokens": 1_000_000,
+            "input_cache_miss_microunits_per_million_tokens": 1_000_000,
             "output_microunits_per_million_tokens": 1_000_000,
         },
         health_protocol="superlily-model-provider-v1",
@@ -162,6 +163,8 @@ def successful_attempt(*, tool_count: int = 1) -> dict:
         "raw_output_sha256": "b" * 64,
         "usage": {
             "input_tokens": 10,
+            "input_cache_hit_tokens": 0,
+            "input_cache_miss_tokens": 10,
             "output_tokens": 5,
             "total_tokens": 15,
             "cost_microunits": 15,
@@ -283,6 +286,8 @@ async def test_failed_model_attempt_can_retry_but_never_execute(client, app) -> 
         "raw_output_sha256": "c" * 64,
         "usage": {
             "input_tokens": 4,
+            "input_cache_hit_tokens": 0,
+            "input_cache_miss_tokens": 4,
             "output_tokens": 1,
             "total_tokens": 5,
             "cost_microunits": 5,

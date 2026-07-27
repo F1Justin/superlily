@@ -11,8 +11,13 @@ import sys
 
 from fastapi import HTTPException
 
-from superlily_contracts import ProviderRegistration, strict_json_loads
+from superlily_contracts import (
+    ModelProviderProfile,
+    ProviderRegistration,
+    strict_json_loads,
+)
 
+from .agent_run_service import import_model_profile
 from .database import Database
 from .rollout_service import import_tool_rollout_plan
 from .settings import Settings
@@ -39,6 +44,15 @@ def _parser() -> argparse.ArgumentParser:
     rollout.add_argument("--source-commit", required=True)
     rollout.add_argument("--bundle-hash", required=True)
     rollout.add_argument("--reviewer", required=True)
+    model_profile = subparsers.add_parser(
+        "import-model-profile",
+        help="import one Git-bound reviewed model provider profile",
+    )
+    model_profile.add_argument("path", type=Path)
+    model_profile.add_argument("--repository", type=Path, default=Path.cwd())
+    model_profile.add_argument("--source-commit", required=True)
+    model_profile.add_argument("--bundle-hash", required=True)
+    model_profile.add_argument("--reviewer", required=True)
     provider = subparsers.add_parser(
         "register-provider", help="register one provider bound to an environment credential"
     )
@@ -110,6 +124,29 @@ async def _run(args: argparse.Namespace) -> dict:
                     "plan_hash": record.plan_hash,
                     "plan_id": record.plan_id,
                     "version": record.version,
+                }
+            if args.command == "import-model-profile":
+                source = strict_json_loads(
+                    _git_authority_source(
+                        args.repository,
+                        args.source_commit,
+                        args.path,
+                    )
+                )
+                profile = ModelProviderProfile.model_validate(source)
+                record, duplicate = await import_model_profile(
+                    session,
+                    profile,
+                    source_commit=args.source_commit,
+                    bundle_hash=args.bundle_hash,
+                    reviewer=args.reviewer,
+                )
+                return {
+                    "duplicate": duplicate,
+                    "profile_hash": record.profile_hash,
+                    "provider_id": record.provider_id,
+                    "version": record.version,
+                    "agent_mode": settings.agent_mode,
                 }
             source = strict_json_loads(args.path.read_bytes())
             registration = ProviderRegistration.model_validate(source)

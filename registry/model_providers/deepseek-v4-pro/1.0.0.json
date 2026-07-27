@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "provider_id": "deepseek-v4-pro",
+  "version": "1.0.0",
+  "title": "DeepSeek V4 Pro planner",
+  "data_locality": "regional",
+  "retention_seconds": null,
+  "structured_output_protocol": "json_object",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 384000,
+  "permitted_data_classifications": [
+    "public",
+    "conversation"
+  ],
+  "pricing": {
+    "currency": "USD",
+    "input_cache_hit_microunits_per_million_tokens": 3625,
+    "input_cache_miss_microunits_per_million_tokens": 435000,
+    "output_microunits_per_million_tokens": 870000
+  },
+  "health_protocol": "superlily-model-provider-v1"
+}

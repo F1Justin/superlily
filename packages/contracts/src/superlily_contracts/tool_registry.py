@@ -510,8 +510,19 @@ class ToolDescriptor(AuthorityModel):
     def validate_phase_three_authority(self) -> "ToolDescriptor":
         validate_schema_profile(self.input_schema)
         validate_schema_profile(self.output_schema)
-        if self.natural_language or "agent" in self.allowed_callers:
-            raise ValueError("natural-language and agent callers remain disabled in Phase 3")
+        agent_allowed = "agent" in self.allowed_callers
+        if self.natural_language != agent_allowed:
+            raise ValueError(
+                "natural_language and the agent caller must be enabled together"
+            )
+        if agent_allowed and (
+            self.side_effect not in {"none", "read", "compute"}
+            or self.permission != "public"
+            or self.confirmation != "never"
+        ):
+            raise ValueError(
+                "agent callers are limited to public, unconfirmed, non-writing tools"
+            )
         if self.side_effect in {"write", "admin", "external_message"} and self.confirmation == "never":
             raise ValueError("state-changing tools require confirmation")
         if self.side_effect in {"write", "admin", "external_message"} and self.retry_policy == "retry_safe":

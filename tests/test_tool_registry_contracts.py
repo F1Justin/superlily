@@ -117,7 +117,7 @@ def test_strict_json_rejects_ambiguous_or_noncanonical_input(source: bytes) -> N
         canonicalize_json(source)
 
 
-def test_descriptor_rejects_extra_authority_and_agent_callers() -> None:
+def test_descriptor_rejects_extra_authority_and_unsafe_agent_callers() -> None:
     payload = _descriptor_payload()
     payload["unexpected"] = True
     with pytest.raises(ToolRegistryContractError):
@@ -126,6 +126,13 @@ def test_descriptor_rejects_extra_authority_and_agent_callers() -> None:
     payload = _descriptor_payload()
     payload["allowed_callers"] = ["agent"]
     payload["natural_language"] = True
+    payload["side_effect"] = "write"
+    payload["confirmation"] = "always"
+    with pytest.raises(ToolRegistryContractError):
+        load_tool_descriptor(json.dumps(payload).encode())
+
+    payload = _descriptor_payload()
+    payload["allowed_callers"] = ["agent"]
     with pytest.raises(ToolRegistryContractError):
         load_tool_descriptor(json.dumps(payload).encode())
 

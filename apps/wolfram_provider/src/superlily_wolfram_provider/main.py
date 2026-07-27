@@ -158,11 +158,10 @@ class WolframExecutor:
         descriptor = self.loaded.descriptor
         if (
             descriptor.tool_id != TOOL_ID
-            or descriptor.version != DESCRIPTOR_VERSION
+            or descriptor.version not in {DESCRIPTOR_VERSION, "1.1.0"}
             or descriptor.source_plugin != "superlily_wolfram_provider.runtime"
             or PROVIDER_ID not in descriptor.provider_selector.provider_ids
             or descriptor.retry_policy != "no_automatic_retry"
-            or descriptor.natural_language
             or descriptor.execution_permissions.network != "deny"
             or descriptor.execution_permissions.filesystem != "sandbox_only"
             or descriptor.execution_permissions.subprocess != "sandbox_only"
@@ -170,6 +169,14 @@ class WolframExecutor:
             or descriptor.execution_permissions.artifacts
         ):
             raise ValueError("wolfram descriptor is not bound to the text-only sandbox")
+        if descriptor.version == DESCRIPTOR_VERSION and (
+            descriptor.natural_language or "agent" in descriptor.allowed_callers
+        ):
+            raise ValueError("legacy wolfram descriptor cannot accept agent callers")
+        if descriptor.version == "1.1.0" and (
+            not descriptor.natural_language or "agent" not in descriptor.allowed_callers
+        ):
+            raise ValueError("Phase 5 wolfram descriptor must bind the agent caller")
         self.worker_identity_hash = worker_identity_hash
         self.implementation_hash = wolfram_implementation_hash(worker_identity_hash)
         self.worker = WolframWorkerClient(

@@ -34,7 +34,8 @@ def model_profile() -> ModelProviderProfile:
         permitted_data_classifications=["public", "conversation"],
         pricing=ModelPricing(
             currency="USD",
-            input_microunits_per_million_tokens=1_000_000,
+            input_cache_hit_microunits_per_million_tokens=100_000,
+            input_cache_miss_microunits_per_million_tokens=1_000_000,
             output_microunits_per_million_tokens=2_000_000,
         ),
         health_protocol="superlily-model-provider-v1",
@@ -83,7 +84,7 @@ def test_model_profile_and_run_request_have_stable_content_identity() -> None:
     )
 
 
-def test_phase5a_budget_has_zero_execution_and_delivery_dimensions() -> None:
+def test_phase5_budget_expresses_shadow_and_one_call_execution_bounds() -> None:
     active = budget()
     assert active.max_tool_calls == 0
     assert active.max_sequential_depth == 0
@@ -91,13 +92,19 @@ def test_phase5a_budget_has_zero_execution_and_delivery_dimensions() -> None:
     assert active.max_result_bytes == 0
     assert active.max_artifact_bytes == 0
 
+    bounded = AgentBudget.model_validate(
+        {
+            **active.model_dump(),
+            "max_tool_calls": 1,
+            "max_sequential_depth": 1,
+            "max_parallel_fanout": 1,
+            "max_result_bytes": 16_384,
+        }
+    )
+    assert bounded.max_tool_calls == 1
+
     with pytest.raises(ValidationError):
-        AgentBudget.model_validate(
-            {
-                **active.model_dump(),
-                "max_tool_calls": 1,
-            }
-        )
+        AgentBudget.model_validate({**active.model_dump(), "max_result_bytes": 1})
 
 
 def test_context_binds_current_event_and_rejects_duplicate_tools() -> None:
@@ -161,6 +168,8 @@ def test_attempt_contract_separates_success_from_safe_failure() -> None:
     )
     usage = AgentUsage(
         input_tokens=10,
+        input_cache_hit_tokens=2,
+        input_cache_miss_tokens=8,
         output_tokens=5,
         total_tokens=15,
         cost_microunits=20,

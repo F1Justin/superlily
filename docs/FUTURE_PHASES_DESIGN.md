@@ -6,6 +6,9 @@ This document turns the long-range roadmap after Tool Registry into staged,
 testable work. It is design input, not authorization to start these phases.
 Production authority still advances in the order defined by `ROADMAP.md`, and
 Phase 3 implementation still waits for the final Phase 2 acceptance gate.
+这些阶段需要保持的产品行为统一记录在
+`AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`；本文负责分阶段合同和 authority
+边界，不再重复产品指导。
 
 The later phases are intentionally not a list of features to build in
 parallel. They establish replaceable boundaries in this order:
@@ -340,8 +343,9 @@ capture is opt-in and redacted.
 ### Phase 5 work packets and exit gate
 
 1. **5a:** run/context/proposal contracts and planner-only shadow.
-2. **5b:** read-only `status.inspect`, then bounded `wolfram.run` and
-   `latex.render`, one tool canary at a time.
+2. **5b:** bounded `wolfram.run` first because it proves a meaningful
+   model-tool-result loop; other independently useful read/compute tools may
+   follow one canary at a time, but `status.inspect` is not a prerequisite.
 3. **5c:** confirmation UX and simulated writes before any real write tool.
 
 If an independently accepted query tool already exists, 5b also proves that it

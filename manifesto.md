@@ -296,7 +296,7 @@ Phase 2 的签署证明了当前消息路由和 claim 基线，但不代表平�
 
 C0-A 随后负责多层合并转发、`archive_full` 正式启用、离线导出、重建、保留/删除传播和旧历史导入。它在 C0-D 稳定后可以与 Phase 3b 分别推进，不是 invocation ledger 的 correctness 前置条件。数据库之外的版本化导出及恢复重建仍是史料目标，但不能用罕见的嵌套转发极端案例长期阻塞核心工具迁移。
 
-C0-D/C0-A 属于 Phase 1/2 观察基础的完整性回补。Phase 2 已签署结论不回滚，已部署的 Phase 3a 零权限 Registry 也不撤销；实施顺序是在 Phase 3b invocation/lease 之前先完成 C0-D，且不改变命令、Nekro 回复、claim 或工具权限。完整数据模型、此前关于快速回复、模型自主选工具、渐进式披露、Unix 原语、自然语言命令和成本感知模型路由的共识，见 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
+C0-D/C0-A 属于 Phase 1/2 观察基础的完整性回补。Phase 2 已签署结论不回滚，已部署的 Phase 3a 零权限 Registry 也不撤销；实施顺序是在 Phase 3b invocation/lease 之前先完成 C0-D，且不改变命令、Nekro 回复、claim 或工具权限。采集与档案的完整数据模型见 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`；快速回复、模型自主选工具、渐进式披露、Unix 原语、自然语言命令、模型路由和输出策略见 `docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`。
 
 截至 2026-07-18 21:39 CST，C0-D1 至 C0-D5 已全部部署并签署完成：生产 Core 保持在 `0013_collection_reliability`，Lily 与 Nekro bridge 0.5.0 分别使用独立的 SQLite FULL spool，只有匹配 Core receipt 后才提交清理，并通过 heartbeat 暴露 pending、quota、quarantine、watermark、lag 与 gap。两个 spool 的目录权限为 0700，数据库、WAL 和 SHM 均为 0600；当前序号连续、pending 和 quarantine 均为零。平台/adapter 报告的 `occurred_at`、bridge 原子落盘的 `captured_at`、Core `received_at` 和数据库 `committed_at` 分开保存。对本机 NapCat 历史日志的只读审计确认，多次启动后 1–5 秒内会补投几十至两百余条事件，所以启动日志时间不能被当作可靠的历史消息发生时间，也不能单独用于去重或排序。
 

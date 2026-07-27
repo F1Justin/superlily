@@ -57,7 +57,7 @@ class ToolRolloutPlanItem(AuthorityModel):
     descriptor_version: SemVer
     descriptor_hash: Sha256
     canonical_conversation: str = Field(min_length=5, max_length=512)
-    caller: Literal["command", "admin_api"]
+    caller: Literal["command", "agent", "admin_api"]
     provider_id: str = Field(min_length=1, max_length=128)
     expected_descriptor_resource_version: int = Field(ge=1, le=2_147_483_647)
     expected_provider_resource_version: int = Field(ge=1, le=2_147_483_647)

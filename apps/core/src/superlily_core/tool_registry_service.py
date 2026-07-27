@@ -813,7 +813,7 @@ async def tool_registry_view(
             "leases_enabled": settings.tool_execution_mode == "canary"
             and not settings.tool_global_stop
             and active_rollout is not None,
-            "natural_language_callers": False,
+            "natural_language_callers": settings.agent_mode == "bounded_readonly",
             "active_rollout_plan": (
                 None
                 if active_rollout is None

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from superlily_contracts import (
     AgentAttemptReportIn,
     AgentRunCreateIn,
+    AgentToolPromotionIn,
     CommandRegistrySnapshotIn,
     DeliveryCompletionIn,
     DeliveryIntentIn,
@@ -60,6 +61,7 @@ from .models import (
     EventDecision,
     EventLink,
     EventObservation,
+    AgentToolLoop,
     IngressReceiptRecord,
     ResponseRecord,
     SourceEvent,
@@ -121,6 +123,12 @@ from .agent_run_service import (
     get_agent_run_for_admin,
     planner_input_for_provider,
     record_agent_attempt,
+)
+from .agent_tool_loop_service import (
+    agent_tool_loop_view,
+    continuation_input,
+    promote_wolfram_proposal,
+    record_continuation,
 )
 
 router = APIRouter()
@@ -1533,6 +1541,86 @@ async def post_agent_attempt(
         response.status_code = status.HTTP_200_OK
     result = await agent_run_view(session, run)
     result["attempt_id"] = attempt.id
+    result["duplicate"] = duplicate
+    return result
+
+
+@router.post(
+    "/v1/agent-runs/{run_id}/tool-loop",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def post_agent_tool_loop(
+    run_id: str,
+    payload: AgentToolPromotionIn,
+    response: Response,
+    session: Session,
+) -> dict:
+    loop, duplicate = await promote_wolfram_proposal(
+        session,
+        run_id,
+        payload,
+        session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await agent_tool_loop_view(session, loop)
+    result["duplicate"] = duplicate
+    return result
+
+
+@router.get(
+    "/v1/agent-tool-loops/{loop_id}",
+    dependencies=[Depends(require_admin)],
+)
+async def get_agent_tool_loop(loop_id: str, session: Session) -> dict:
+    loop = await session.get(AgentToolLoop, loop_id)
+    if loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agent tool loop not found",
+        )
+    return await agent_tool_loop_view(session, loop)
+
+
+@router.get("/v1/agent-tool-loops/{loop_id}/planner-input")
+async def get_agent_tool_loop_planner_input(
+    loop_id: str,
+    session: Session,
+    authenticated_provider: ModelProviderIdentity,
+) -> dict:
+    return await continuation_input(
+        session,
+        loop_id,
+        authenticated_provider,
+        session.info["settings"],
+    )
+
+
+@router.post(
+    "/v1/agent-tool-loops/{loop_id}/attempts",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_agent_tool_loop_attempt(
+    loop_id: str,
+    payload: AgentAttemptReportIn,
+    response: Response,
+    session: Session,
+    authenticated_provider: ModelProviderIdentity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    continuation, loop, duplicate = await record_continuation(
+        session,
+        loop_id,
+        payload,
+        provider_id=authenticated_provider,
+        idempotency_key=idempotency_key,
+        settings=session.info["settings"],
+    )
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = await agent_tool_loop_view(session, loop)
+    result["continuation_id"] = continuation.id
     result["duplicate"] = duplicate
     return result
 

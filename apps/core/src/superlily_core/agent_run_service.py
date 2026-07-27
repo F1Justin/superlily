@@ -410,7 +410,25 @@ async def create_agent_run(
     if identity.caller != "admin_api":
         raise _not_found()
     if settings.agent_mode != "shadow":
-        raise _conflict("agent run creation is disabled")
+        if settings.agent_mode != "bounded_readonly":
+            raise _conflict("agent run creation is disabled")
+    if settings.agent_mode == "shadow" and any(
+        (
+            payload.budget.max_tool_calls,
+            payload.budget.max_sequential_depth,
+            payload.budget.max_parallel_fanout,
+            payload.budget.max_result_bytes,
+            payload.budget.max_artifact_bytes,
+        )
+    ):
+        raise _conflict("shadow mode requires zero tool-execution budgets")
+    if settings.agent_mode == "bounded_readonly" and (
+        payload.budget.max_tool_calls > 1
+        or payload.budget.max_sequential_depth > 1
+        or payload.budget.max_parallel_fanout > 1
+        or payload.budget.max_artifact_bytes != 0
+    ):
+        raise _conflict("initial bounded-readonly mode permits one artifact-free tool call")
     request_hash = agent_run_request_hash(
         payload,
         creator_type=identity.caller,
@@ -520,15 +538,21 @@ async def create_agent_run(
 
 
 def _expected_cost(profile: ModelProviderProfile, usage: AgentUsage) -> int:
-    input_cost = (
-        usage.input_tokens * profile.pricing.input_microunits_per_million_tokens
+    cache_hit_cost = (
+        usage.input_cache_hit_tokens
+        * profile.pricing.input_cache_hit_microunits_per_million_tokens
+        + 999_999
+    ) // 1_000_000
+    cache_miss_cost = (
+        usage.input_cache_miss_tokens
+        * profile.pricing.input_cache_miss_microunits_per_million_tokens
         + 999_999
     ) // 1_000_000
     output_cost = (
         usage.output_tokens * profile.pricing.output_microunits_per_million_tokens
         + 999_999
     ) // 1_000_000
-    return input_cost + output_cost
+    return cache_hit_cost + cache_miss_cost + output_cost
 
 
 async def _transition(
@@ -612,7 +636,7 @@ async def record_agent_attempt(
         if run is None:
             raise RuntimeError("agent attempt references a missing run")
         return existing, run, True
-    if settings.agent_mode != "shadow":
+    if settings.agent_mode not in {"shadow", "bounded_readonly"}:
         raise _conflict("agent attempt reporting is disabled")
     run = await session.get(AgentRun, run_id)
     if run is None or run.model_profile_snapshot_json.get("provider_id") != provider_id:
@@ -771,6 +795,8 @@ async def record_agent_attempt(
         key: sum(int(item.usage_json[key]) for item in prior_attempts)
         for key in (
             "input_tokens",
+            "input_cache_hit_tokens",
+            "input_cache_miss_tokens",
             "output_tokens",
             "total_tokens",
             "cost_microunits",
@@ -868,7 +894,7 @@ async def planner_input_for_provider(
     provider_id: str,
     settings: Settings,
 ) -> AgentContextSnapshot:
-    if settings.agent_mode != "shadow":
+    if settings.agent_mode not in {"shadow", "bounded_readonly"}:
         raise _not_found()
     run = await session.get(AgentRun, run_id)
     if (
@@ -898,6 +924,18 @@ async def agent_run_view(session: AsyncSession, run: AgentRun) -> dict[str, Any]
                 select(AgentRunAttempt)
                 .where(AgentRunAttempt.run_id == run.id)
                 .order_by(AgentRunAttempt.attempt_number)
+            )
+        ).all()
+    )
+    proposals = list(
+        (
+            await session.scalars(
+                select(AgentToolProposalRecord)
+                .where(AgentToolProposalRecord.run_id == run.id)
+                .order_by(
+                    AgentToolProposalRecord.attempt_id,
+                    AgentToolProposalRecord.ordinal,
+                )
             )
         ).all()
     )
@@ -967,5 +1005,20 @@ async def agent_run_view(session: AsyncSession, run: AgentRun) -> dict[str, Any]
                 "completed_at": item.completed_at,
             }
             for item in attempts
+        ],
+        "proposals": [
+            {
+                "proposal_id": item.id,
+                "attempt_id": item.attempt_id,
+                "ordinal": item.ordinal,
+                "tool_id": item.tool_id,
+                "descriptor_version": item.descriptor_version,
+                "descriptor_hash": item.descriptor_hash,
+                "arguments_hash": item.arguments_hash,
+                "proposal_hash": item.proposal_hash,
+                "validation": item.validation,
+                "validation_reasons": item.validation_reasons_json,
+            }
+            for item in proposals
         ],
     }

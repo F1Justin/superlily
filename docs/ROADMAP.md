@@ -6,8 +6,9 @@
 Tool Registry 之后的详细设计见 `docs/FUTURE_PHASES_DESIGN.md`。它定义 Phase
 4–11 的共享边界、内部工作包、故障模型和退出门，但不授权提前启动这些阶段。
 
-采集完整性、渐进式工具披露、Unix 风格资源探索、自然语言命令兼容、快速聊天路径
-和成本感知模型路由等长期产品共识，记录在
+渐进式工具披露、Unix 风格资源探索、自然语言命令兼容、快速聊天路径、成本感知模型
+路由和 reaction 反馈语义等长期产品共识，记录在
+`docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`。采集与档案边界单独保留在
 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
 
 ## 当前位置
@@ -97,12 +98,14 @@ Phase 4 已于 2026-07-26 完成生产签署：RenderDocument 1.3、能力规划
 溯源、Nekro 0.9.0 Markdown 入口、Lily 0.6.0 逐命令回滚和四条兼容路径终态回执均已
 验收，61 小时稳定窗口结束后生产回落 `ledger_only`。
 
-Phase 5a 的首个实现切片现位于 `codex/phase5-agent-runtime`：`0020_agent_runs`
-提供不可变模型 profile、AgentRun/event/attempt/proposal 账本，有界 context recipe
-和独立模型 Provider 身份。它仍是 planner-only shadow，默认 `off`，数据库把工具
-调用和 delivery 固定为 0，且不开放 `caller=agent`。实施权威见
-`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；此状态不代表默认禁用部署、
-双库全量回归、shadow canary、稳定窗口或生产签署已经完成。
+Phase 5a/5b 实现现位于 `codex/phase5-agent-runtime`。`0020_agent_runs` 提供不可变
+模型 profile、AgentRun/event/attempt/proposal 账本；`0021_agent_tool_callers` 只为
+Git-gated 非写工具引入 `caller=agent`；`0022_agent_tool_loops` 把一个
+`wolfram.run@1.1.0` proposal、一次 invocation、不可信结果和一次模型 continuation
+收进有界账本。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和离线评分已
+实现，默认仍为 `off`，平台 delivery 始终为 0。实施权威见
+`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；双库全量已通过，但此状态不代表
+默认禁用生产部署、shadow/canary、稳定窗口或生产签署已经完成。
 
 ## Sequencing rules
 

@@ -2,23 +2,30 @@
 
 本文是 Phase 5 的实现权威，细化 `FUTURE_PHASES_DESIGN.md` 的自然语言规划边界。
 在本文被后续 ADR 取代前，模型输出始终只是请求，不是 Core authority。
+群聊快速路径、模型自主选择、渐进式披露、Unix 原语、自然语言命令、模型路由和
+输出体验的长期产品约束见 `AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`；本文只
+规定当前 Phase 5 authority、合同和发布门。
 
 ## 当前切片
 
-当前实现仅为 **5a planner-only shadow**。数据库 head 为 `0020_agent_runs`，运行时
-默认 `SUPERLILY_AGENT_MODE=off`。即使显式切到 `shadow`：
+当前实现包含 **5a planner-only shadow** 和尚未生产签署的 **5b 单工具 Wolfram
+执行环**。数据库 head 为 `0022_agent_tool_loops`，运行时仍默认
+`SUPERLILY_AGENT_MODE=off`。显式切到 `shadow` 时：
 
 - `AgentRun` 的 `tool_invocation_count` 与 `delivery_intent_count` 由数据库约束固定为
   0；
 - 模型 Provider 只能读取分配给自己的有界 planner input，并提交一次终态 attempt；
 - Core 只校验和记录 answer/tool proposal，不创建 `ToolInvocation`、Renderer 请求或
   delivery intent；
-- 现有 `InvocationIdentity.caller`、rollout caller、descriptor
-  `natural_language` 门和三个执行 Provider 均不改变；
 - 命令路径不读取模型健康状态，不等待模型响应。
 
-5a 还不是生产签署。模型 profile、凭据、shadow 开关、评分样本、双库证据和稳定窗口
-必须分别完成审查后，才能进入默认禁用部署。
+Git-bound `deepseek-v4-pro@1.0.0` profile、真实 JSON Provider、缓存命中/未命中
+精确定价和离线评分器已经进入实现。切到 `bounded_readonly` 后，也只允许把一个
+`wolfram.run@1.1.0` 有效 proposal 显式提升为一个 tool loop；它仍需 exact rollout
+plan 才能从 `ledger_only` 进入队列。
+
+5a/5b 都还不是生产签署。凭据、开关、评分样本、双库证据、无发送 canary 和稳定窗口
+必须分别完成审查。
 
 ## Authority 边界
 
@@ -27,10 +34,11 @@
 执行 Provider、render backend 或 artifact secret 重用。模型 Provider 没有创建 run、
 选择别人的 run、调用工具或发送消息的接口。
 
-5a 不引入 `caller=agent`。`tool_registry.py` 对 `natural_language=true` 和
-`allowed_callers=agent` 的拒绝、`auth.py` 的 `command|admin_api` 联合类型、数据库
-caller CHECK，以及各 Provider 的二次 descriptor 校验继续有效。解禁这些边界属于
-5b，必须由新迁移和精确 Git-bound rollout plan 同时完成，不能靠绕过校验实现。
+5a 不使用 `caller=agent`。5b 通过 `0021_agent_tool_callers` 同时放宽共享合同、
+`InvocationIdentity`、tool invocation 和 rollout item CHECK；descriptor 只有在
+`public + none|read|compute + confirmation=never` 时才能把
+`natural_language=true` 与 `allowed_callers=agent` 成对开启。confirmation caller
+CHECK 没有放宽，因此不能借 5b 到达写操作。
 
 ## 0020 账本
 
@@ -84,10 +92,11 @@ profile 至少绑定：
 - USD microunit 定价快照；
 - `superlily-model-provider-v1` 健康协议。
 
-Core 按冻结价格复算 attempt 成本；不匹配即拒绝。当前不绑定某个商业 LLM SDK：
-模型厂商、endpoint、认证和 failover 尚未选定，先提交 vendor-neutral 数据面可避免
-把未经审阅的厂商依赖变成默认 authority。接入首个真实 Provider 时，SDK 及锁定版本
-必须同时进入 `pyproject.toml` 和 `deploy/constraints.txt`。
+Core 按冻结的 cache-hit、cache-miss 和 output 价格分别复算 attempt 成本；不匹配即
+拒绝。首个实现使用现有 `httpx` 直接调用 DeepSeek OpenAI-compatible HTTP 协议，不
+新增厂商 SDK。profile 将厂商未承诺精确上限的保留期记为 `null`，不能误写成零保留。
+群聊文本只允许进入 `public|conversation` profile，不允许 `sensitive` 或
+`administrative`。
 
 ## API 与幂等
 
@@ -112,18 +121,24 @@ missed call、wrong tool、参数无效、禁用工具请求和路由分歧。�
 
 ## 5b 解禁清单
 
-进入 5b 前必须另行完成：
+5b 实现与验收清单：
 
 1. 新合同与迁移同时放宽 `caller=agent`、rollout item caller CHECK 和
    `InvocationIdentity`，并把 descriptor hard fail 改为 Phase 5 门控。
-2. 三个 Provider 接受 `agent` 前仍各自复验 descriptor、lease、fence、预算和精确
-   rollout authority。
+2. 当前只让 Wolfram Provider 接受新的 `wolfram.run@1.1.0`；status 与 LaTeX 不为
+   了凑顺序解禁。Provider 仍复验 descriptor、lease、fence、预算和精确 rollout
+   authority。
 3. 一份新 Git-bound plan 只允许一个 exact conversation、一个工具、一个 descriptor、
-   一个 Provider 和有界次数；顺序为 `status.inspect`、`wolfram.run`、
-   `latex.render`。
+   一个 Provider 和有界次数。首个且当前唯一验收工具为 `wolfram.run`；
+   `status.inspect` 只是普通偶用插件，不是 Agent 架构的先决门。
 4. 工具结果作为带来源、数据分级、边界和长度限制的不可信模型输入；等价重复调用按
    loop 拒绝。
 5. 所有响应仍只能形成 Phase 4 delivery intent；工具和模型都不能调用平台 API。
+
+`0022_agent_tool_loops` 把 proposal、invocation、带来源/边界/分级/长度上限的
+不可信结果和一次模型 continuation 串在独立账本中。初始包硬限制一次调用、深度 1、
+fanout 1、artifact 0；continuation 再提工具一律拒绝，最终结果仍不创建 delivery
+intent。
 
 5b 不创建历史检索库，不把 `history.search` 作为退出条件。检索与记忆等待 Phase 8
 的 conversation scope 和保留策略。

@@ -310,10 +310,10 @@ class Settings:
             raise ValueError("render_artifact_ttl_seconds must be between 300 and 86400")
         if not 10 <= self.render_delivery_intent_seconds <= 300:
             raise ValueError("render_delivery_intent_seconds must be between 10 and 300")
-        if self.agent_mode not in {"off", "shadow"}:
-            raise ValueError("agent_mode must be off or shadow")
-        if self.agent_mode == "shadow" and not active_model_provider_tokens:
-            raise ValueError("agent shadow mode requires at least one model provider token")
+        if self.agent_mode not in {"off", "shadow", "bounded_readonly"}:
+            raise ValueError("agent_mode must be off, shadow, or bounded_readonly")
+        if self.agent_mode != "off" and not active_model_provider_tokens:
+            raise ValueError("active agent mode requires at least one model provider token")
         if not 1 <= self.agent_context_window_messages <= 32:
             raise ValueError("agent_context_window_messages must be between 1 and 32")
         if not 256 <= self.agent_context_message_chars <= 8_192:

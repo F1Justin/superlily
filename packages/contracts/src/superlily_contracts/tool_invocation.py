@@ -13,7 +13,7 @@ from .tool_registry import SemVer, Sha256, ToolId
 
 TOOL_INVOCATION_SCHEMA_VERSION = "1.0"
 
-InvocationCaller: TypeAlias = Literal["command", "admin_api"]
+InvocationCaller: TypeAlias = Literal["command", "agent", "admin_api"]
 InvocationState: TypeAlias = Literal[
     "proposed",
     "rejected",

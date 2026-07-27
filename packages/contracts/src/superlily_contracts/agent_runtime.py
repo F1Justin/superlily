@@ -80,7 +80,8 @@ def _parse_wire_aware_datetime(value: object) -> object:
 
 class ModelPricing(AgentContractModel):
     currency: Literal["USD"]
-    input_microunits_per_million_tokens: int = Field(ge=0, le=10**12)
+    input_cache_hit_microunits_per_million_tokens: int = Field(ge=0, le=10**12)
+    input_cache_miss_microunits_per_million_tokens: int = Field(ge=0, le=10**12)
     output_microunits_per_million_tokens: int = Field(ge=0, le=10**12)
 
 
@@ -92,7 +93,9 @@ class ModelProviderProfile(AgentContractModel):
     version: SemVer
     title: str = Field(min_length=1, max_length=256)
     data_locality: Literal["local", "regional", "global"]
-    retention_seconds: int = Field(ge=0, le=31_536_000)
+    # ``None`` means the provider publishes no exact maximum retention period.
+    # It is intentionally different from zero-retention.
+    retention_seconds: int | None = Field(default=None, ge=0, le=31_536_000)
     structured_output_protocol: Literal[
         "json_schema",
         "tool_calls",
@@ -136,9 +139,9 @@ class AgentBudget(AgentContractModel):
     max_model_attempts: int = Field(ge=1, le=8)
     max_model_turns: int = Field(ge=1, le=32)
     max_tool_proposals: int = Field(ge=0, le=32)
-    max_tool_calls: Literal[0] = 0
-    max_sequential_depth: Literal[0] = 0
-    max_parallel_fanout: Literal[0] = 0
+    max_tool_calls: int = Field(default=0, ge=0, le=8)
+    max_sequential_depth: int = Field(default=0, ge=0, le=8)
+    max_parallel_fanout: int = Field(default=0, ge=0, le=8)
     max_wall_time_ms: int = Field(ge=100, le=600_000)
     max_input_tokens: int = Field(ge=1, le=10_000_000)
     max_output_tokens: int = Field(ge=1, le=1_000_000)
@@ -146,13 +149,28 @@ class AgentBudget(AgentContractModel):
     max_cost_microunits: int = Field(ge=0, le=10**12)
     max_input_bytes: int = Field(ge=1, le=1_048_576)
     max_output_bytes: int = Field(ge=1, le=1_048_576)
-    max_result_bytes: Literal[0] = 0
-    max_artifact_bytes: Literal[0] = 0
+    max_result_bytes: int = Field(default=0, ge=0, le=1_048_576)
+    max_artifact_bytes: int = Field(default=0, ge=0, le=10_485_760)
 
     @model_validator(mode="after")
     def validate_total_tokens(self) -> "AgentBudget":
         if self.max_total_tokens > self.max_input_tokens + self.max_output_tokens:
             raise ValueError("max_total_tokens cannot exceed input plus output token budgets")
+        if self.max_tool_calls == 0 and any(
+            (
+                self.max_sequential_depth,
+                self.max_parallel_fanout,
+                self.max_result_bytes,
+                self.max_artifact_bytes,
+            )
+        ):
+            raise ValueError("zero-call budgets cannot reserve tool result dimensions")
+        if self.max_tool_calls > 0 and (
+            self.max_sequential_depth == 0
+            or self.max_parallel_fanout == 0
+            or self.max_result_bytes == 0
+        ):
+            raise ValueError("tool-call budgets require depth, fanout, and result bounds")
         return self
 
 
@@ -274,6 +292,11 @@ class AgentRunCreateIn(AgentContractModel):
         return value
 
 
+class AgentToolPromotionIn(AgentContractModel):
+    schema_version: Literal["1.0"] = AGENT_RUN_SCHEMA_VERSION
+    proposal_id: str = Field(min_length=1, max_length=512)
+
+
 class AgentToolProposal(AgentContractModel):
     tool_id: ToolId
     descriptor_version: SemVer
@@ -305,6 +328,8 @@ class AgentProposal(AgentContractModel):
 
 class AgentUsage(AgentContractModel):
     input_tokens: int = Field(ge=0, le=10_000_000)
+    input_cache_hit_tokens: int = Field(ge=0, le=10_000_000)
+    input_cache_miss_tokens: int = Field(ge=0, le=10_000_000)
     output_tokens: int = Field(ge=0, le=1_000_000)
     total_tokens: int = Field(ge=0, le=10_000_000)
     cost_microunits: int = Field(ge=0, le=10**12)
@@ -314,6 +339,13 @@ class AgentUsage(AgentContractModel):
 
     @model_validator(mode="after")
     def validate_tokens(self) -> "AgentUsage":
+        if (
+            self.input_tokens
+            != self.input_cache_hit_tokens + self.input_cache_miss_tokens
+        ):
+            raise ValueError(
+                "input_tokens must equal cache-hit plus cache-miss input tokens"
+            )
         if self.total_tokens != self.input_tokens + self.output_tokens:
             raise ValueError("total_tokens must equal input_tokens plus output_tokens")
         return self

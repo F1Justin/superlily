@@ -72,7 +72,7 @@ def test_rollout_plan_is_strict_and_canonically_content_addressed() -> None:
         lambda value: value["items"][0].update(tool_id="status.*"),
         lambda value: value["items"][0].update(canonical_conversation="*"),
         lambda value: value["items"][0].update(provider_id="*"),
-        lambda value: value["items"][0].update(caller="agent"),
+        lambda value: value["items"][0].update(caller="schedule"),
     ],
 )
 def test_rollout_plan_rejects_unbounded_or_implicit_authority(mutate) -> None:
