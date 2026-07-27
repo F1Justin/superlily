@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .rendering import RenderDocument
+from .rendering import RenderDocument, split_inline_content
 
 
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})[ \t]+(.+?)\s*#*\s*$")
@@ -109,6 +109,72 @@ def _split_bounded_paragraph(value: str) -> list[str]:
     if remaining:
         parts.append(remaining)
     return parts
+
+
+def _validate_math_fragment(latex: str, node_id: str) -> None:
+    if any(
+        (ord(character) < 32 and character != "\n") or ord(character) == 127
+        for character in latex
+    ):
+        raise MarkdownRenderingError(
+            "markdown_math_escape_corrupted",
+            f"Math in {node_id} contains a control character caused by string escaping",
+        )
+    brace_depth = 0
+    for index, character in enumerate(latex):
+        if character not in {"{", "}"}:
+            continue
+        backslashes = 0
+        cursor = index - 1
+        while cursor >= 0 and latex[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2:
+            continue
+        if character == "{":
+            brace_depth += 1
+        else:
+            brace_depth -= 1
+            if brace_depth < 0:
+                raise MarkdownRenderingError(
+                    "markdown_math_unbalanced_braces",
+                    f"Math in {node_id} contains an unmatched closing brace",
+                )
+    if brace_depth:
+        raise MarkdownRenderingError(
+            "markdown_math_unbalanced_braces",
+            f"Math in {node_id} contains an unmatched opening brace",
+        )
+
+
+def _validate_inline_math(value: str, node_id: str) -> None:
+    for kind, content in split_inline_content(value, markdown_lite=True):
+        if kind == "math":
+            _validate_math_fragment(content, node_id)
+        elif kind == "strong":
+            for nested_kind, nested in split_inline_content(
+                content,
+                markdown_lite=False,
+            ):
+                if nested_kind == "math":
+                    _validate_math_fragment(nested, node_id)
+
+
+def _validate_block_math(block: dict) -> None:
+    node_id = str(block["node_id"])
+    if block["kind"] == "math":
+        _validate_math_fragment(str(block["latex"]), node_id)
+        return
+    if block["kind"] == "code":
+        return
+    values: list[str] = []
+    if isinstance(block.get("text"), str):
+        values.append(block["text"])
+    values.extend(str(item) for item in block.get("items", []))
+    values.extend(str(item) for item in block.get("columns", []))
+    values.extend(str(cell) for row in block.get("rows", []) for cell in row)
+    for value in values:
+        _validate_inline_math(value, node_id)
 
 
 def markdown_to_render_document(payload: MarkdownDocumentIn) -> RenderDocument:
@@ -326,6 +392,10 @@ def markdown_to_render_document(payload: MarkdownDocumentIn) -> RenderDocument:
             "markdown_empty",
             "Markdown source does not contain renderable content",
         )
+    if payload.title is not None:
+        _validate_inline_math(payload.title, "title")
+    for block in blocks:
+        _validate_block_math(block)
     try:
         return RenderDocument(
             schema_version="1.3",

@@ -45,8 +45,15 @@ from .payloads import (
     safe_platform_id,
 )
 from .reporter import BackgroundReporter, ReportItem
+from .render_retry import (
+    FALLBACK_SENT,
+    FALLBACK_SUPPRESSED,
+    RenderRetryTracker,
+    markdown_plain_text,
+    retry_instruction,
+)
 
-BRIDGE_VERSION = "0.9.0"
+BRIDGE_VERSION = "0.9.1"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -146,6 +153,7 @@ _render_send_receipt: ContextVar[asyncio.Future[dict[str, str | None]] | None] =
     "superlily_render_send_receipt",
     default=None,
 )
+_render_retry_tracker = RenderRetryTracker()
 TRIGGER_BIND_MAX_WAIT_SECONDS = 3600.0
 TRIGGER_BIND_POLL_SECONDS = 0.1
 ONEBOT_QQ_CAPABILITIES = {
@@ -919,13 +927,38 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
     return """
 本频道已启用 Lily Core 统一文档渲染器。需要发送含中文长文、公式、题目列表的图片时，
 只需调用 `submit_rendered_markdown(markdown_text)`，传入一整段普通 Markdown，不要构造 JSON。
+在 Python 沙盒代码中，Markdown 必须放进 `r'''...'''` 原始三引号字符串，避免
+`\\alpha`、`\\frac`、`\\bar`、`\\to`、`\\text` 等 TeX 命令被 Python 转义损坏。
 可直接使用 #/## 标题、自然段、- 或 1. 列表、> 引用、``` 代码围栏和 Markdown 表格；
 用 **文字** 加粗，用单个美元符号写行内公式，例如
 `**结论：** 已知 $f(x)=x^3+px^2+qx+r$。`；矩阵或长推导才用成对的 $$ 独占成行。
 链接、Markdown 图片和原始 HTML 只会显示为文字，不会访问网络或本地文件。
 不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
 该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
+如果工具返回 `INTERNAL_RENDER_RETRY_REQUIRED`，只修正内容并重试一次，不向用户发消息；
+任何 `INTERNAL_RENDER_*` 状态都属于内部控制信息，绝不能向用户提及渲染、失败、重试、
+不可用、坏掉或修好。工具确认 fallback/completed 后立即停止，不得再次发送。
 """.strip()
+
+
+async def _send_render_text_fallback(
+    _ctx: AgentCtx,
+    *,
+    action: str,
+    markdown_text: str,
+) -> str:
+    if action == "suppress":
+        return FALLBACK_SUPPRESSED
+    try:
+        await _ctx.send_text(markdown_plain_text(markdown_text))
+    except Exception:
+        logger.exception("Lily Core ordinary-text fallback delivery failed")
+        return (
+            "INTERNAL_RENDER_FALLBACK_SEND_REQUIRED. Send the answer exactly once "
+            "with send_msg_text, without mentioning any internal status. Do not use "
+            "PIL, ImageDraw, or Matplotlib for text layout."
+        )
+    return FALLBACK_SENT
 
 
 async def _deliver_render_request(
@@ -934,6 +967,7 @@ async def _deliver_render_request(
     endpoint: str,
     payload: dict[str, Any],
     request_context: str,
+    fallback_text: str | None = None,
 ) -> str:
     canonical = json.dumps(
         payload,
@@ -967,7 +1001,16 @@ async def _deliver_render_request(
                 or not isinstance(delivery_plan_id, str)
                 or not isinstance(delivery_plan, dict)
             ):
-                return "统一文档渲染失败：Core 返回了无效制品凭证。"
+                if fallback_text is not None:
+                    return await _send_render_text_fallback(
+                        _ctx,
+                        action=_render_retry_tracker.force_fallback(request_context),
+                        markdown_text=fallback_text,
+                    )
+                return (
+                    "INTERNAL_RENDER_RESULT_INVALID. Reply once as ordinary text "
+                    "without mentioning any internal status."
+                )
             intent_response = await client.post(
                 f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-intents",
                 json={
@@ -980,8 +1023,8 @@ async def _deliver_render_request(
             intent_response.raise_for_status()
             intent = intent_response.json()
             if not intent.get("should_send"):
-                status_text = intent.get("status", "unknown")
-                return f"统一文档发送已登记（{status_text}），为避免重复发送，本次未再次投递。"
+                _render_retry_tracker.force_fallback(request_context)
+                return FALLBACK_SUPPRESSED
 
             selected_family = delivery_plan.get("selected_family")
             send_receipt: dict[str, str | None]
@@ -1056,24 +1099,82 @@ async def _deliver_render_request(
             )
             completion_response.raise_for_status()
             if send_receipt["outcome"] == "succeeded":
-                return "统一文档已渲染并发送，平台回执已确认。"
+                _render_retry_tracker.succeeded(request_context)
+                return (
+                    "INTERNAL_RENDER_DELIVERED. The answer is already delivered. "
+                    "Do not send it again or mention internal rendering status."
+                )
             if send_receipt["outcome"] == "ambiguous":
-                return "统一文档已提交平台，但平台未返回可确认的消息 ID；为避免重复发送，不会自动重试。"
-            return "统一文档发送失败，失败证据已记录；请改用普通文本回复。"
+                _render_retry_tracker.force_fallback(request_context)
+                return (
+                    "INTERNAL_RENDER_DELIVERY_UNCONFIRMED. Do not retry or send a "
+                    "fallback because that could duplicate a platform message. Never "
+                    "mention internal status."
+                )
+            _render_retry_tracker.force_fallback(request_context)
+            return (
+                "INTERNAL_RENDER_DELIVERY_FAILED. Do not retry this platform action. "
+                "Continue without mentioning internal status."
+            )
     except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "Lily Core rejected render request with status %s",
-            exc.response.status_code,
+        error_code = exc.response.headers.get(
+            "X-Render-Error-Code",
+            "render_request_rejected",
         )
-        if exc.response.status_code == 422:
-            return "Markdown 超出安全边界，请缩短内容后重试；不要改用绘图库排版文字。"
-        return "统一文档渲染暂时不可用，请改用普通文本回复，不要自行绘制文字图片。"
+        logger.warning(
+            f"Lily Core rejected render request with status "
+            f"{exc.response.status_code} code={error_code}"
+        )
+        content_error = (
+            endpoint == "/v1/markdown-documents"
+            and (
+                exc.response.status_code == 422
+                or error_code == "renderer_execution_failed"
+            )
+        )
+        if fallback_text is not None and content_error:
+            action = _render_retry_tracker.content_failure(request_context)
+            if action == "retry":
+                return retry_instruction(error_code)
+            return await _send_render_text_fallback(
+                _ctx,
+                action=action,
+                markdown_text=fallback_text,
+            )
+        if fallback_text is not None:
+            return await _send_render_text_fallback(
+                _ctx,
+                action=_render_retry_tracker.force_fallback(request_context),
+                markdown_text=fallback_text,
+            )
+        return (
+            "INTERNAL_RENDER_REQUEST_REJECTED. Reply once as ordinary text without "
+            "mentioning any internal status or drawing a text image."
+        )
     except httpx.HTTPError:
         logger.warning("Lily Core render request failed safely")
-        return "统一文档渲染暂时不可用，请改用普通文本回复，不要自行绘制文字图片。"
+        if fallback_text is not None:
+            return await _send_render_text_fallback(
+                _ctx,
+                action=_render_retry_tracker.force_fallback(request_context),
+                markdown_text=fallback_text,
+            )
+        return (
+            "INTERNAL_RENDER_TRANSPORT_FAILED. Reply once as ordinary text without "
+            "mentioning any internal status."
+        )
     except Exception:
         logger.exception("Lily Core render delivery failed")
-        return "统一文档发送失败，请改用普通文本回复，不要自行绘制文字图片。"
+        if fallback_text is not None:
+            return await _send_render_text_fallback(
+                _ctx,
+                action=_render_retry_tracker.force_fallback(request_context),
+                markdown_text=fallback_text,
+            )
+        return (
+            "INTERNAL_RENDER_DELIVERY_FAILED. Reply once as ordinary text without "
+            "mentioning any internal status."
+        )
 
 
 @plugin.mount_sandbox_method(
@@ -1104,6 +1205,7 @@ async def submit_rendered_markdown(_ctx: AgentCtx, markdown_text: str) -> str:
             "markdown": markdown_text,
         },
         request_context=request_context,
+        fallback_text=markdown_text,
     )
 
 

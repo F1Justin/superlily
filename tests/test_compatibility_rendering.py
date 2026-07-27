@@ -265,6 +265,25 @@ async def test_status_and_help_commands_share_core_render_and_delivery_plan(
     )
     assert markdown_rendered.status_code == 201, markdown_rendered.text
     assert markdown_rendered.json()["delivery_plan"]["selected_family"] == "image"
+    corrupted_markdown = await client.post(
+        "/v1/markdown-documents",
+        json={
+            "schema_version": "1.0",
+            "instance_id": "lily-command",
+            "conversation_key": "onebot_v11-group_1080353942",
+            "source_event_id": "qq:message:markdown-corrupted",
+            "markdown": "损坏的公式 $x=\x0crac{1}{2}$",
+        },
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "phase4-markdown-corrupted",
+        },
+    )
+    assert corrupted_markdown.status_code == 422
+    assert (
+        corrupted_markdown.headers["x-render-error-code"]
+        == "markdown_math_escape_corrupted"
+    )
     expiring_intent = await client.post(
         (
             f"/v1/render-artifacts/{markdown_rendered.json()['artifact_id']}"

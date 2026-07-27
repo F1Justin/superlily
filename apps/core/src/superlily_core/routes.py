@@ -242,7 +242,11 @@ def _render_http_error(exc: RenderServiceError) -> HTTPException:
         code = status.HTTP_503_SERVICE_UNAVAILABLE
     else:
         code = status.HTTP_502_BAD_GATEWAY
-    return HTTPException(status_code=code, detail=exc.safe_detail)
+    return HTTPException(
+        status_code=code,
+        detail=exc.safe_detail,
+        headers={"X-Render-Error-Code": exc.code},
+    )
 
 
 def _render_receipt(record, attempt, artifact, plan, duplicate: bool) -> dict:

@@ -93,3 +93,56 @@ def test_markdown_limits_fail_closed_without_partial_output() -> None:
     with pytest.raises(MarkdownRenderingError) as block_limit:
         markdown_to_render_document(_payload(too_many))
     assert block_limit.value.code == "markdown_block_limit"
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "损坏的行内公式 $x=\x0crac{1}{2}$",
+        "$$\n\x07lpha + 1\n$$",
+        "损坏的加粗公式 **结论：$x=\x08ar{x}$**",
+    ],
+)
+def test_python_string_escape_corruption_is_rejected_before_xelatex(
+    markdown: str,
+) -> None:
+    with pytest.raises(MarkdownRenderingError) as corrupted:
+        markdown_to_render_document(_payload(markdown))
+
+    assert corrupted.value.code == "markdown_math_escape_corrupted"
+    assert "md001" in corrupted.value.safe_detail
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "多余右括号 $g=h}$",
+        "$$\n\\frac{a}{b\n$$",
+    ],
+)
+def test_unbalanced_math_braces_are_rejected_before_xelatex(markdown: str) -> None:
+    with pytest.raises(MarkdownRenderingError) as unbalanced:
+        markdown_to_render_document(_payload(markdown))
+
+    assert unbalanced.value.code == "markdown_math_unbalanced_braces"
+
+
+def test_escaped_math_braces_remain_valid() -> None:
+    document = markdown_to_render_document(_payload(r"集合 $\{x\mid x>0\}$"))
+
+    assert document.blocks[0].kind == "paragraph"
+
+
+def test_multiline_display_math_remains_valid() -> None:
+    document = markdown_to_render_document(
+        _payload(
+            r"""$$
+\begin{aligned}
+x &= 1 \\
+y &= 2
+\end{aligned}
+$$"""
+        )
+    )
+
+    assert document.blocks[0].kind == "math"

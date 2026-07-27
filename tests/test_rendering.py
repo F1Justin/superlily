@@ -828,6 +828,10 @@ async def test_expired_artifact_and_failed_attempt_are_retryable(tmp_path, monke
                 headers=failed_headers,
             )
             assert failed.status_code == 502
+            assert (
+                failed.headers["x-render-error-code"]
+                == "renderer_execution_failed"
+            )
             recovered = await client.post(
                 "/v1/render-documents",
                 json=_document().model_dump(mode="json"),

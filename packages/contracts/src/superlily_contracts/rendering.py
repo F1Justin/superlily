@@ -173,14 +173,41 @@ def inline_content_plain_text(value: str, *, markdown_lite: bool = False) -> str
     return "".join(parts)
 
 
+def _validate_latex_syntax(value: str) -> None:
+    if any(
+        (ord(character) < 32 and character != "\n") or ord(character) == 127
+        for character in value
+    ):
+        raise ValueError("LaTeX contains a forbidden control character")
+    brace_depth = 0
+    for index, character in enumerate(value):
+        if character not in {"{", "}"}:
+            continue
+        backslashes = 0
+        cursor = index - 1
+        while cursor >= 0 and value[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2:
+            continue
+        if character == "{":
+            brace_depth += 1
+        else:
+            brace_depth -= 1
+            if brace_depth < 0:
+                raise ValueError("LaTeX contains an unmatched closing brace")
+    if brace_depth:
+        raise ValueError("LaTeX contains an unmatched opening brace")
+
+
 def _validate_mixed_text(value: str) -> str:
     if "\x00" in value:
         raise ValueError("text contains a NUL byte")
     for kind, content in split_inline_math(value):
-        if kind == "math" and (
-            len(content) > 2_000 or _FORBIDDEN_LATEX_RE.search(content)
-        ):
-            raise ValueError("inline math contains a forbidden or oversized LaTeX expression")
+        if kind == "math":
+            _validate_latex_syntax(content)
+            if len(content) > 2_000 or _FORBIDDEN_LATEX_RE.search(content):
+                raise ValueError("inline math contains a forbidden or oversized LaTeX expression")
     return value
 
 
@@ -231,6 +258,7 @@ class MathBlock(_RenderNode):
 
     @model_validator(mode="after")
     def reject_unsafe_commands(self) -> "MathBlock":
+        _validate_latex_syntax(self.latex)
         if "\x00" in self.latex or _FORBIDDEN_LATEX_RE.search(self.latex):
             raise ValueError("math block contains a forbidden LaTeX command")
         return self
