@@ -103,6 +103,10 @@ def markdown_plain_text(markdown: str) -> str:
     return result or "内容暂时无法以图片形式显示。"
 
 
+class RenderRetryRequired(RuntimeError):
+    """Stop the current sandbox script so Nekro performs a real agent iteration."""
+
+
 def retry_instruction(error_code: str) -> str:
     hint = (
         "The Python string damaged TeX backslashes. Regenerate with a raw "

@@ -22,7 +22,7 @@ def _load_retry_module():
     return module
 
 
-def test_content_failure_allows_one_retry_then_one_fallback() -> None:
+def test_content_failure_allows_one_real_iteration_then_one_fallback() -> None:
     retry = _load_retry_module()
     tracker = retry.RenderRetryTracker(ttl_seconds=60, max_entries=4)
 
@@ -81,13 +81,14 @@ def test_retry_instruction_is_internal_bounded_and_requires_raw_string() -> None
 
     instruction = retry.retry_instruction("markdown_math_escape_corrupted")
 
+    assert issubclass(retry.RenderRetryRequired, RuntimeError)
     assert instruction.startswith("INTERNAL_RENDER_RETRY_REQUIRED")
     assert "exactly once" in instruction
     assert 'r"""..."""' in instruction
     assert "Do not send a user-visible message" in instruction
 
 
-def test_bridge_policy_has_no_user_facing_renderer_failure_story() -> None:
+def test_bridge_raises_to_enter_the_real_nekro_agent_iteration() -> None:
     source = (
         ROOT / "bridges" / "nekro" / "superlily_bridge" / "__init__.py"
     ).read_text(encoding="utf-8")
@@ -95,5 +96,7 @@ def test_bridge_policy_has_no_user_facing_renderer_failure_story() -> None:
     assert "统一文档渲染暂时不可用" not in source
     assert "渲染器坏掉" not in source
     assert "_render_retry_tracker.content_failure" in source
+    assert "raise RenderRetryRequired(retry_instruction(error_code))" in source
     assert "_render_retry_tracker.force_fallback" in source
+    assert "await _send_render_text_fallback" in source
     assert "fallback_text=markdown_text" in source

@@ -48,12 +48,13 @@ from .reporter import BackgroundReporter, ReportItem
 from .render_retry import (
     FALLBACK_SENT,
     FALLBACK_SUPPRESSED,
+    RenderRetryRequired,
     RenderRetryTracker,
     markdown_plain_text,
     retry_instruction,
 )
 
-BRIDGE_VERSION = "0.9.1"
+BRIDGE_VERSION = "0.9.2"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -935,9 +936,10 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
 链接、Markdown 图片和原始 HTML 只会显示为文字，不会访问网络或本地文件。
 不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
 该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
-如果工具返回 `INTERNAL_RENDER_RETRY_REQUIRED`，只修正内容并重试一次，不向用户发消息；
 任何 `INTERNAL_RENDER_*` 状态都属于内部控制信息，绝不能向用户提及渲染、失败、重试、
-不可用、坏掉或修好。工具确认 fallback/completed 后立即停止，不得再次发送。
+不可用、坏掉或修好。首次内容错误会自动终止当前脚本并触发一次模型纠错迭代；
+只在该迭代中修正内容并再次调用本方法。工具确认 fallback/completed 后立即停止，
+不得再次发送。
 """.strip()
 
 
@@ -1135,7 +1137,7 @@ async def _deliver_render_request(
         if fallback_text is not None and content_error:
             action = _render_retry_tracker.content_failure(request_context)
             if action == "retry":
-                return retry_instruction(error_code)
+                raise RenderRetryRequired(retry_instruction(error_code)) from exc
             return await _send_render_text_fallback(
                 _ctx,
                 action=action,
