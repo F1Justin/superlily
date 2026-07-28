@@ -322,6 +322,78 @@ async def test_failed_model_attempt_can_retry_but_never_execute(client, app) -> 
     assert second.json()["tool_invocation_count"] == 0
 
 
+async def test_shadow_budget_exhaustion_is_terminal_without_authority(
+    client,
+    app,
+) -> None:
+    profile_hash, source_event_id = await prepare_shadow(client, app)
+    payload = run_payload(profile_hash, source_event_id=source_event_id)
+    payload["budget"]["max_total_tokens"] = 10
+    created = await client.post(
+        "/v1/agent-runs",
+        json=payload,
+        headers=admin_headers("phase5-budget-run"),
+    )
+    assert created.status_code == 201, created.text
+    reported = await client.post(
+        f"/v1/agent-runs/{created.json()['run_id']}/attempts",
+        json=successful_attempt(),
+        headers=model_headers("phase5-budget-attempt"),
+    )
+    assert reported.status_code == 201, reported.text
+    body = reported.json()
+    assert body["state"] == "budget_exhausted"
+    assert body["reason_code"] == "run_budget_exhausted"
+    assert body["tool_invocation_count"] == 0
+    assert body["delivery_intent_count"] == 0
+    assert "max_total_tokens" in body["events"][-1]["evidence"]["budget_reasons"]
+
+
+async def test_cancelled_model_attempt_records_core_interruption_without_authority(
+    client,
+    app,
+) -> None:
+    profile_hash, source_event_id = await prepare_shadow(client, app)
+    created = await client.post(
+        "/v1/agent-runs",
+        json=run_payload(profile_hash, source_event_id=source_event_id),
+        headers=admin_headers("phase5-cancelled-run"),
+    )
+    assert created.status_code == 201, created.text
+    now = datetime.now(timezone.utc).isoformat()
+    cancelled = await client.post(
+        f"/v1/agent-runs/{created.json()['run_id']}/attempts",
+        headers=model_headers("phase5-cancelled-attempt"),
+        json={
+            "schema_version": "1.0",
+            "outcome": "cancelled",
+            "model_request_id": None,
+            "raw_output_sha256": "d" * 64,
+            "usage": {
+                "input_tokens": 0,
+                "input_cache_hit_tokens": 0,
+                "input_cache_miss_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cost_microunits": 0,
+                "input_bytes": 0,
+                "output_bytes": 0,
+                "wall_time_ms": 0,
+            },
+            "proposal": None,
+            "safe_error_code": "core_interrupted",
+            "started_at": now,
+            "completed_at": now,
+        },
+    )
+    assert cancelled.status_code == 201, cancelled.text
+    body = cancelled.json()
+    assert body["state"] == "cancelled"
+    assert body["reason_code"] == "core_interrupted"
+    assert body["tool_invocation_count"] == 0
+    assert body["delivery_intent_count"] == 0
+
+
 async def test_agent_evidence_and_terminal_run_are_database_guarded(client, app) -> None:
     profile_hash, source_event_id = await prepare_shadow(client, app)
     created = await client.post(
