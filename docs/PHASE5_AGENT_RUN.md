@@ -171,5 +171,22 @@ prompt 注入、禁用工具、无效参数、等价循环、预算、失败重�
 零 invocation/零 delivery 的确定性测试。之后仍按默认禁用部署、后台账本 canary、
 稳定窗口和签署推进。
 
+当前自动化证据映射如下：
+
+| 验收项 | 权威测试 |
+| --- | --- |
+| 默认关闭、禁用工具、零执行/发送 | `test_agent_mode_off_creates_no_run`、`test_shadow_records_forbidden_proposal_without_execution_or_delivery` |
+| Provider 错误、重试、超时/预算 | `test_failed_model_attempt_can_retry_but_never_execute`、`test_shadow_budget_exhaustion_is_terminal_without_authority` |
+| 显式 fallback、数据分级、顺序与实际价格 | `test_reviewed_fallback_reauthorizes_data_pricing_and_provider_order`、`test_fallback_profile_must_reauthorize_conversation_data` |
+| Core 中断与终态/证据不可变 | `test_cancelled_model_attempt_records_core_interruption_without_authority`、`test_agent_evidence_and_terminal_run_are_database_guarded` |
+| 工具结果注入、等价循环、continuation failover | `test_exact_wolfram_agent_loop_reinjects_untrusted_result_and_retries` |
+| 缺少 exact canary 时 fail closed | `test_bounded_wolfram_promotion_falls_back_without_exact_canary` |
+| 模型协议、越权输入与精确定价 | `test_deepseek_planner_returns_strict_proposal_and_precise_cost`、`test_deepseek_planner_rejects_any_execution_authority` |
+| SQLite/PostgreSQL 迁移往返与 drift | `test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips`、`test_postgres_alembic_control_plane_round_trip_and_drift` |
+| 专用无发送验收驱动 | `test_shadow_driver_runs_real_core_path_without_execution_or_delivery`、`test_bounded_driver_verifies_authority_and_completes_without_delivery` |
+
+5a/5b 不开放写调用；现有 confirmation replay/并发消费测试继续保护命令/admin
+路径，但 confirmation caller CHECK 不因 5b 放宽。
+
 生产操作员已禁止向公开群主动发送合成测试内容。Phase 5 默认只使用自动化、后台
 账本和无发送探针；任何群消息必须取得当次明确授权。

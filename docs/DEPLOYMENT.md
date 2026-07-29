@@ -940,3 +940,131 @@ OOM。PostgreSQL 启动时间仍为
 `alembic check` 无新操作。生产总账为 invocation=16、attempt=12、artifact=1、
 confirmation=0、plan=15、active plan=0、active attempt=0。至此第三阶段三个代表性
 工具全部使用公共 descriptor/invocation/provider/artifact 协议，第三阶段完成签署。
+
+## 19. Phase 5a/5b 默认关闭部署与无发送验收手册
+
+本节是尚未执行的生产手册，不是签署记录。2026-07-29 的只读审计显示生产 Core
+健康、仍在 `0019_phase4_planning`；`SUPERLILY_AGENT_MODE` 未设置，等价于 `off`。
+工具执行配置虽为 `canary`，但 `active_rollout_plan=null`、
+`leases_enabled=false`，所以没有当前工具执行 authority。生产尚未迁移到
+`0023_agent_model_routes`，也没有模型 Provider token。
+
+### 19.1 部署前门
+
+部署提交必须是已推送的完整 Git commit，工作树干净。发布记录需要冻结：
+
+- commit、Core/Wolfram Provider 镜像 ID 与 config hash；
+- SQLite 与 PostgreSQL 17 全量测试结果；
+- `wolfram.run@1.1.0` descriptor hash
+  `ec3375907804f588d765ed643b9c8481eb2d4a578924a614652cca64d0414da4`；
+- `deepseek-v4-pro@1.0.0` profile hash
+  `948f9b7cd20394f0607d1bb347f776e80f5b5e307c381223b8a40d3bf735bec3`；
+- 迁移前 PostgreSQL 物理/逻辑备份、SHA-256、权限，以及隔离 PostgreSQL 17
+  的完整恢复、`alembic current`、关键表计数和零恢复错误。
+
+模型 token 必须独立随机生成，不得与 admin、ingest、执行 Provider、Renderer、
+artifact 或 bot token 重用。DeepSeek API key 不进入 Core；验收驱动只从调用进程环境
+读取并立即移除。不得把 token/key 写入 Git、命令输出、账本文本或验收文档。
+
+### 19.2 默认 `off` 部署
+
+第一次滚动只部署 Core，显式保持：
+
+```text
+SUPERLILY_AGENT_MODE=off
+SUPERLILY_MODEL_PROVIDER_TOKENS_JSON={}
+```
+
+Core 启动时线性执行 `0019_phase4_planning -> 0020_agent_runs ->
+0021_agent_tool_callers -> 0022_agent_tool_loops -> 0023_agent_model_routes`。健康后必须
+验证：
+
+1. `alembic current` 为 `0023_agent_model_routes (head)`，`alembic check`
+   无 drift；
+2. Agent 新表、trigger/function 与 CHECK 均存在，新表为空；
+3. 原有 event/receipt/descriptor/Provider/invocation/artifact/delivery 计数没有丢失；
+4. `/health/ready` 正常，创建 AgentRun 返回禁用冲突；
+5. Registry 仍无 active rollout，lease 关闭，三个既有 Provider 健康；
+6. Nekro/Lily 采集、spool、水位和确定性命令路径不依赖任何模型健康。
+
+这一小节完成后仍没有模型请求、工具调用或平台发送。
+
+### 19.3 5a 真实模型 shadow
+
+从同一完整 commit 导入 Git-bound model profile。Core 加入一份独立
+`deepseek-v4-pro` model token 后，以 `SUPERLILY_AGENT_MODE=shadow` 只滚动 Core。
+DeepSeek key 由验收进程从既有受限配置读取，不复制进 Core 环境。
+
+使用 `superlily-phase5-acceptance shadow`（或源码树
+`scripts/phase5_acceptance_driver.py shadow`）执行一次探针。调用方必须提供完整
+commit、唯一 run ID、四份彼此独立的环境 credential，并显式传入
+`--no-platform-send-ack`。驱动硬限制 loopback Core、固定
+`system:system:phase5-acceptance` 会话，不激活 Registry 资源，也不输出 prompt、
+模型正文或凭据。
+
+通过条件：
+
+- 1 次真实模型 attempt，终态 `shadow_complete`；
+- profile/commit/hash、usage、reason 和事件链完整；
+- `tool_invocation_count=0`、`delivery_intent_count=0`；
+- QQ/NapCat、Renderer 与公开群发送路径均未触达；
+- 模型失败、超时或非法 JSON 只产生审计终态，不影响命令路径。
+
+完成后先回到 `SUPERLILY_AGENT_MODE=off`，再进入 5b 准备。
+
+### 19.4 5b 单次 Wolfram loop
+
+5b 只开放 `wolfram.run@1.1.0`。先从完整 commit 导入 descriptor，并让
+Wolfram Provider 精确上报 1.1.0 inventory；reviewer 激活 descriptor 后，读取真实
+descriptor/Provider resource version。随后才生成一份新的 Git-bound rollout plan：
+
+```text
+mode=canary
+max_invocations=1
+rollback_mode=ledger_only
+canonical_conversation=system:system:phase5-acceptance
+caller=agent
+tool=wolfram.run@1.1.0
+provider=provider-wolfram-primary
+expected_descriptor_resource_version=<observed exact value>
+expected_provider_resource_version=<observed exact value>
+```
+
+计划必须在有界未来窗口内、单独 commit/push，并按完整 commit/hash 导入；导入只得
+`reviewed`。Core 显式切到 `SUPERLILY_AGENT_MODE=bounded_readonly`，工具执行保持
+`canary`。operator 激活唯一计划后，运行
+`superlily-phase5-acceptance bounded-wolfram`，同时传入 exact plan ID/hash 和
+`--no-platform-send-ack`。
+
+驱动会在创建 run 前验证：唯一 active plan、未消费、一次额度、自然语言 caller
+已启用、descriptor exact/active/eligible。随后模型只能提议精确 `2+2`，Core 创建
+一条 `caller=agent` invocation，常驻 Wolfram Provider 完成计算；有来源、分级、
+限长和 `untrusted=true` 的结果再进入一次 continuation。通过条件：
+
+- AgentRun 只有一个 valid `wolfram.run@1.1.0` proposal；
+- invocation 只走 `provider-wolfram-primary`，一次 lease/fence 后 `succeeded`；
+- loop 依次 `tool_pending -> result_ready -> complete`；
+- continuation 不能再调用工具，最终 `tool_invocation_count=1`；
+- AgentRun、loop、Renderer 和平台总计 `delivery_intent_count=0`。
+
+无论成功或失败，计划都立即暂停并核对 counter；随后 Core 回到
+`SUPERLILY_AGENT_MODE=off`，工具执行回到 `ledger_only`。最终必须为
+`active_rollout_plan=null`、`leases_enabled=false`、active attempt=0，且不存在任何
+公开群 response/delivery 与探针关联。
+
+### 19.5 稳定窗口与签署
+
+回落后至少观察 30 分钟，并跨过多个 300 秒 inventory 周期。窗口内记录：
+
+- Core、PostgreSQL、三个执行 Provider、Wolfram worker、Lily、Nekro 的 restart/OOM；
+- inventory/heartbeat 一致性、spool pending/quarantine/gap 和采集水位；
+- active plan/attempt、AgentRun、tool invocation、delivery intent 的最终计数；
+- Core/Provider warning/error，以及确定性命令 Registry freshness。
+
+签署文档必须分别声明 5a 与 5b 的 commit、数据库 head、真实 run/loop/invocation、
+model request、usage/cost、plan counter、回落状态与稳定窗口。它只能签署
+planner-only shadow 和单次只读 Wolfram loop；不得暗示 5c 写权限、历史检索、
+长期模型自治或公开群自动回复已经开放。
+
+生产操作员已经禁止向公开群主动发送合成测试内容。本手册没有任何公开群发送步骤；
+若未来需要 UI/群聊可见验证，必须另行取得当次明确授权。

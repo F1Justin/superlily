@@ -36,6 +36,7 @@ superlily-latex-worker = "superlily_latex_provider.worker:main"
 superlily-document-renderer = "superlily_latex_provider.document_gateway:main"
 superlily-control-password = "superlily_core.control_plane_cli:main"
 superlily-phase3-status-fault = "superlily_core.phase3_status_fault_driver:main"
+superlily-phase5-acceptance = "superlily_core.phase5_acceptance_driver:main"
 superlily-deepseek-provider = "superlily_model_provider.main:main"
 
 [tool.setuptools]
