@@ -108,6 +108,8 @@ fail closed。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和�
 实现，默认仍为 `off`，平台 delivery 始终为 0。实施权威见
 `docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；双库全量已通过，但此状态不代表
 默认禁用生产部署、shadow/canary、稳定窗口或生产签署已经完成。
+2026-07-29 的一次性本地 Core 已完成真实 DeepSeek 5a 无发送 shadow，证据见
+`docs/PHASE5_5A_SHADOW_EVIDENCE.md`；生产部署与生产 shadow/canary 仍未开始。
 
 ## Sequencing rules
 

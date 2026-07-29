@@ -27,6 +27,10 @@ plan 才能从 `ledger_only` 进入队列。
 5a/5b 都还不是生产签署。凭据、开关、评分样本、双库证据、无发送 canary 和稳定窗口
 必须分别完成审查。
 
+2026-07-29 已在一次性本地 Core 上完成真实 DeepSeek 5a 无发送 shadow：
+1 次 attempt 成功，账本终态为 `shadow_complete`，工具调用与 delivery intent 均为
+0。该证据不等于生产部署或签署，详见 `PHASE5_5A_SHADOW_EVIDENCE.md`。
+
 ## Authority 边界
 
 `AgentRun` 只能由现有 `admin_api` 身份创建。模型 Provider 使用独立
