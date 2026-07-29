@@ -135,6 +135,21 @@ class ModelProviderProfile(AgentContractModel):
         return value
 
 
+class ModelProviderProfileRef(AgentContractModel):
+    """Exact reviewed profile that may receive a routed AgentRun."""
+
+    provider_id: str = Field(min_length=1, max_length=128)
+    version: SemVer
+    profile_hash: Sha256
+
+    @field_validator("provider_id")
+    @classmethod
+    def validate_provider_id(cls, value: str) -> str:
+        if value != value.strip() or not _PROVIDER_ID_RE.fullmatch(value):
+            raise ValueError("provider_id must be an exact opaque identifier")
+        return value
+
+
 class AgentBudget(AgentContractModel):
     max_model_attempts: int = Field(ge=1, le=8)
     max_model_turns: int = Field(ge=1, le=32)
@@ -282,6 +297,16 @@ class AgentRunCreateIn(AgentContractModel):
     model_provider_id: str = Field(min_length=1, max_length=128)
     model_profile_version: SemVer
     model_profile_hash: Sha256
+    fallback_model_profiles: list[ModelProviderProfileRef] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+    routing_reason: str = Field(
+        default="explicit_primary",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_.-]*$",
+    )
     budget: AgentBudget
 
     @field_validator("model_provider_id")
@@ -290,6 +315,16 @@ class AgentRunCreateIn(AgentContractModel):
         if value != value.strip() or not _PROVIDER_ID_RE.fullmatch(value):
             raise ValueError("model_provider_id must be an exact opaque identifier")
         return value
+
+    @model_validator(mode="after")
+    def validate_route(self) -> "AgentRunCreateIn":
+        providers = [
+            self.model_provider_id,
+            *(item.provider_id for item in self.fallback_model_profiles),
+        ]
+        if len(providers) != len(set(providers)):
+            raise ValueError("model route provider IDs must be unique")
+        return self
 
 
 class AgentToolPromotionIn(AgentContractModel):

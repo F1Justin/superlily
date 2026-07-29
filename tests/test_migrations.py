@@ -196,7 +196,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             row[1] for row in connection.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
 
-    assert version == ("0022_agent_tool_loops",)
+    assert version == ("0023_agent_model_routes",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -395,6 +395,9 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "context_recipe_version",
         "context_hash",
         "model_profile_hash",
+        "fallback_model_profiles_json",
+        "fallback_model_profiles_hash",
+        "routing_reason",
         "budget_hash",
         "tool_invocation_count",
         "delivery_intent_count",
@@ -609,7 +612,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        assert version == ("0022_agent_tool_loops",)
+        assert version == ("0023_agent_model_routes",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -788,7 +791,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0022_agent_tool_loops"
+        assert version == "0023_agent_model_routes"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -901,6 +904,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0022_agent_tool_loops"
+        assert asyncio.run(snapshot())[0] == "0023_agent_model_routes"
     finally:
         alembic("downgrade", "base", check=False)

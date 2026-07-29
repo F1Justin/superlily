@@ -83,6 +83,45 @@ def _snapshot(value: Any) -> tuple[Any, str]:
     return canonical.value, canonical.sha256
 
 
+def _model_route(
+    run: AgentRun,
+) -> list[tuple[ModelProviderProfile, str]]:
+    route = [
+        (
+            ModelProviderProfile.model_validate(run.model_profile_snapshot_json),
+            run.model_profile_hash,
+        )
+    ]
+    route.extend(
+        (
+            ModelProviderProfile.model_validate(item["profile"]),
+            str(item["profile_hash"]),
+        )
+        for item in run.fallback_model_profiles_json
+    )
+    return route
+
+
+def _active_route_profile(
+    run: AgentRun,
+    attempts: list[AgentRunAttempt],
+) -> tuple[ModelProviderProfile, str]:
+    route = _model_route(run)
+    if not attempts:
+        return route[0]
+    last = attempts[-1]
+    for index, (profile, profile_hash) in enumerate(route):
+        if profile.provider_id != last.provider_id:
+            continue
+        if (
+            last.outcome in {"provider_error", "invalid_output", "timed_out"}
+            and index + 1 < len(route)
+        ):
+            return route[index + 1]
+        return profile, profile_hash
+    raise RuntimeError("agent attempt provider is outside the frozen model route")
+
+
 def _clip_text(value: str | None, limit: int) -> tuple[str, bool]:
     text = value or ""
     if len(text) <= limit:
@@ -458,13 +497,54 @@ async def create_agent_run(
     if payload.model_provider_id not in settings.model_provider_tokens:
         raise _conflict("model provider credential is unavailable")
     profile = ModelProviderProfile.model_validate(profile_record.profile_json)
+    fallback_records: list[
+        tuple[AgentModelProfileRecord, ModelProviderProfile]
+    ] = []
+    for fallback_ref in payload.fallback_model_profiles:
+        fallback_record = await session.scalar(
+            select(AgentModelProfileRecord).where(
+                AgentModelProfileRecord.provider_id == fallback_ref.provider_id,
+                AgentModelProfileRecord.version == fallback_ref.version,
+            )
+        )
+        if fallback_record is None:
+            raise _not_found("exact fallback model provider profile not found")
+        if fallback_record.profile_hash != fallback_ref.profile_hash:
+            raise _conflict(
+                "fallback model profile hash does not match immutable authority"
+            )
+        if fallback_ref.provider_id not in settings.model_provider_tokens:
+            raise _conflict("fallback model provider credential is unavailable")
+        fallback_records.append(
+            (
+                fallback_record,
+                ModelProviderProfile.model_validate(fallback_record.profile_json),
+            )
+        )
+    if len(fallback_records) + 1 > payload.budget.max_model_attempts:
+        raise _conflict(
+            "model-attempt budget cannot traverse the explicit fallback route"
+        )
     context = await build_agent_context(session, payload.source_event_id, settings)
-    if context.data_classification not in profile.permitted_data_classifications:
-        raise _conflict("model provider profile forbids this data classification")
-    if payload.budget.max_input_tokens > profile.context_window_tokens:
-        raise _unprocessable("run input token budget exceeds the model profile")
-    if payload.budget.max_output_tokens > profile.max_output_tokens:
-        raise _unprocessable("run output token budget exceeds the model profile")
+    for route_profile in [
+        profile,
+        *(item[1] for item in fallback_records),
+    ]:
+        if (
+            context.data_classification
+            not in route_profile.permitted_data_classifications
+        ):
+            raise _conflict(
+                "model route profile forbids this data classification"
+            )
+        if payload.budget.max_input_tokens > route_profile.context_window_tokens:
+            raise _unprocessable(
+                "run input token budget exceeds a model route profile"
+            )
+        if payload.budget.max_output_tokens > route_profile.max_output_tokens:
+            raise _unprocessable(
+                "run output token budget exceeds a model route profile"
+            )
 
     context_json, context_hash = _snapshot(context.model_dump(mode="json"))
     if len(canonicalize_json_value(context_json).canonical_bytes) > payload.budget.max_input_bytes:
@@ -475,6 +555,16 @@ async def create_agent_run(
     )
     budget_json, budget_hash = _snapshot(payload.budget.model_dump(mode="json"))
     profile_json, profile_hash_value = _snapshot(profile.model_dump(mode="json"))
+    fallback_json, fallback_hash = _snapshot(
+        [
+            {
+                "profile_id": record.id,
+                "profile": route_profile.model_dump(mode="json"),
+                "profile_hash": record.profile_hash,
+            }
+            for record, route_profile in fallback_records
+        ]
+    )
     now = await database_now(session)
     record = AgentRun(
         id=new_id(),
@@ -496,6 +586,9 @@ async def create_agent_run(
         model_profile_id=profile_record.id,
         model_profile_snapshot_json=profile_json,
         model_profile_hash=profile_hash_value,
+        fallback_model_profiles_json=fallback_json,
+        fallback_model_profiles_hash=fallback_hash,
+        routing_reason=payload.routing_reason,
         mode="shadow",
         state="context_ready",
         resource_version=1,
@@ -512,6 +605,8 @@ async def create_agent_run(
             "context_hash": context_hash,
             "budget_hash": budget_hash,
             "model_profile_hash": profile_hash_value,
+            "fallback_model_profiles_hash": fallback_hash,
+            "routing_reason": payload.routing_reason,
             "tool_execution_enabled": False,
             "delivery_enabled": False,
         }
@@ -639,12 +734,23 @@ async def record_agent_attempt(
     if settings.agent_mode not in {"shadow", "bounded_readonly"}:
         raise _conflict("agent attempt reporting is disabled")
     run = await session.get(AgentRun, run_id)
-    if run is None or run.model_profile_snapshot_json.get("provider_id") != provider_id:
+    if run is None:
         raise _not_found()
     if run.state != "context_ready":
         raise _conflict("agent run is not accepting a model attempt")
+    route_attempts = list(
+        (
+            await session.scalars(
+                select(AgentRunAttempt)
+                .where(AgentRunAttempt.run_id == run.id)
+                .order_by(AgentRunAttempt.attempt_number)
+            )
+        ).all()
+    )
+    profile, active_profile_hash = _active_route_profile(run, route_attempts)
+    if profile.provider_id != provider_id:
+        raise _not_found()
     budget = run.budget_snapshot_json
-    profile = ModelProviderProfile.model_validate(run.model_profile_snapshot_json)
     if payload.usage.cost_microunits != _expected_cost(profile, payload.usage):
         raise _unprocessable("reported model cost does not match the reviewed pricing snapshot")
     now = await database_now(session)
@@ -663,7 +769,8 @@ async def record_agent_attempt(
         evidence={
             "attempt_number": next_attempt,
             "report_hash": report_hash,
-            "model_profile_hash": run.model_profile_hash,
+            "model_profile_hash": active_profile_hash,
+            "routing_reason": run.routing_reason,
         },
         attempt_count=next_attempt,
         terminal_at=None,
@@ -682,7 +789,7 @@ async def record_agent_attempt(
         run_id=run.id,
         attempt_number=next_attempt,
         provider_id=provider_id,
-        model_profile_hash=run.model_profile_hash,
+        model_profile_hash=active_profile_hash,
         idempotency_key=idempotency_key,
         report_hash=report_hash,
         outcome=payload.outcome,
@@ -834,19 +941,22 @@ async def record_agent_attempt(
         final_state = "shadow_complete"
         event_name = "shadow_complete"
         reason_code = "proposal_recorded_no_execution"
-    elif payload.outcome == "timed_out":
-        final_state = "timed_out"
-        event_name = "timeout"
-        reason_code = payload.safe_error_code or "model_timeout"
     elif payload.outcome == "cancelled":
         final_state = "cancelled"
         event_name = "cancel"
         reason_code = payload.safe_error_code or "model_cancelled"
-    elif next_attempt < int(budget["max_model_attempts"]):
+    elif (
+        payload.outcome in {"provider_error", "invalid_output", "timed_out"}
+        and next_attempt < int(budget["max_model_attempts"])
+    ):
         final_state = "context_ready"
         event_name = "model_retry"
         reason_code = payload.safe_error_code or "model_retry_available"
         terminal_at = None
+    elif payload.outcome == "timed_out":
+        final_state = "timed_out"
+        event_name = "timeout"
+        reason_code = payload.safe_error_code or "model_timeout"
     else:
         final_state = "failed"
         event_name = "fail"
@@ -893,19 +1003,31 @@ async def planner_input_for_provider(
     run_id: str,
     provider_id: str,
     settings: Settings,
-) -> AgentContextSnapshot:
+) -> tuple[AgentContextSnapshot, ModelProviderProfile, str]:
     if settings.agent_mode not in {"shadow", "bounded_readonly"}:
         raise _not_found()
     run = await session.get(AgentRun, run_id)
-    if (
-        run is None
-        or run.state != "context_ready"
-        or run.model_profile_snapshot_json.get("provider_id") != provider_id
-    ):
+    if run is None or run.state != "context_ready":
         raise _not_found()
     if _aware(run.deadline_at) <= await database_now(session):
         raise _not_found()
-    return AgentContextSnapshot.model_validate(run.context_snapshot_json)
+    attempts = list(
+        (
+            await session.scalars(
+                select(AgentRunAttempt)
+                .where(AgentRunAttempt.run_id == run.id)
+                .order_by(AgentRunAttempt.attempt_number)
+            )
+        ).all()
+    )
+    profile, profile_hash = _active_route_profile(run, attempts)
+    if profile.provider_id != provider_id:
+        raise _not_found()
+    return (
+        AgentContextSnapshot.model_validate(run.context_snapshot_json),
+        profile,
+        profile_hash,
+    )
 
 
 async def agent_run_view(session: AsyncSession, run: AgentRun) -> dict[str, Any]:
@@ -968,6 +1090,12 @@ async def agent_run_view(session: AsyncSession, run: AgentRun) -> dict[str, Any]
         "model_provider_id": run.model_profile_snapshot_json["provider_id"],
         "model_profile_version": run.model_profile_snapshot_json["version"],
         "model_profile_hash": run.model_profile_hash,
+        "fallback_model_provider_ids": [
+            item["profile"]["provider_id"]
+            for item in run.fallback_model_profiles_json
+        ],
+        "fallback_model_profiles_hash": run.fallback_model_profiles_hash,
+        "routing_reason": run.routing_reason,
         "attempt_count": run.attempt_count,
         "tool_invocation_count": run.tool_invocation_count,
         "delivery_intent_count": run.delivery_intent_count,

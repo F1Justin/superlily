@@ -9,7 +9,7 @@
 ## 当前切片
 
 当前实现包含 **5a planner-only shadow** 和尚未生产签署的 **5b 单工具 Wolfram
-执行环**。数据库 head 为 `0022_agent_tool_loops`，运行时仍默认
+执行环**。数据库 head 为 `0023_agent_model_routes`，运行时仍默认
 `SUPERLILY_AGENT_MODE=off`。显式切到 `shadow` 时：
 
 - `AgentRun` 的 `tool_invocation_count` 与 `delivery_intent_count` 由数据库约束固定为
@@ -98,12 +98,21 @@ Core 按冻结的 cache-hit、cache-miss 和 output 价格分别复算 attempt �
 群聊文本只允许进入 `public|conversation` profile，不允许 `sensitive` 或
 `administrative`。
 
+`0023_agent_model_routes` 进一步冻结 primary profile、最多三份有序 fallback
+profile、完整 route hash 与 `routing_reason`。fallback 不是“换一个在线模型”：
+Core 在创建 run 时逐份重新校验 Git profile/hash、独立凭据、数据分级、
+context/output 上限和总 attempt 预算；失败后只有当前有序 route 的下一份 Provider
+能读取 planner input。每次 attempt 仍按实际选中 profile 的冻结价格复算，旧 Provider
+不能在 route 已前移后读取或提交新 attempt。5b continuation 使用同一有序 route，
+模型故障不会改变工具 invocation、delivery authority 或确定性命令路径。
+
 ## API 与幂等
 
 - `POST /v1/agent-runs`：admin 创建一份 shadow run。
 - `GET /v1/agent-runs/{run_id}`：admin 查看账本。
-- `GET /v1/agent-runs/{run_id}/planner-input`：只有被绑定的模型 Provider 可读。
-- `POST /v1/agent-runs/{run_id}/attempts`：同一 Provider 回报终态 attempt。
+- `GET /v1/agent-runs/{run_id}/planner-input`：只有当前 route 选中的模型 Provider 可读。
+- `POST /v1/agent-runs/{run_id}/attempts`：当前 Provider 回报终态 attempt；可重试错误
+  才会按冻结 route 前移。
 
 创建和回报均要求幂等键；同键同内容返回既有记录，同键异内容返回冲突。planner input
 明确携带 `tool_execution_authority=false` 与 `delivery_authority=false`。
@@ -138,7 +147,8 @@ missed call、wrong tool、参数无效、禁用工具请求和路由分歧。�
 `0022_agent_tool_loops` 把 proposal、invocation、带来源/边界/分级/长度上限的
 不可信结果和一次模型 continuation 串在独立账本中。初始包硬限制一次调用、深度 1、
 fanout 1、artifact 0；continuation 再提工具一律拒绝，最终结果仍不创建 delivery
-intent。
+intent。`0023_agent_model_routes` 同时覆盖初始 planning 与 continuation 的显式
+Provider failover；不存在未经审阅的隐式降级。
 
 5b 不创建历史检索库，不把 `history.search` 作为退出条件。检索与记忆等待 Phase 8
 的 conversation scope 和保留策略。

@@ -15,6 +15,7 @@ from superlily_contracts import (
     AgentUsage,
     ModelPricing,
     ModelProviderProfile,
+    ModelProviderProfileRef,
     agent_context_hash,
     agent_run_request_hash,
     model_profile_hash,
@@ -82,6 +83,38 @@ def test_model_profile_and_run_request_have_stable_content_identity() -> None:
         creator_type="admin_api",
         creator_id="another-admin",
     )
+
+    fallback = ModelProviderProfileRef(
+        provider_id="provider-model-fallback",
+        version="1.0.0",
+        profile_hash="f" * 64,
+    )
+    routed = AgentRunCreateIn.model_validate(
+        {
+            **payload.model_dump(mode="json"),
+            "fallback_model_profiles": [fallback.model_dump(mode="json")],
+            "routing_reason": "primary_transport_failover",
+        }
+    )
+    assert agent_run_request_hash(
+        routed,
+        creator_type="admin_api",
+        creator_id="core-admin",
+    ) != request_hash
+
+    with pytest.raises(ValidationError):
+        AgentRunCreateIn.model_validate(
+            {
+                **payload.model_dump(mode="json"),
+                "fallback_model_profiles": [
+                    {
+                        "provider_id": payload.model_provider_id,
+                        "version": "1.0.0",
+                        "profile_hash": "f" * 64,
+                    }
+                ],
+            }
+        )
 
 
 def test_phase5_budget_expresses_shadow_and_one_call_execution_bounds() -> None:

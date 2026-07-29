@@ -18,7 +18,7 @@ from superlily_contracts import (
     canonicalize_json_value,
 )
 
-from .agent_run_service import _expected_cost
+from .agent_run_service import _expected_cost, _model_route
 from .auth import InvocationIdentity
 from .models import (
     AgentRun,
@@ -46,6 +46,48 @@ def _not_found() -> HTTPException:
 def _snapshot(value: Any) -> tuple[Any, str, int]:
     canonical = canonicalize_json_value(value)
     return canonical.value, canonical.sha256, len(canonical.canonical_bytes)
+
+
+async def _continuation_route_profile(
+    session: AsyncSession,
+    run: AgentRun,
+    loop: AgentToolLoop,
+) -> tuple[ModelProviderProfile, str]:
+    route = _model_route(run)
+    initial_attempts = list(
+        (
+            await session.scalars(
+                select(AgentRunAttempt)
+                .where(AgentRunAttempt.run_id == run.id)
+                .order_by(AgentRunAttempt.attempt_number)
+            )
+        ).all()
+    )
+    successful = [item for item in initial_attempts if item.outcome == "succeeded"]
+    if not successful:
+        raise RuntimeError("agent tool loop has no successful planner attempt")
+    current_provider = successful[-1].provider_id
+    continuations = list(
+        (
+            await session.scalars(
+                select(AgentToolContinuation)
+                .where(AgentToolContinuation.loop_id == loop.id)
+                .order_by(AgentToolContinuation.attempt_number)
+            )
+        ).all()
+    )
+    if continuations:
+        last = continuations[-1]
+        current_provider = last.provider_id
+        outcome = str(last.report_json["outcome"])
+        if outcome in {"provider_error", "invalid_output", "timed_out"}:
+            for index, (profile, _) in enumerate(route):
+                if profile.provider_id == current_provider and index + 1 < len(route):
+                    return route[index + 1]
+    for profile, profile_hash in route:
+        if profile.provider_id == current_provider:
+            return profile, profile_hash
+    raise RuntimeError("continuation provider is outside the frozen model route")
 
 
 async def _event(
@@ -316,11 +358,10 @@ async def continuation_input(
         raise _not_found()
     loop = await refresh_agent_tool_loop(session, loop)
     run = await session.get(AgentRun, loop.run_id)
-    if (
-        run is None
-        or loop.state != "result_ready"
-        or run.model_profile_snapshot_json.get("provider_id") != provider_id
-    ):
+    if run is None or loop.state != "result_ready":
+        raise _not_found()
+    profile, profile_hash = await _continuation_route_profile(session, run, loop)
+    if profile.provider_id != provider_id:
         raise _not_found()
     return {
         "schema_version": "1.0",
@@ -331,8 +372,9 @@ async def continuation_input(
         "tool_results": [loop.result_json],
         "budget": run.budget_snapshot_json,
         "budget_hash": run.budget_hash,
-        "model_profile": run.model_profile_snapshot_json,
-        "model_profile_hash": run.model_profile_hash,
+        "model_profile": profile.model_dump(mode="json"),
+        "model_profile_hash": profile_hash,
+        "routing_reason": run.routing_reason,
         "deadline_at": run.deadline_at,
         "tool_execution_authority": False,
         "delivery_authority": False,
@@ -369,15 +411,17 @@ async def record_continuation(
         raise _not_found()
     loop = await refresh_agent_tool_loop(session, loop)
     run = await session.get(AgentRun, loop.run_id)
-    if (
-        run is None
-        or loop.state != "result_ready"
-        or run.model_profile_snapshot_json.get("provider_id") != provider_id
-    ):
+    if run is None or loop.state != "result_ready":
+        raise _not_found()
+    profile, active_profile_hash = await _continuation_route_profile(
+        session,
+        run,
+        loop,
+    )
+    if profile.provider_id != provider_id:
         raise _not_found()
     if payload.proposal is not None and payload.proposal.tool_proposals:
         raise _conflict("one-call Phase 5b loop rejects further tool proposals")
-    profile = ModelProviderProfile.model_validate(run.model_profile_snapshot_json)
     if payload.usage.cost_microunits != _expected_cost(profile, payload.usage):
         raise _conflict("continuation cost does not match reviewed pricing")
     prior_attempts = list(
@@ -456,7 +500,7 @@ async def record_continuation(
         reason = "bounded_loop_complete_no_delivery"
         event = "complete"
     elif (
-        payload.outcome in {"provider_error", "invalid_output"}
+        payload.outcome in {"provider_error", "invalid_output", "timed_out"}
         and next_attempt < int(budget["max_model_attempts"])
     ):
         state = "result_ready"
@@ -476,6 +520,8 @@ async def record_continuation(
             "continuation_id": continuation.id,
             "report_hash": report_hash,
             "outcome": payload.outcome,
+            "model_profile_hash": active_profile_hash,
+            "routing_reason": run.routing_reason,
             "total_usage": totals,
             "budget_reasons": exhausted,
             "additional_tool_invocations": 0,

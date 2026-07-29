@@ -38,6 +38,9 @@ DESCRIPTOR_PATH = (
 WOLFRAM_PROVIDER_HEADERS = {
     "Authorization": "Bearer provider-wolfram-secret",
 }
+FALLBACK_MODEL_HEADERS = {
+    "Authorization": "Bearer model-fallback-secret",
+}
 
 
 def _event() -> dict:
@@ -77,6 +80,27 @@ def _profile() -> ModelProviderProfile:
         version="1.0.0",
         title="DeepSeek test planner",
         data_locality="regional",
+        retention_seconds=None,
+        structured_output_protocol="json_object",
+        context_window_tokens=1_000_000,
+        max_output_tokens=384_000,
+        permitted_data_classifications=["conversation"],
+        pricing={
+            "currency": "USD",
+            "input_cache_hit_microunits_per_million_tokens": 0,
+            "input_cache_miss_microunits_per_million_tokens": 1_000_000,
+            "output_microunits_per_million_tokens": 1_000_000,
+        },
+        health_protocol="superlily-model-provider-v1",
+    )
+
+
+def _fallback_profile() -> ModelProviderProfile:
+    return ModelProviderProfile(
+        provider_id="model-fallback",
+        version="1.0.0",
+        title="Fallback test planner",
+        data_locality="global",
         retention_seconds=None,
         structured_output_protocol="json_object",
         context_window_tokens=1_000_000,
@@ -264,7 +288,10 @@ async def _activate_wolfram_canary(client, app) -> tuple[str, str]:
         agent_mode="bounded_readonly",
         tool_execution_mode="canary",
         tool_lease_seconds=10,
-        model_provider_tokens={"deepseek-v4-pro": "deepseek-core-secret"},
+        model_provider_tokens={
+            "deepseek-v4-pro": "deepseek-core-secret",
+            "model-fallback": "model-fallback-secret",
+        },
         provider_tokens={
             **app.state.settings.provider_tokens,
             "provider-wolfram-primary": "provider-wolfram-secret",
@@ -471,12 +498,21 @@ async def test_exact_wolfram_agent_loop_reinjects_untrusted_result_and_retries(
     assert event.status_code == 201, event.text
     profile = _profile()
     profile_hash = model_profile_hash(profile)
+    fallback = _fallback_profile()
+    fallback_hash = model_profile_hash(fallback)
     async with app.state.database.sessions() as session:
         await import_model_profile(
             session,
             profile,
             source_commit="1" * 40,
             bundle_hash=profile_hash,
+            reviewer="phase5-test",
+        )
+        await import_model_profile(
+            session,
+            fallback,
+            source_commit="9" * 40,
+            bundle_hash=fallback_hash,
             reviewer="phase5-test",
         )
     run = await client.post(
@@ -491,6 +527,14 @@ async def test_exact_wolfram_agent_loop_reinjects_untrusted_result_and_retries(
             "model_provider_id": profile.provider_id,
             "model_profile_version": profile.version,
             "model_profile_hash": profile_hash,
+            "fallback_model_profiles": [
+                {
+                    "provider_id": fallback.provider_id,
+                    "version": fallback.version,
+                    "profile_hash": fallback_hash,
+                }
+            ],
+            "routing_reason": "continuation_provider_failover",
             "budget": {
                 "max_model_attempts": 3,
                 "max_model_turns": 2,
@@ -666,11 +710,25 @@ async def test_exact_wolfram_agent_loop_reinjects_untrusted_result_and_retries(
     )
     assert replay.status_code == 200, replay.text
     assert replay.json()["duplicate"] is True
+    old_provider = await client.get(
+        f"/v1/agent-tool-loops/{loop_id}/planner-input",
+        headers={"Authorization": "Bearer deepseek-core-secret"},
+    )
+    assert old_provider.status_code == 404
+    fallback_input = await client.get(
+        f"/v1/agent-tool-loops/{loop_id}/planner-input",
+        headers=FALLBACK_MODEL_HEADERS,
+    )
+    assert fallback_input.status_code == 200, fallback_input.text
+    assert (
+        fallback_input.json()["model_profile"]["provider_id"]
+        == fallback.provider_id
+    )
 
     final = await client.post(
         f"/v1/agent-tool-loops/{loop_id}/attempts",
         headers={
-            "Authorization": "Bearer deepseek-core-secret",
+            **FALLBACK_MODEL_HEADERS,
             "Idempotency-Key": "phase5-wolfram-continuation-success",
         },
         json=_model_report(

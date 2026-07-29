@@ -102,7 +102,9 @@ Phase 5a/5b 实现现位于 `codex/phase5-agent-runtime`。`0020_agent_runs` 提
 模型 profile、AgentRun/event/attempt/proposal 账本；`0021_agent_tool_callers` 只为
 Git-gated 非写工具引入 `caller=agent`；`0022_agent_tool_loops` 把一个
 `wolfram.run@1.1.0` proposal、一次 invocation、不可信结果和一次模型 continuation
-收进有界账本。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和离线评分已
+收进有界账本；`0023_agent_model_routes` 冻结 primary/fallback profile、路由原因和
+逐 Provider 重新授权，并使 planning/continuation 的故障切换沿同一有序 route
+fail closed。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和离线评分已
 实现，默认仍为 `off`，平台 delivery 始终为 0。实施权威见
 `docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；双库全量已通过，但此状态不代表
 默认禁用生产部署、shadow/canary、稳定窗口或生产签署已经完成。

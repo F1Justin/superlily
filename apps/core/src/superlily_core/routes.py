@@ -1495,7 +1495,7 @@ async def get_agent_planner_input(
     session: Session,
     authenticated_provider: ModelProviderIdentity,
 ) -> dict:
-    context = await planner_input_for_provider(
+    context, active_profile, active_profile_hash = await planner_input_for_provider(
         session,
         run_id,
         authenticated_provider,
@@ -1509,8 +1509,9 @@ async def get_agent_planner_input(
         "context": context.model_dump(mode="json"),
         "budget": run.budget_snapshot_json,
         "budget_hash": run.budget_hash,
-        "model_profile": run.model_profile_snapshot_json,
-        "model_profile_hash": run.model_profile_hash,
+        "model_profile": active_profile.model_dump(mode="json"),
+        "model_profile_hash": active_profile_hash,
+        "routing_reason": run.routing_reason,
         "deadline_at": run.deadline_at,
         "tool_execution_authority": False,
         "delivery_authority": False,

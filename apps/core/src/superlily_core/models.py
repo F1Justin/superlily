@@ -1887,6 +1887,15 @@ class AgentRun(Base):
     )
     model_profile_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     model_profile_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    fallback_model_profiles_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+    )
+    fallback_model_profiles_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    routing_reason: Mapped[str] = mapped_column(String(128), nullable=False)
     mode: Mapped[str] = mapped_column(String(32), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -3677,7 +3686,9 @@ _AGENT_RUN_SQLITE_AUTHORITY_UPDATE = DDL(
         context_snapshot_json, context_recipe_version, context_hash,
         eligible_tools_json, eligible_tools_hash,
         budget_snapshot_json, budget_hash, model_profile_id,
-        model_profile_snapshot_json, model_profile_hash, mode,
+        model_profile_snapshot_json, model_profile_hash,
+        fallback_model_profiles_json, fallback_model_profiles_hash,
+        routing_reason, mode,
         tool_invocation_count, delivery_intent_count, deadline_at, created_at
     ON agent_runs
     BEGIN
@@ -3756,6 +3767,9 @@ _AGENT_RUN_POSTGRES_FUNCTION = DDL(
            OR NEW.model_profile_id IS DISTINCT FROM OLD.model_profile_id
            OR NEW.model_profile_snapshot_json::text IS DISTINCT FROM OLD.model_profile_snapshot_json::text
            OR NEW.model_profile_hash IS DISTINCT FROM OLD.model_profile_hash
+           OR NEW.fallback_model_profiles_json::text IS DISTINCT FROM OLD.fallback_model_profiles_json::text
+           OR NEW.fallback_model_profiles_hash IS DISTINCT FROM OLD.fallback_model_profiles_hash
+           OR NEW.routing_reason IS DISTINCT FROM OLD.routing_reason
            OR NEW.mode IS DISTINCT FROM OLD.mode
            OR NEW.tool_invocation_count IS DISTINCT FROM OLD.tool_invocation_count
            OR NEW.delivery_intent_count IS DISTINCT FROM OLD.delivery_intent_count

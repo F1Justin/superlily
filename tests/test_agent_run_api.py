@@ -70,6 +70,34 @@ def profile() -> ModelProviderProfile:
     )
 
 
+def fallback_profile(
+    *,
+    permitted_data_classifications: list[str] | None = None,
+) -> ModelProviderProfile:
+    return ModelProviderProfile(
+        provider_id="provider-model-fallback",
+        version="1.0.0",
+        title="Planner fallback test model",
+        data_locality="global",
+        retention_seconds=None,
+        structured_output_protocol="json_object",
+        context_window_tokens=16_384,
+        max_output_tokens=2_048,
+        permitted_data_classifications=(
+            ["conversation"]
+            if permitted_data_classifications is None
+            else permitted_data_classifications
+        ),
+        pricing={
+            "currency": "USD",
+            "input_cache_hit_microunits_per_million_tokens": 2_000_000,
+            "input_cache_miss_microunits_per_million_tokens": 2_000_000,
+            "output_microunits_per_million_tokens": 2_000_000,
+        },
+        health_protocol="superlily-model-provider-v1",
+    )
+
+
 def run_payload(
     profile_hash: str,
     *,
@@ -322,6 +350,160 @@ async def test_failed_model_attempt_can_retry_but_never_execute(client, app) -> 
     assert second.json()["tool_invocation_count"] == 0
 
 
+async def test_reviewed_fallback_reauthorizes_data_pricing_and_provider_order(
+    client,
+    app,
+) -> None:
+    primary_hash, source_event_id = await prepare_shadow(client, app)
+    fallback = fallback_profile()
+    fallback_hash = model_profile_hash(fallback)
+    app.state.settings = replace(
+        app.state.settings,
+        model_provider_tokens={
+            "provider-model-shadow": "model-shadow-secret",
+            "provider-model-fallback": "model-fallback-secret",
+        },
+    )
+    async with app.state.database.sessions() as session:
+        await import_model_profile(
+            session,
+            fallback,
+            source_commit="2" * 40,
+            bundle_hash=fallback_hash,
+            reviewer="phase5-fallback-reviewer",
+        )
+    payload = run_payload(primary_hash, source_event_id=source_event_id)
+    payload["fallback_model_profiles"] = [
+        {
+            "provider_id": fallback.provider_id,
+            "version": fallback.version,
+            "profile_hash": fallback_hash,
+        }
+    ]
+    payload["routing_reason"] = "primary_transport_failover"
+    created = await client.post(
+        "/v1/agent-runs",
+        json=payload,
+        headers=admin_headers("phase5-fallback-run"),
+    )
+    assert created.status_code == 201, created.text
+    run_id = created.json()["run_id"]
+    assert created.json()["fallback_model_provider_ids"] == [
+        "provider-model-fallback"
+    ]
+    premature = await client.get(
+        f"/v1/agent-runs/{run_id}/planner-input",
+        headers={"Authorization": "Bearer model-fallback-secret"},
+    )
+    assert premature.status_code == 404
+    now = datetime.now(timezone.utc).isoformat()
+    failed = await client.post(
+        f"/v1/agent-runs/{run_id}/attempts",
+        headers=model_headers("phase5-primary-provider-error"),
+        json={
+            "schema_version": "1.0",
+            "outcome": "provider_error",
+            "model_request_id": "primary-error",
+            "raw_output_sha256": "e" * 64,
+            "usage": {
+                "input_tokens": 4,
+                "input_cache_hit_tokens": 0,
+                "input_cache_miss_tokens": 4,
+                "output_tokens": 0,
+                "total_tokens": 4,
+                "cost_microunits": 4,
+                "input_bytes": 100,
+                "output_bytes": 0,
+                "wall_time_ms": 10,
+            },
+            "proposal": None,
+            "safe_error_code": "provider_transport_error",
+            "started_at": now,
+            "completed_at": now,
+        },
+    )
+    assert failed.status_code == 201, failed.text
+    assert failed.json()["state"] == "context_ready"
+    old_provider = await client.get(
+        f"/v1/agent-runs/{run_id}/planner-input",
+        headers={"Authorization": "Bearer model-shadow-secret"},
+    )
+    assert old_provider.status_code == 404
+    routed = await client.get(
+        f"/v1/agent-runs/{run_id}/planner-input",
+        headers={"Authorization": "Bearer model-fallback-secret"},
+    )
+    assert routed.status_code == 200, routed.text
+    assert routed.json()["model_profile"]["provider_id"] == fallback.provider_id
+    assert routed.json()["model_profile_hash"] == fallback_hash
+    success = successful_attempt()
+    success["model_request_id"] = "fallback-success"
+    success["usage"]["cost_microunits"] = 30
+    completed = await client.post(
+        f"/v1/agent-runs/{run_id}/attempts",
+        json=success,
+        headers={
+            "Authorization": "Bearer model-fallback-secret",
+            "Idempotency-Key": "phase5-fallback-success",
+        },
+    )
+    assert completed.status_code == 201, completed.text
+    assert completed.json()["state"] == "shadow_complete"
+    async with app.state.database.sessions() as session:
+        attempts = list(
+            (
+                await session.scalars(
+                    select(AgentRunAttempt)
+                    .where(AgentRunAttempt.run_id == run_id)
+                    .order_by(AgentRunAttempt.attempt_number)
+                )
+            ).all()
+        )
+    assert [item.provider_id for item in attempts] == [
+        "provider-model-shadow",
+        "provider-model-fallback",
+    ]
+    assert attempts[-1].model_profile_hash == fallback_hash
+
+
+async def test_fallback_profile_must_reauthorize_conversation_data(
+    client,
+    app,
+) -> None:
+    primary_hash, source_event_id = await prepare_shadow(client, app)
+    fallback = fallback_profile(permitted_data_classifications=["public"])
+    fallback_hash = model_profile_hash(fallback)
+    app.state.settings = replace(
+        app.state.settings,
+        model_provider_tokens={
+            "provider-model-shadow": "model-shadow-secret",
+            "provider-model-fallback": "model-fallback-secret",
+        },
+    )
+    async with app.state.database.sessions() as session:
+        await import_model_profile(
+            session,
+            fallback,
+            source_commit="2" * 40,
+            bundle_hash=fallback_hash,
+            reviewer="phase5-fallback-reviewer",
+        )
+    payload = run_payload(primary_hash, source_event_id=source_event_id)
+    payload["fallback_model_profiles"] = [
+        {
+            "provider_id": fallback.provider_id,
+            "version": fallback.version,
+            "profile_hash": fallback_hash,
+        }
+    ]
+    denied = await client.post(
+        "/v1/agent-runs",
+        json=payload,
+        headers=admin_headers("phase5-fallback-data-denied"),
+    )
+    assert denied.status_code == 409
+
+
 async def test_shadow_budget_exhaustion_is_terminal_without_authority(
     client,
     app,
@@ -424,6 +606,23 @@ async def test_agent_evidence_and_terminal_run_are_database_guarded(client, app)
                 update(AgentRun)
                 .where(AgentRun.id == run_id)
                 .values(state="context_ready")
+            )
+            await session.commit()
+        await session.rollback()
+
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run_id)
+                .values(
+                    fallback_model_profiles_json=[
+                        {
+                            "profile_id": "forged",
+                            "profile": profile().model_dump(mode="json"),
+                            "profile_hash": "f" * 64,
+                        }
+                    ]
+                )
             )
             await session.commit()
         await session.rollback()

@@ -35,3 +35,12 @@
 
 canonical profile/hash、不可变导入、token 域隔离、错误 Provider 拒绝、数据分级
 拒绝、价格复算、上下文上限、同键异内容冲突和 Provider 故障不影响命令路径。
+
+## 2026-07-29 实现注记
+
+首个真实 profile 已选定为 Git-reviewed `deepseek-v4-pro@1.0.0`，实现直接使用
+`httpx` 调用审阅过的官方 OpenAI-compatible 端点，不引入厂商 SDK。
+`0023_agent_model_routes` 把 primary、最多三份有序 fallback、route hash 与
+`routing_reason` 冻结进 AgentRun。每份 fallback 在接收数据前重新校验 profile
+hash、独立凭据、数据分级、上下文/输出上限和总 attempt 预算；失败后旧 Provider
+失去 planner-input 读取权，实际 attempt 成本按新 profile 快照复算。

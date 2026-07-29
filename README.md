@@ -30,7 +30,8 @@ reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。�
 61 小时稳定窗口的生产签署。当前 Phase 5 已实现但尚未生产签署：5a 提供默认关闭的
 DeepSeek planner-only `AgentRun` shadow；5b 只允许经 Git-bound canary 把一个
 `wolfram.run@1.1.0` proposal 提升为一次受限调用，并把有来源、限长的不可信结果回注
-模型一次。平台发送仍为 0，status 插件不是 Agent 前置门。实现边界见
+模型一次。模型故障切换只能沿 run 中冻结、逐份重新授权的显式 profile route 前移。
+平台发送仍为 0，status 插件不是 Agent 前置门。实现边界见
 [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
