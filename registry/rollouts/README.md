@@ -46,3 +46,13 @@
 - 最多 1 次调用，只接受固定 JSON 字段中的 LaTeX，生成 1 张有界 PNG，不触发 QQ
   发送；
 - 固定 `x^2+y^2=z^2` canary 完成后立即暂停，旧 `/tex` 继续作为回滚入口。
+
+`phase5-wolfram-agent-20260730.json` 是 Phase 5b 首次自然语言只读计算计划：
+
+- 只允许 `agent + system:system:phase5-acceptance + wolfram.run@1.1.0 +
+  provider-wolfram-primary`，精确绑定 descriptor `active/rv2` 与 Provider
+  `active/rv1`；
+- 最多 1 次调用，固定后台 `2+2` 验收，只返回有界、不可信文本结果，不生成 artifact，
+  不创建 delivery intent，也不触发 QQ/NapCat；
+- continuation 只能形成最终模型内容，不能再调用工具；验收后立即暂停计划，并将
+  Agent 回落 `off`、工具执行回落 `ledger_only`。

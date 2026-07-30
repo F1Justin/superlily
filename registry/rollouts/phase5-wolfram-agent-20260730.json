@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "phase5-wolfram-agent-20260730",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-30T12:45:00+08:00",
+  "expires_at": "2026-07-30T15:30:00+08:00",
+  "max_invocations": 1,
+  "rollback_mode": "ledger_only",
+  "reason": "Phase 5b AgentRun 在内部 system 会话中的单次 Wolfram 计算与零平台发送生产验收",
+  "items": [
+    {
+      "item_id": "phase5-wolfram-agent-system",
+      "tool_id": "wolfram.run",
+      "descriptor_version": "1.1.0",
+      "descriptor_hash": "ec3375907804f588d765ed643b9c8481eb2d4a578924a614652cca64d0414da4",
+      "canonical_conversation": "system:system:phase5-acceptance",
+      "caller": "agent",
+      "provider_id": "provider-wolfram-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    }
+  ]
+}
