@@ -116,16 +116,19 @@ skipped、PostgreSQL 17 551 passed、生产备份与隔离恢复、`0019 -> 0023
 内部探针的 delivery intent 为 0。Phase 5a/5b 因而完成生产签署；证据见
 `docs/PHASE5_PRODUCTION_ACCEPTANCE.md`。
 
-`0024_agent_product_flow` 现已实现但尚未完成生产签署。它只把 Nekro 的明确
-mention/reply 接到 Core-owned `AgentInteraction`、system-owned `AgentRun`、常驻
+`0024_agent_product_flow` 已于 2026-07-30 完成长期测试群生产 canary。它只把
+Nekro 的明确 mention/reply 接到 Core-owned `AgentInteraction`、system-owned
+`AgentRun`、常驻
 DeepSeek Provider、可选一次 `wolfram.run@1.1.0` 和一次 fenced 原生文本 delivery；
 精确 scope 仅为长期测试群 `qq:group:708309706`。其他群、普通未定向消息、私聊、
 历史检索、文件/shell/write 与 5c authority 均保持关闭。单群同时最多 1 个 run、
 每 60 秒最多 4 次、每日最多 48 次；每 run 费用硬上限为 0.10 USD，因此这份测试
 配置每日模型费用的保守上界为 4.80 USD。发布前 SQLite 全量为 556 passed/4
-skipped，隔离 PostgreSQL 17 为 560 passed；`0024` 仍须经过默认关闭迁移、Git-bound
-exact rollout、真实群发送、回滚演练和稳定窗口后才能签署。实施权威见
-`docs/PHASE5_AGENT_RUN.md`、ADR 0017 和 `DEPLOYMENT.md` 第 20 节。
+skipped，隔离 PostgreSQL 17 为 560 passed；默认关闭迁移、Git-bound exact rollout、
+真实群发送、回滚演练和稳定窗口均已完成。生产真实 direct、Wolfram、幂等、Provider
+故障恢复与 pause/reactivate 证据见
+`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`。实施权威见 `docs/PHASE5_AGENT_RUN.md`、
+ADR 0017 和 `DEPLOYMENT.md` 第 20 节。
 
 ## Sequencing rules
 

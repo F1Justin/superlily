@@ -1114,7 +1114,9 @@ Agent invocation 或关联平台发送。完整 ID、hash、usage、备份和稳
 
 ### 20.2 凭据与精确配置
 
-以下三份 secret 必须各自随机、0600、互不相同且不进入 Git、日志或 shell history：
+以下三份 secret 必须各自随机、互不相同且不进入 Git、日志或 shell history。
+直接由当前用户进程读取时使用 0600；通过 Compose 只读挂载给 uid 65532 容器时，
+使用 host owner + container gid 65532、mode 0640，禁止 0644 或 world-readable：
 
 - `run/agent/model-provider.token`：只允许 Model Provider 拉取 planner input 和提交
   attempt；

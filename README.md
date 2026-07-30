@@ -36,10 +36,11 @@ exact canary 把一个
 status 插件不是 Agent 前置门。实现边界见
 [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)，签署证据见
 [`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)。
-后续 `0024_agent_product_flow` 已完成默认关闭实现：仅长期测试群 `708309706`
+后续 `0024_agent_product_flow` 已完成生产 canary：仅长期测试群 `708309706`
 的明确 @/回复可进入 Core-owned Agent 流程，使用常驻 DeepSeek、可选一次 Wolfram
-和一次 fenced 原生文字回复；其他群、历史检索及写操作仍关闭。它尚待真实部署、
-回滚与稳定窗口签署。
+和一次 fenced 原生文字回复；其他群、历史检索及写操作仍关闭。真实 direct、
+Wolfram、幂等、模型 Provider 故障和正式 pause/reactivate 回滚证据见
+[`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`](docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md)。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -76,6 +77,8 @@ status 插件不是 Agent 前置门。实现边界见
   [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)
 - 第五阶段 5a/5b 生产签署：
   [`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)
+- 第五阶段测试群 Agent 产品签署：
+  [`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`](docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md)
 - 群聊 Agent 产品与实施共识：
   [`docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`](docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md)
 - 采集与归档共识：
