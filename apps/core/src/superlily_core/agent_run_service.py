@@ -239,6 +239,8 @@ async def _eligible_tool_summaries(
         if key not in effective_keys:
             continue
         descriptor = ToolDescriptor.model_validate(record.descriptor_json)
+        if not descriptor.natural_language or "agent" not in descriptor.allowed_callers:
+            continue
         if descriptor.side_effect not in {"none", "read", "compute"}:
             continue
         if descriptor.permission != "public":
@@ -446,7 +448,7 @@ async def create_agent_run(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[AgentRun, bool]:
-    if identity.caller != "admin_api":
+    if identity.caller not in {"admin_api", "system"}:
         raise _not_found()
     if settings.agent_mode != "shadow":
         if settings.agent_mode != "bounded_readonly":

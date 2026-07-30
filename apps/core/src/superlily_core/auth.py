@@ -10,7 +10,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 @dataclass(frozen=True, slots=True)
 class InvocationIdentity:
-    caller: Literal["command", "agent", "admin_api"]
+    caller: Literal["command", "agent", "admin_api", "system"]
     subject: str
 
 

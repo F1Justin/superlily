@@ -196,6 +196,12 @@ from .agent_runtime import (
     agent_run_request_hash,
     model_profile_hash,
 )
+from .agent_product import (
+    AgentDispatchIn,
+    AgentTextDeliveryCompleteIn,
+    AgentTextDeliveryLeaseIn,
+    AgentTextDeliveryLeaseOut,
+)
 
 __all__ = [
     "AGENT_CONTEXT_RECIPE_VERSION",
@@ -221,6 +227,10 @@ __all__ = [
     "agent_context_hash",
     "agent_run_request_hash",
     "model_profile_hash",
+    "AgentDispatchIn",
+    "AgentTextDeliveryCompleteIn",
+    "AgentTextDeliveryLeaseIn",
+    "AgentTextDeliveryLeaseOut",
     "API_SCHEMA_VERSION",
     "Attachment",
     "AttemptEvent",

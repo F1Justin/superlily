@@ -6,6 +6,7 @@ import base64
 import json
 import math
 import os
+from pathlib import Path
 import resource
 import sys
 from typing import Any
@@ -23,11 +24,38 @@ def _environment_safe() -> bool:
     return set(os.environ).issubset(_SAFE_ENVIRONMENT_KEYS)
 
 
+def _linux_peak_rss_bytes(status_source: str) -> int | None:
+    """Read the post-exec process high-water mark from Linux procfs.
+
+    ``ru_maxrss`` can retain the parent process high-water mark across the
+    fork/exec path used by ``posix_spawn``.  ``VmHWM`` belongs to the new
+    address space and therefore measures this worker rather than its Provider
+    or a pytest parent.
+    """
+
+    for line in status_source.splitlines():
+        name, separator, value = line.partition(":")
+        if name != "VmHWM" or not separator:
+            continue
+        fields = value.split()
+        if len(fields) != 2 or fields[1] != "kB" or not fields[0].isdigit():
+            return None
+        return int(fields[0]) * 1_024
+    return None
+
+
 def _usage() -> tuple[int, int]:
     usage = resource.getrusage(resource.RUSAGE_SELF)
     cpu_ms = max(0, math.ceil((usage.ru_utime + usage.ru_stime) * 1_000))
-    # Linux 的 ru_maxrss 单位是 KiB；生产 Provider 镜像固定为 Linux。
-    memory_peak_bytes = max(0, int(usage.ru_maxrss) * 1_024)
+    try:
+        memory_peak_bytes = _linux_peak_rss_bytes(
+            Path("/proc/self/status").read_text(encoding="ascii")
+        )
+    except (OSError, UnicodeError):
+        memory_peak_bytes = None
+    if memory_peak_bytes is None:
+        # Linux 的 ru_maxrss 单位是 KiB；生产 Provider 镜像固定为 Linux。
+        memory_peak_bytes = max(0, int(usage.ru_maxrss) * 1_024)
     return cpu_ms, memory_peak_bytes
 
 

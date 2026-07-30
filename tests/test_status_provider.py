@@ -25,6 +25,7 @@ from superlily_status_provider.main import (
     _next_idle_poll_seconds,
 )
 from superlily_status_provider.status import StatusInspector, status_implementation_hash
+from superlily_status_provider.worker import _linux_peak_rss_bytes
 
 
 AUTHORITY_PATH = (
@@ -54,6 +55,16 @@ def test_real_status_authority_is_bound_to_the_standalone_implementation() -> No
         "output_bytes": "hard",
         "wall_time": "hard",
     }
+
+
+def test_status_worker_reads_post_exec_linux_memory_high_water_mark() -> None:
+    assert (
+        _linux_peak_rss_bytes(
+            "Name:\tpython\nVmPeak:\t400000 kB\nVmHWM:\t42123 kB\nVmRSS:\t40000 kB\n"
+        )
+        == 42_123 * 1_024
+    )
+    assert _linux_peak_rss_bytes("VmHWM:\tnot-a-number kB\n") is None
 
 
 def test_status_provider_idle_poll_backoff_is_bounded_and_resets_after_work() -> None:

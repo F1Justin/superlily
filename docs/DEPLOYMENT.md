@@ -1089,3 +1089,105 @@ preview/CAS 暂停为 `paused/rv3`。
 无 pending/quarantine/gap，命令 Registry 新鲜，相关容器无重启/OOM，且没有新增
 Agent invocation 或关联平台发送。完整 ID、hash、usage、备份和稳定性证据见
 `PHASE5_PRODUCTION_ACCEPTANCE.md`。
+
+## 20. Phase 5 Agent 产品测试群 canary
+
+本节发布 `0024_agent_product_flow`，只适用于长期测试群 `708309706`。项目所有者
+已经长期授权在该群真实发送模型回复、Wolfram 结果、失败回执和合成探针；其他群仍
+遵守逐次授权。该切片不开放历史检索、文件/shell/write、群管、撤回或 5c 写操作。
+
+### 20.1 发布前不变量
+
+发布 authority 必须来自一个已经推送的完整 commit。发布前记录：
+
+- 工作树、commit 与远端分支；
+- SQLite 与隔离 PostgreSQL 17 的全量结果；
+- `alembic heads` 唯一为 `0024_agent_product_flow`；
+- 生产 `alembic current`、Core/Provider/Nekro 镜像和 restart/OOM 基线；
+- active rollout/attempt、spool pending/quarantine/gap 与现有 Agent 计数；
+- 数据库 dump 的大小、SHA-256，并在隔离 PostgreSQL 17 中完整恢复。
+
+先以 `SUPERLILY_AGENT_PRODUCT_MODE=off`、`SUPERLILY_AGENT_MODE=off` 和原有
+`SUPERLILY_TOOL_EXECUTION_MODE=ledger_only` 构建/迁移 Core。此时四张 0024 表必须
+为空，Nekro 行为和确定性命令不得改变。默认关闭状态验证通过前，不部署 bridge
+1.0.0，也不启动 Model Provider。
+
+### 20.2 凭据与精确配置
+
+以下三份 secret 必须各自随机、0600、互不相同且不进入 Git、日志或 shell history：
+
+- `run/agent/model-provider.token`：只允许 Model Provider 拉取 planner input 和提交
+  attempt；
+- `run/agent/provider-trigger.token`：只允许 Core 触发 resident Provider，payload
+  只有 run/loop ID；
+- `run/agent/deepseek-api-key.token`：从现有 Nekro DeepSeek 配置安全复制，不进入
+  Core。
+
+canary 配置固定为：
+
+```text
+SUPERLILY_AGENT_MODE=bounded_readonly
+SUPERLILY_AGENT_PRODUCT_MODE=canary
+SUPERLILY_AGENT_CANARY_CONVERSATIONS_JSON=["qq:group:708309706"]
+SUPERLILY_AGENT_ENTRY_INSTANCES_JSON=["nekro-agent"]
+SUPERLILY_AGENT_MODEL_PROVIDER_ID=deepseek-v4-pro
+SUPERLILY_AGENT_MODEL_PROFILE_VERSION=1.0.0
+SUPERLILY_AGENT_PROVIDER_TRIGGER_URL=http://deepseek-model-provider:8010
+SUPERLILY_AGENT_MAX_CONCURRENT_PER_CONVERSATION=1
+SUPERLILY_AGENT_RATE_WINDOW_SECONDS=60
+SUPERLILY_AGENT_MAX_INTERACTIONS_PER_WINDOW=4
+SUPERLILY_AGENT_MAX_INTERACTIONS_PER_DAY=48
+SUPERLILY_TOOL_EXECUTION_MODE=canary
+```
+
+Nekro 只设置 `AGENT_ENABLED=true` 与
+`AGENT_CANARY_CHAT_KEYS=onebot_v11-group_708309706`。bridge 必须在 Core 接受并持久化
+interaction 后才 `BLOCK_TRIGGER`；Core 不可达、拒绝或超时时继续原 Nekro 流程。
+
+### 20.3 Git-bound Wolfram authority
+
+从同一完整 commit 导入
+`registry/rollouts/phase5-agent-product-wolfram-708309706-20260730.json`，校验
+plan hash、开始/到期时间、descriptor/resource version、`caller=agent`、
+`provider-wolfram-primary`、精确 conversation 和八次上限。导入只能得到
+`reviewed`；随后通过默认禁用控制面的 preview、重新认证与 CAS 激活，禁止直接改库。
+
+若部署时计划窗口已过，不得修改已提交文件或放宽时间判断；应生成新的短时 plan，
+重新 commit/push/import/activate。canary 结束、达到八次上限或出现异常时，立即正式
+pause，工具执行回落 `ledger_only`。
+
+### 20.4 真实验收
+
+按顺序执行并查询 Core 账本、Provider 日志和 QQ 可见结果：
+
+1. 非定向普通群消息不创建 interaction；
+2. 明确 @/回复的普通问题只产生一次 direct answer、一次 delivery lease/fence 和一条
+   QQ 回复；
+3. 明确要求精确计算的问题只产生一个 `wolfram.run@1.1.0` proposal、一个
+   `caller=agent` invocation、一次 continuation 和一条 QQ 回复；
+4. 重放相同 source event 仍只有一个 interaction 和一个 delivery；
+5. 伪造 conversation/instance/trigger、禁用工具、非法参数、prompt/tool-result
+   injection、预算耗尽和重复等价调用都 fail closed；
+6. 停止 Model Provider 时命令路径仍可用，Agent 不产生工具或重复发送；恢复后新请求
+   可正常完成；
+7. 模拟发送成功但 completion 丢失时，intent 终态为 `ambiguous` 且不自动重发。
+
+任何测试不得把 DeepSeek key、prompt 原文、群历史、lease token 或平台 token 打到
+日志。直接回答和工具回答都必须遵守单群并发/分钟/每日闸门与每 run 0.10 USD 预算。
+
+### 20.5 回滚与签署
+
+故障回滚顺序固定为：
+
+1. pause exact rollout；
+2. Core 改回 `SUPERLILY_AGENT_PRODUCT_MODE=off`、
+   `SUPERLILY_AGENT_MODE=off`、`SUPERLILY_TOOL_EXECUTION_MODE=ledger_only`；
+3. Nekro `AGENT_ENABLED=false`，停止 resident Model Provider；
+4. 确认 active plan/attempt 为零、没有未终态 delivery，命令路径仍正常；
+5. 撤销三份 Agent secret；schema 和 append-only 证据保留，不在故障中 downgrade。
+
+通过真实发送、幂等/注入/预算/故障矩阵后，至少观察一个完整模型/工具 inventory
+周期和 30 分钟稳定窗口。签署必须记录 commit、plan/profile/hash、数据库 head、
+interaction/run/attempt/loop/invocation/delivery/platform message ID、usage/cost、
+rollout counter、回滚演练、容器 restart/OOM、spool 与命令健康。未完成这些证据前，
+0024 只能称为“已实现/部署中”，不能称为生产签署。

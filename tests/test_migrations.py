@@ -182,7 +182,9 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                     "('agent_model_profiles', 'agent_runs', 'agent_run_events', "
                     "'agent_run_attempts', 'agent_tool_proposals', "
                     "'agent_tool_loops', 'agent_tool_loop_events', "
-                    "'agent_tool_continuations')"
+                        "'agent_tool_continuations', 'agent_interactions', "
+                        "'agent_interaction_events', 'agent_text_delivery_intents', "
+                        "'agent_text_delivery_events')"
             ).fetchall()
         }
         agent_triggers = {
@@ -196,7 +198,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             row[1] for row in connection.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
 
-    assert version == ("0023_agent_model_routes",)
+    assert version == ("0024_agent_product_flow",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -370,6 +372,10 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "agent_tool_loops",
         "agent_tool_loop_events",
         "agent_tool_continuations",
+        "agent_interactions",
+        "agent_interaction_events",
+        "agent_text_delivery_intents",
+        "agent_text_delivery_events",
     }
     assert agent_triggers == {
         "agent_model_profiles_no_update",
@@ -390,6 +396,16 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         "agent_tool_loops_authority_no_update",
         "agent_tool_loops_no_delete",
         "agent_tool_loops_state_guard",
+        "agent_interaction_events_no_update",
+        "agent_interaction_events_no_delete",
+        "agent_text_delivery_events_no_update",
+        "agent_text_delivery_events_no_delete",
+        "agent_interactions_authority_no_update",
+        "agent_interactions_no_delete",
+        "agent_interactions_state_guard",
+        "agent_text_delivery_intents_authority_no_update",
+        "agent_text_delivery_intents_no_delete",
+        "agent_text_delivery_intents_state_guard",
     }
     assert {
         "context_recipe_version",
@@ -612,7 +628,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        assert version == ("0023_agent_model_routes",)
+        assert version == ("0024_agent_product_flow",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -760,7 +776,10 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
                                 "'reject_confirmation_artifact_event_mutation', "
                                 "'reject_agent_evidence_mutation', "
                                 "'guard_agent_run_mutation', "
-                                "'guard_agent_tool_loop_mutation')"
+                                "'guard_agent_tool_loop_mutation', "
+                                "'reject_agent_product_evidence_mutation', "
+                                "'guard_agent_interaction_mutation', "
+                                "'guard_agent_text_delivery_mutation')"
                             )
                         )
                     ).all()
@@ -791,7 +810,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0023_agent_model_routes"
+        assert version == "0024_agent_product_flow"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -830,6 +849,9 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             "reject_agent_evidence_mutation",
             "guard_agent_run_mutation",
             "guard_agent_tool_loop_mutation",
+            "reject_agent_product_evidence_mutation",
+            "guard_agent_interaction_mutation",
+            "guard_agent_text_delivery_mutation",
         }
         alembic("check")
 
@@ -904,6 +926,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0023_agent_model_routes"
+        assert asyncio.run(snapshot())[0] == "0024_agent_product_flow"
     finally:
         alembic("downgrade", "base", check=False)

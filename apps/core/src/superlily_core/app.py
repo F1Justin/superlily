@@ -19,6 +19,7 @@ from .settings import Settings
 from .tool_artifact_service import reap_expired_artifacts
 from .tool_execution_service import reap_expired_attempts
 from .tool_invocation_service import reap_expired_invocations
+from .agent_product_service import advance_agent_product, reap_agent_deliveries
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,23 @@ async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
         await asyncio.sleep(settings.tool_reaper_interval_seconds)
 
 
+async def _run_agent_product(app: FastAPI, database: Database) -> None:
+    """Resume durable product interactions without coupling command ingress to models."""
+
+    while True:
+        settings: Settings = app.state.settings
+        if settings.agent_product_mode == "canary":
+            try:
+                await advance_agent_product(database, settings)
+                async with database.sessions() as session:
+                    await reap_agent_deliveries(session)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Agent product coordinator iteration failed")
+        await asyncio.sleep(settings.agent_coordinator_interval_seconds)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     _install_access_log_filter()
     active_settings = settings or Settings.from_env()
@@ -77,12 +95,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _run_tool_reaper(app, database),
             name="superlily-tool-reaper",
         )
+        agent_product = asyncio.create_task(
+            _run_agent_product(app, database),
+            name="superlily-agent-product",
+        )
         try:
             yield
         finally:
-            reaper.cancel()
-            with suppress(asyncio.CancelledError):
-                await reaper
+            for task in (reaper, agent_product):
+                task.cancel()
+            for task in (reaper, agent_product):
+                with suppress(asyncio.CancelledError):
+                    await task
             await database.dispose()
 
     app = FastAPI(

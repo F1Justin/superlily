@@ -2229,6 +2229,180 @@ class AgentToolContinuation(Base):
     )
 
 
+class AgentInteraction(Base):
+    """Durable Core-owned product flow for one explicitly addressed message."""
+
+    __tablename__ = "agent_interactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_event_id: Mapped[str] = mapped_column(
+        ForeignKey("source_events.id", ondelete="RESTRICT"), nullable=False
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="RESTRICT")
+    )
+    loop_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT")
+    )
+    conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    reply_to_platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    trigger_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "source_event_id", name="uq_agent_interaction_source"),
+        UniqueConstraint("run_id", name="uq_agent_interaction_run"),
+        UniqueConstraint("loop_id", name="uq_agent_interaction_loop"),
+        CheckConstraint(
+            "conversation_type IN ('group', 'private')",
+            name="ck_agent_interaction_conversation_type",
+        ),
+        CheckConstraint(
+            "trigger_kind IN ('mention', 'reply', 'explicit')",
+            name="ck_agent_interaction_trigger_kind",
+        ),
+        CheckConstraint(
+            "state IN ('accepted', 'planning', 'tool_pending', 'continuing', "
+            "'delivery_pending', 'succeeded', 'failed', 'ambiguous', 'expired')",
+            name="ck_agent_interaction_state",
+        ),
+        CheckConstraint("resource_version >= 1", name="ck_agent_interaction_version"),
+        CheckConstraint(
+            "((state IN ('succeeded', 'failed', 'ambiguous', 'expired') "
+            "AND terminal_at IS NOT NULL) OR "
+            "(state NOT IN ('succeeded', 'failed', 'ambiguous', 'expired') "
+            "AND terminal_at IS NULL))",
+            name="ck_agent_interaction_terminal",
+        ),
+        Index("ix_agent_interactions_state_updated", "state", "updated_at"),
+        Index("ix_agent_interactions_conversation_created", "conversation_key", "created_at"),
+    )
+
+
+class AgentInteractionEvent(Base):
+    __tablename__ = "agent_interaction_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    interaction_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_interactions.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "interaction_id", "sequence", name="uq_agent_interaction_event_sequence"
+        ),
+        CheckConstraint("sequence >= 1", name="ck_agent_interaction_event_sequence"),
+        Index("ix_agent_interaction_events_created", "interaction_id", "created_at"),
+    )
+
+
+class AgentTextDeliveryIntent(Base):
+    """One fenced native-text send owned by Core and leased by an adapter."""
+
+    __tablename__ = "agent_text_delivery_intents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    interaction_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_interactions.id", ondelete="RESTRICT"), nullable=False
+    )
+    instance_id: Mapped[str] = mapped_column(
+        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    reply_to_platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    fence: Mapped[int] = mapped_column(Integer, nullable=False)
+    lease_token_hash: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    platform_message_id: Mapped[str | None] = mapped_column(String(512))
+    safe_error_code: Mapped[str | None] = mapped_column(String(128))
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("interaction_id", name="uq_agent_text_delivery_interaction"),
+        CheckConstraint(
+            "conversation_type IN ('group', 'private')",
+            name="ck_agent_text_delivery_conversation_type",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'leased', 'succeeded', 'failed', 'ambiguous', 'expired')",
+            name="ck_agent_text_delivery_state",
+        ),
+        CheckConstraint("fence >= 0", name="ck_agent_text_delivery_fence"),
+        CheckConstraint(
+            "((state = 'pending' AND fence = 0 AND lease_token_hash IS NULL "
+            "AND lease_expires_at IS NULL AND terminal_at IS NULL) OR "
+            "(state = 'leased' AND fence >= 1 AND lease_token_hash IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL AND terminal_at IS NULL) OR "
+            "(state IN ('succeeded', 'failed', 'ambiguous', 'expired') "
+            "AND terminal_at IS NOT NULL))",
+            name="ck_agent_text_delivery_lifecycle",
+        ),
+        Index("ix_agent_text_deliveries_lease", "instance_id", "state", "created_at"),
+    )
+
+
+class AgentTextDeliveryEvent(Base):
+    __tablename__ = "agent_text_delivery_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    intent_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_text_delivery_intents.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    previous_state: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("intent_id", "sequence", name="uq_agent_text_delivery_event_sequence"),
+        CheckConstraint("sequence >= 1", name="ck_agent_text_delivery_event_sequence"),
+        Index("ix_agent_text_delivery_events_created", "intent_id", "created_at"),
+    )
+
+
 _CONFIRMATION_SQLITE_AUTHORITY_UPDATE = DDL(
     """
     CREATE TRIGGER tool_confirmations_authority_no_update
@@ -3669,6 +3843,8 @@ for _agent_evidence_table in (
     AgentRunEvent.__table__,
     AgentRunAttempt.__table__,
     AgentToolProposalRecord.__table__,
+    AgentInteractionEvent.__table__,
+    AgentTextDeliveryEvent.__table__,
 ):
     _install_agent_append_only_triggers(_agent_evidence_table)
 event.listen(
@@ -3830,3 +4006,247 @@ for _agent_run_guard in (
 ):
     event.listen(AgentRun.__table__, "after_create", _agent_run_guard)
 event.listen(AgentRun.__table__, "after_drop", _AGENT_RUN_POSTGRES_DROP)
+
+
+_AGENT_INTERACTION_SQLITE_AUTHORITY = DDL(
+    """
+    CREATE TRIGGER agent_interactions_authority_no_update
+    BEFORE UPDATE OF instance_id, source_event_id, conversation_key,
+        conversation_type, conversation_id, reply_to_platform_message_id,
+        trigger_kind, deadline_at, created_at
+    ON agent_interactions
+    BEGIN SELECT RAISE(ABORT, 'agent interaction authority is immutable'); END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_INTERACTION_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER agent_interactions_no_delete
+    BEFORE DELETE ON agent_interactions
+    BEGIN SELECT RAISE(ABORT, 'agent interaction evidence cannot be deleted'); END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_INTERACTION_SQLITE_STATE = DDL(
+    """
+    CREATE TRIGGER agent_interactions_state_guard
+    BEFORE UPDATE OF run_id, loop_id, state, resource_version, reason_code,
+        terminal_at, updated_at
+    ON agent_interactions
+    BEGIN
+        SELECT CASE WHEN NEW.resource_version != OLD.resource_version + 1
+            THEN RAISE(ABORT, 'agent interaction version must increase by one') END;
+        SELECT CASE WHEN NOT (
+            (OLD.state = 'accepted' AND NEW.state IN ('planning', 'failed', 'expired')) OR
+            (OLD.state = 'planning' AND NEW.state IN (
+                'tool_pending', 'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'tool_pending' AND NEW.state IN (
+                'continuing', 'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'continuing' AND NEW.state IN (
+                'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'delivery_pending' AND NEW.state IN (
+                'succeeded', 'failed', 'ambiguous', 'expired'
+            ))
+        ) THEN RAISE(ABORT, 'agent interaction transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM agent_interaction_events
+            WHERE interaction_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN RAISE(ABORT, 'agent interaction event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_INTERACTION_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_agent_interaction_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'agent interaction evidence cannot be deleted';
+        END IF;
+        IF NEW.instance_id IS DISTINCT FROM OLD.instance_id
+           OR NEW.source_event_id IS DISTINCT FROM OLD.source_event_id
+           OR NEW.conversation_key IS DISTINCT FROM OLD.conversation_key
+           OR NEW.conversation_type IS DISTINCT FROM OLD.conversation_type
+           OR NEW.conversation_id IS DISTINCT FROM OLD.conversation_id
+           OR NEW.reply_to_platform_message_id IS DISTINCT FROM OLD.reply_to_platform_message_id
+           OR NEW.trigger_kind IS DISTINCT FROM OLD.trigger_kind
+           OR NEW.deadline_at IS DISTINCT FROM OLD.deadline_at
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'agent interaction authority is immutable';
+        END IF;
+        IF NEW.resource_version != OLD.resource_version + 1 THEN
+            RAISE EXCEPTION 'agent interaction version must increase by one';
+        END IF;
+        IF NOT (
+            (OLD.state = 'accepted' AND NEW.state IN ('planning', 'failed', 'expired')) OR
+            (OLD.state = 'planning' AND NEW.state IN (
+                'tool_pending', 'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'tool_pending' AND NEW.state IN (
+                'continuing', 'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'continuing' AND NEW.state IN (
+                'delivery_pending', 'failed', 'expired'
+            )) OR
+            (OLD.state = 'delivery_pending' AND NEW.state IN (
+                'succeeded', 'failed', 'ambiguous', 'expired'
+            ))
+        ) THEN
+            RAISE EXCEPTION 'agent interaction transition is not allowed';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM agent_interaction_events
+            WHERE interaction_id = OLD.id
+              AND sequence = NEW.resource_version
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN
+            RAISE EXCEPTION 'agent interaction event is required';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_AGENT_INTERACTION_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER agent_interactions_guard
+    BEFORE UPDATE OR DELETE ON agent_interactions
+    FOR EACH ROW EXECUTE FUNCTION guard_agent_interaction_mutation()
+    """
+).execute_if(dialect="postgresql")
+_AGENT_INTERACTION_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_agent_interaction_mutation()"
+).execute_if(dialect="postgresql")
+for _guard in (
+    _AGENT_INTERACTION_SQLITE_AUTHORITY,
+    _AGENT_INTERACTION_SQLITE_DELETE,
+    _AGENT_INTERACTION_SQLITE_STATE,
+    _AGENT_INTERACTION_POSTGRES_FUNCTION,
+    _AGENT_INTERACTION_POSTGRES_TRIGGER,
+):
+    event.listen(AgentInteraction.__table__, "after_create", _guard)
+event.listen(
+    AgentInteraction.__table__,
+    "after_drop",
+    _AGENT_INTERACTION_POSTGRES_DROP,
+)
+
+
+_AGENT_TEXT_DELIVERY_SQLITE_AUTHORITY = DDL(
+    """
+    CREATE TRIGGER agent_text_delivery_intents_authority_no_update
+    BEFORE UPDATE OF interaction_id, instance_id, conversation_key,
+        conversation_type, conversation_id, reply_to_platform_message_id,
+        content_text, content_sha256, deadline_at, created_at
+    ON agent_text_delivery_intents
+    BEGIN SELECT RAISE(ABORT, 'agent text delivery authority is immutable'); END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_TEXT_DELIVERY_SQLITE_DELETE = DDL(
+    """
+    CREATE TRIGGER agent_text_delivery_intents_no_delete
+    BEFORE DELETE ON agent_text_delivery_intents
+    BEGIN SELECT RAISE(ABORT, 'agent text delivery evidence cannot be deleted'); END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_TEXT_DELIVERY_SQLITE_STATE = DDL(
+    """
+    CREATE TRIGGER agent_text_delivery_intents_state_guard
+    BEFORE UPDATE OF state, fence, lease_token_hash, lease_expires_at,
+        platform_message_id, safe_error_code, terminal_at, updated_at
+    ON agent_text_delivery_intents
+    BEGIN
+        SELECT CASE WHEN NOT (
+            (OLD.state = 'pending' AND NEW.state = 'leased'
+             AND OLD.fence = 0 AND NEW.fence = 1) OR
+            (OLD.state = 'pending' AND NEW.state = 'expired'
+             AND OLD.fence = 0 AND NEW.fence = 0) OR
+            (OLD.state = 'leased' AND NEW.state IN (
+                'succeeded', 'failed', 'ambiguous'
+             ) AND NEW.fence = OLD.fence)
+        ) THEN RAISE(ABORT, 'agent text delivery transition is not allowed') END;
+        SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM agent_text_delivery_events
+            WHERE intent_id = OLD.id
+              AND sequence = CASE WHEN OLD.state = 'pending' THEN 2 ELSE 3 END
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN RAISE(ABORT, 'agent text delivery event is required') END;
+    END
+    """
+).execute_if(dialect="sqlite")
+_AGENT_TEXT_DELIVERY_POSTGRES_FUNCTION = DDL(
+    """
+    CREATE OR REPLACE FUNCTION guard_agent_text_delivery_mutation()
+    RETURNS trigger AS $$
+    DECLARE expected_sequence integer;
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'agent text delivery evidence cannot be deleted';
+        END IF;
+        IF NEW.interaction_id IS DISTINCT FROM OLD.interaction_id
+           OR NEW.instance_id IS DISTINCT FROM OLD.instance_id
+           OR NEW.conversation_key IS DISTINCT FROM OLD.conversation_key
+           OR NEW.conversation_type IS DISTINCT FROM OLD.conversation_type
+           OR NEW.conversation_id IS DISTINCT FROM OLD.conversation_id
+           OR NEW.reply_to_platform_message_id IS DISTINCT FROM OLD.reply_to_platform_message_id
+           OR NEW.content_text IS DISTINCT FROM OLD.content_text
+           OR NEW.content_sha256 IS DISTINCT FROM OLD.content_sha256
+           OR NEW.deadline_at IS DISTINCT FROM OLD.deadline_at
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'agent text delivery authority is immutable';
+        END IF;
+        IF NOT (
+            (OLD.state = 'pending' AND NEW.state = 'leased'
+             AND OLD.fence = 0 AND NEW.fence = 1) OR
+            (OLD.state = 'pending' AND NEW.state = 'expired'
+             AND OLD.fence = 0 AND NEW.fence = 0) OR
+            (OLD.state = 'leased' AND NEW.state IN (
+                'succeeded', 'failed', 'ambiguous'
+             ) AND NEW.fence = OLD.fence)
+        ) THEN
+            RAISE EXCEPTION 'agent text delivery transition is not allowed';
+        END IF;
+        expected_sequence := CASE WHEN OLD.state = 'pending' THEN 2 ELSE 3 END;
+        IF NOT EXISTS (
+            SELECT 1 FROM agent_text_delivery_events
+            WHERE intent_id = OLD.id
+              AND sequence = expected_sequence
+              AND previous_state = OLD.state
+              AND state = NEW.state
+        ) THEN
+            RAISE EXCEPTION 'agent text delivery event is required';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """
+).execute_if(dialect="postgresql")
+_AGENT_TEXT_DELIVERY_POSTGRES_TRIGGER = DDL(
+    """
+    CREATE TRIGGER agent_text_delivery_intents_guard
+    BEFORE UPDATE OR DELETE ON agent_text_delivery_intents
+    FOR EACH ROW EXECUTE FUNCTION guard_agent_text_delivery_mutation()
+    """
+).execute_if(dialect="postgresql")
+_AGENT_TEXT_DELIVERY_POSTGRES_DROP = DDL(
+    "DROP FUNCTION IF EXISTS guard_agent_text_delivery_mutation()"
+).execute_if(dialect="postgresql")
+for _guard in (
+    _AGENT_TEXT_DELIVERY_SQLITE_AUTHORITY,
+    _AGENT_TEXT_DELIVERY_SQLITE_DELETE,
+    _AGENT_TEXT_DELIVERY_SQLITE_STATE,
+    _AGENT_TEXT_DELIVERY_POSTGRES_FUNCTION,
+    _AGENT_TEXT_DELIVERY_POSTGRES_TRIGGER,
+):
+    event.listen(AgentTextDeliveryIntent.__table__, "after_create", _guard)
+event.listen(
+    AgentTextDeliveryIntent.__table__,
+    "after_drop",
+    _AGENT_TEXT_DELIVERY_POSTGRES_DROP,
+)

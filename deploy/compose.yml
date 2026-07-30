@@ -31,6 +31,20 @@ services:
       SUPERLILY_AGENT_CONTEXT_WINDOW_MESSAGES: ${SUPERLILY_AGENT_CONTEXT_WINDOW_MESSAGES:-12}
       SUPERLILY_AGENT_CONTEXT_MESSAGE_CHARS: ${SUPERLILY_AGENT_CONTEXT_MESSAGE_CHARS:-4096}
       SUPERLILY_AGENT_CONTEXT_RETENTION_SECONDS: ${SUPERLILY_AGENT_CONTEXT_RETENTION_SECONDS:-2592000}
+      SUPERLILY_AGENT_PRODUCT_MODE: ${SUPERLILY_AGENT_PRODUCT_MODE:-off}
+      SUPERLILY_AGENT_CANARY_CONVERSATIONS_JSON: ${SUPERLILY_AGENT_CANARY_CONVERSATIONS_JSON:-[]}
+      SUPERLILY_AGENT_ENTRY_INSTANCES_JSON: ${SUPERLILY_AGENT_ENTRY_INSTANCES_JSON:-[]}
+      SUPERLILY_AGENT_MODEL_PROVIDER_ID: ${SUPERLILY_AGENT_MODEL_PROVIDER_ID:-}
+      SUPERLILY_AGENT_MODEL_PROFILE_VERSION: ${SUPERLILY_AGENT_MODEL_PROFILE_VERSION:-}
+      SUPERLILY_AGENT_PROVIDER_TRIGGER_URL: ${SUPERLILY_AGENT_PROVIDER_TRIGGER_URL:-http://deepseek-model-provider:8010}
+      SUPERLILY_AGENT_PROVIDER_TRIGGER_TOKEN_FILE: /run/secrets/agent_provider_trigger_token
+      SUPERLILY_AGENT_COORDINATOR_INTERVAL_SECONDS: ${SUPERLILY_AGENT_COORDINATOR_INTERVAL_SECONDS:-0.5}
+      SUPERLILY_AGENT_DELIVERY_LEASE_SECONDS: ${SUPERLILY_AGENT_DELIVERY_LEASE_SECONDS:-15}
+      SUPERLILY_AGENT_DELIVERY_DEADLINE_SECONDS: ${SUPERLILY_AGENT_DELIVERY_DEADLINE_SECONDS:-120}
+      SUPERLILY_AGENT_MAX_CONCURRENT_PER_CONVERSATION: ${SUPERLILY_AGENT_MAX_CONCURRENT_PER_CONVERSATION:-1}
+      SUPERLILY_AGENT_RATE_WINDOW_SECONDS: ${SUPERLILY_AGENT_RATE_WINDOW_SECONDS:-60}
+      SUPERLILY_AGENT_MAX_INTERACTIONS_PER_WINDOW: ${SUPERLILY_AGENT_MAX_INTERACTIONS_PER_WINDOW:-4}
+      SUPERLILY_AGENT_MAX_INTERACTIONS_PER_DAY: ${SUPERLILY_AGENT_MAX_INTERACTIONS_PER_DAY:-48}
       SUPERLILY_STALE_AFTER_SECONDS: ${SUPERLILY_STALE_AFTER_SECONDS:-90}
       SUPERLILY_CORRELATION_WINDOW_SECONDS: ${SUPERLILY_CORRELATION_WINDOW_SECONDS:-2}
       SUPERLILY_RAW_ENABLED: ${SUPERLILY_RAW_ENABLED:-false}
@@ -78,6 +92,7 @@ services:
       - superlily_artifacts:/var/lib/superlily/artifacts
     secrets:
       - render_backend_token
+      - agent_provider_trigger_token
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,6 +115,46 @@ services:
       core: {}
       bus:
         aliases: [lily-core]
+
+  deepseek-model-provider:
+    profiles: [agent]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      SUPERLILY_MODEL_PROVIDER_CORE_URL: http://lily-core:8000
+      SUPERLILY_MODEL_PROVIDER_TOKEN_FILE: /run/secrets/agent_model_provider_token
+      SUPERLILY_MODEL_PROVIDER_TRIGGER_TOKEN_FILE: /run/secrets/agent_provider_trigger_token
+      SUPERLILY_DEEPSEEK_API_KEY_FILE: /run/secrets/deepseek_api_key
+      SUPERLILY_DEEPSEEK_BASE_URL: https://api.deepseek.com
+      SUPERLILY_DEEPSEEK_TIMEOUT_SECONDS: ${SUPERLILY_DEEPSEEK_TIMEOUT_SECONDS:-30}
+    command: ["superlily-deepseek-provider", "serve"]
+    secrets:
+      - agent_model_provider_token
+      - agent_provider_trigger_token
+      - deepseek_api_key
+    depends_on:
+      lily-core:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health/ready', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bus]
 
   status-provider:
     build:
@@ -277,3 +332,9 @@ networks:
 secrets:
   render_backend_token:
     file: ${SUPERLILY_RENDER_BACKEND_TOKEN_FILE:-../run/render/backend.token}
+  agent_model_provider_token:
+    file: ${SUPERLILY_AGENT_MODEL_PROVIDER_TOKEN_FILE:-../run/agent/model-provider.token}
+  agent_provider_trigger_token:
+    file: ${SUPERLILY_AGENT_PROVIDER_TRIGGER_TOKEN_FILE:-../run/agent/provider-trigger.token}
+  deepseek_api_key:
+    file: ${SUPERLILY_DEEPSEEK_API_KEY_FILE:-../run/agent/deepseek-api-key.token}

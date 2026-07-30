@@ -15,6 +15,8 @@ import nonebot.message as nonebot_message
 from nonebot import get_bots
 from nonebot.adapters.onebot.v11 import Bot as OneBotBot
 from nonebot.adapters.onebot.v11 import Event as OneBotEvent
+from nonebot.adapters.onebot.v11 import Message as OneBotMessage
+from nonebot.adapters.onebot.v11 import MessageSegment as OneBotMessageSegment
 from nonebot.exception import MockApiException
 from nonebot.matcher import current_event
 from nonebot.message import event_postprocessor, event_preprocessor
@@ -54,7 +56,7 @@ from .render_retry import (
     retry_instruction,
 )
 
-BRIDGE_VERSION = "0.9.2"
+BRIDGE_VERSION = "1.0.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -121,6 +123,17 @@ class BridgeConfig(ConfigBase):
         title="Comma-separated exact Nekro chat keys allowed to render",
     )
     RENDER_TIMEOUT_SECONDS: float = Field(default=40.0, ge=5, le=120, title="Render timeout")
+    AGENT_ENABLED: bool = Field(default=False, title="Enable Core-owned Agent entry")
+    AGENT_CANARY_CHAT_KEYS: str = Field(
+        default="",
+        title="Comma-separated exact Nekro chat keys allowed to use Core Agent",
+    )
+    AGENT_DELIVERY_POLL_SECONDS: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=10,
+        title="Core Agent text-delivery poll interval",
+    )
 
 
 config: BridgeConfig = plugin.get_config(BridgeConfig)
@@ -140,6 +153,7 @@ reporter = BackgroundReporter(
     config.SPOOL_MAX_RECORD_BYTES,
 )
 heartbeat_task: asyncio.Task | None = None
+agent_delivery_task: asyncio.Task | None = None
 heartbeat_failures = 0
 last_heartbeat_error: str | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
@@ -235,6 +249,21 @@ def _version_render_blocks(blocks: Any) -> list[dict[str, Any]]:
 def _render_canary_chat_keys() -> frozenset[str]:
     return frozenset(
         item.strip() for item in config.RENDER_CANARY_CHAT_KEYS.split(",") if item.strip()
+    )
+
+
+def _agent_canary_chat_keys() -> frozenset[str]:
+    return frozenset(
+        item.strip() for item in config.AGENT_CANARY_CHAT_KEYS.split(",") if item.strip()
+    )
+
+
+def _agent_entry_allowed(message: ChatMessage) -> bool:
+    return bool(
+        config.AGENT_ENABLED
+        and config.CORE_TOKEN
+        and message.is_tome
+        and message.chat_key in _agent_canary_chat_keys()
     )
 
 
@@ -393,7 +422,12 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
         if conv["type"] == "group":
             fallback_identity["group_id"] = conv["id"]
         native_identity = native_message_identity(message.ext_data, fallback_identity)
-    metadata: dict[str, Any] = {"is_tome": bool(message.is_tome), "chat_key": message.chat_key}
+    metadata: dict[str, Any] = {
+        "is_tome": bool(message.is_tome),
+        "chat_key": message.chat_key,
+    }
+    if message.is_tome:
+        metadata["agent_trigger_kind"] = "reply" if ref_msg_id else "mention"
     if native_identity:
         metadata["native_identity"] = native_identity
     occurred_at = utc_iso(message.send_timestamp)
@@ -475,6 +509,18 @@ async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
                 return MsgSignal.BLOCK_TRIGGER
         else:
             reporter.enqueue(ReportItem("/v1/events", payload, idempotency_key))
+        if _agent_entry_allowed(message):
+            interaction = await reporter.request_agent_interaction(
+                payload,
+                idempotency_key,
+                capture_event=False,
+            )
+            if interaction is not None and interaction.get("accepted") is True:
+                logger.info(
+                    "Lily Core Agent accepted exact canary interaction "
+                    f"{interaction.get('interaction_id')}"
+                )
+                return MsgSignal.BLOCK_TRIGGER
     except Exception:
         logger.exception("Lily Core user-message observation failed open")
     return MsgSignal.CONTINUE
@@ -918,6 +964,96 @@ async def heartbeat_loop() -> None:
         await asyncio.sleep(config.HEARTBEAT_SECONDS)
 
 
+async def _deliver_agent_text(lease: dict[str, Any]) -> None:
+    intent_id = str(lease.get("intent_id") or "")
+    content = str(lease.get("text") or "")
+    expected_hash = str(lease.get("content_sha256") or "")
+    outcome = "failed"
+    platform_message_id: str | None = None
+    safe_error_code: str | None = "delivery_payload_invalid"
+    if (
+        not intent_id
+        or not content
+        or hashlib.sha256(content.encode("utf-8")).hexdigest() != expected_hash
+    ):
+        pass
+    else:
+        bots = list(get_bots().values())
+        bot = bots[0] if bots else None
+        if not isinstance(bot, OneBotBot):
+            safe_error_code = "onebot_unavailable"
+        else:
+            message = OneBotMessage()
+            reply_id = lease.get("reply_to_platform_message_id")
+            if isinstance(reply_id, str) and reply_id:
+                message += OneBotMessageSegment.reply(reply_id)
+            message += OneBotMessageSegment.text(content)
+            future: asyncio.Future[dict[str, str | None]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            receipt_token = _render_send_receipt.set(future)
+            try:
+                if lease.get("conversation_type") == "group":
+                    await bot.send_group_msg(
+                        group_id=int(str(lease["conversation_id"])),
+                        message=message,
+                    )
+                elif lease.get("conversation_type") == "private":
+                    await bot.send_private_msg(
+                        user_id=int(str(lease["conversation_id"])),
+                        message=message,
+                    )
+                else:
+                    raise ValueError("unsupported Agent delivery conversation type")
+                receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
+                outcome = str(receipt.get("outcome") or "ambiguous")
+                platform_message_id = receipt.get("platform_message_id")
+                safe_error_code = receipt.get("safe_error_code")
+            except asyncio.TimeoutError:
+                outcome = "ambiguous"
+                platform_message_id = None
+                safe_error_code = "platform_completion_unknown"
+            except Exception:
+                if future.done() and not future.cancelled():
+                    receipt = future.result()
+                    outcome = str(receipt.get("outcome") or "failed")
+                    platform_message_id = receipt.get("platform_message_id")
+                    safe_error_code = receipt.get("safe_error_code")
+                else:
+                    outcome = "failed"
+                    platform_message_id = None
+                    safe_error_code = "platform_send_failed"
+            finally:
+                _render_send_receipt.reset(receipt_token)
+    await reporter.complete_agent_delivery(
+        intent_id,
+        {
+            "schema_version": "1.0",
+            "instance_id": config.INSTANCE_ID,
+            "fence": lease.get("fence"),
+            "lease_token": lease.get("lease_token"),
+            "outcome": outcome,
+            "platform_message_id": platform_message_id,
+            "safe_error_code": safe_error_code,
+        },
+    )
+
+
+async def agent_delivery_loop() -> None:
+    while True:
+        try:
+            if config.AGENT_ENABLED and get_bots():
+                lease = await reporter.lease_agent_delivery(config.INSTANCE_ID)
+                if lease is not None:
+                    await _deliver_agent_text(lease)
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Lily Core Agent delivery iteration failed")
+        await asyncio.sleep(config.AGENT_DELIVERY_POLL_SECONDS)
+
+
 @plugin.mount_prompt_inject_method(
     name="Lily Core document renderer policy",
     description="Use the reviewed renderer for mixed Chinese text and mathematics in canary chats",
@@ -1251,25 +1387,34 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
 
 @plugin.mount_init_method()
 async def init_bridge() -> None:
-    global heartbeat_task
+    global heartbeat_task, agent_delivery_task
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="nekro-lily-core-heartbeat")
+    agent_delivery_task = asyncio.create_task(
+        agent_delivery_loop(),
+        name="nekro-lily-core-agent-delivery",
+    )
     logger.info("Lily Core bridge started with fail-open durable event capture")
 
 
 @plugin.mount_cleanup_method()
 async def cleanup_bridge() -> None:
-    global heartbeat_task
-    if heartbeat_task:
-        heartbeat_task.cancel()
+    global heartbeat_task, agent_delivery_task
+    for task in (heartbeat_task, agent_delivery_task):
+        if task:
+            task.cancel()
+    for task in (heartbeat_task, agent_delivery_task):
+        if not task:
+            continue
         try:
-            await heartbeat_task
+            await task
         except asyncio.CancelledError:
             pass
-        heartbeat_task = None
+    heartbeat_task = None
+    agent_delivery_task = None
     await reporter.stop()
 
 __all__ = ["plugin"]

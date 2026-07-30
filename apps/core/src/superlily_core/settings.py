@@ -198,6 +198,20 @@ class Settings:
     agent_context_window_messages: int = 12
     agent_context_message_chars: int = 4_096
     agent_context_retention_seconds: int = 2_592_000
+    agent_product_mode: str = "off"
+    agent_canary_conversations: frozenset[str] = field(default_factory=frozenset)
+    agent_entry_instances: frozenset[str] = field(default_factory=frozenset)
+    agent_model_provider_id: str = ""
+    agent_model_profile_version: str = ""
+    agent_provider_trigger_url: str = ""
+    agent_provider_trigger_token: str = field(default="", repr=False)
+    agent_coordinator_interval_seconds: float = 0.5
+    agent_delivery_lease_seconds: int = 15
+    agent_delivery_deadline_seconds: int = 120
+    agent_max_concurrent_per_conversation: int = 1
+    agent_rate_window_seconds: int = 60
+    agent_max_interactions_per_window: int = 4
+    agent_max_interactions_per_day: int = 48
     control_operators: dict[str, ControlOperator] = field(default_factory=dict, repr=False)
     control_allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     control_allowed_origins: frozenset[str] = field(default_factory=frozenset)
@@ -241,6 +255,10 @@ class Settings:
             raise ValueError(
                 "model provider, tool provider, admin, and ingest tokens must be unrelated"
             )
+        if self.agent_provider_trigger_token and self.agent_provider_trigger_token in (
+            all_existing_tokens | set(active_model_provider_tokens)
+        ):
+            raise ValueError("agent provider trigger token must be unrelated to all Core tokens")
         if not 1 <= self.stale_after_seconds <= 86_400:
             raise ValueError("stale_after_seconds must be between 1 and 86400")
         if not 0 <= self.correlation_window_seconds <= 60:
@@ -322,6 +340,48 @@ class Settings:
             raise ValueError(
                 "agent_context_retention_seconds must be between 0 and 31536000"
             )
+        if self.agent_product_mode not in {"off", "canary"}:
+            raise ValueError("agent_product_mode must be off or canary")
+        if self.agent_product_mode == "canary":
+            if (
+                self.agent_mode != "bounded_readonly"
+                or not self.agent_canary_conversations
+                or not self.agent_entry_instances
+                or not self.agent_model_provider_id
+                or not self.agent_model_profile_version
+                or self.agent_model_provider_id not in self.model_provider_tokens
+                or not self.agent_provider_trigger_url
+                or not self.agent_provider_trigger_token
+            ):
+                raise ValueError(
+                    "Agent product canary requires bounded_readonly, exact conversations "
+                    "and instances, reviewed model route, and provider trigger authority"
+                )
+        if self.agent_provider_trigger_url and not re.fullmatch(
+            r"http://[A-Za-z0-9.-]+(?::[0-9]{1,5})?",
+            self.agent_provider_trigger_url,
+        ):
+            raise ValueError("agent_provider_trigger_url must be an exact internal HTTP origin")
+        if self.agent_provider_trigger_token and len(self.agent_provider_trigger_token) < 32:
+            raise ValueError("agent_provider_trigger_token must contain at least 32 characters")
+        if not 0.1 <= self.agent_coordinator_interval_seconds <= 10:
+            raise ValueError("agent_coordinator_interval_seconds must be between 0.1 and 10")
+        if not 5 <= self.agent_delivery_lease_seconds <= 120:
+            raise ValueError("agent_delivery_lease_seconds must be between 5 and 120")
+        if not 30 <= self.agent_delivery_deadline_seconds <= 600:
+            raise ValueError("agent_delivery_deadline_seconds must be between 30 and 600")
+        if not 1 <= self.agent_max_concurrent_per_conversation <= 4:
+            raise ValueError(
+                "agent_max_concurrent_per_conversation must be between 1 and 4"
+            )
+        if not 10 <= self.agent_rate_window_seconds <= 3_600:
+            raise ValueError("agent_rate_window_seconds must be between 10 and 3600")
+        if not 1 <= self.agent_max_interactions_per_window <= 20:
+            raise ValueError(
+                "agent_max_interactions_per_window must be between 1 and 20"
+            )
+        if not 1 <= self.agent_max_interactions_per_day <= 1_000:
+            raise ValueError("agent_max_interactions_per_day must be between 1 and 1000")
         if any(
             not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host)
             or "/" in host
@@ -475,6 +535,51 @@ class Settings:
             ),
             agent_context_retention_seconds=int(
                 os.getenv("SUPERLILY_AGENT_CONTEXT_RETENTION_SECONDS", "2592000")
+            ),
+            agent_product_mode=os.getenv(
+                "SUPERLILY_AGENT_PRODUCT_MODE", "off"
+            ).strip().lower(),
+            agent_canary_conversations=_string_set(
+                os.getenv("SUPERLILY_AGENT_CANARY_CONVERSATIONS_JSON"),
+                variable="SUPERLILY_AGENT_CANARY_CONVERSATIONS_JSON",
+            ),
+            agent_entry_instances=_string_set(
+                os.getenv("SUPERLILY_AGENT_ENTRY_INSTANCES_JSON"),
+                variable="SUPERLILY_AGENT_ENTRY_INSTANCES_JSON",
+            ),
+            agent_model_provider_id=os.getenv(
+                "SUPERLILY_AGENT_MODEL_PROVIDER_ID", ""
+            ).strip(),
+            agent_model_profile_version=os.getenv(
+                "SUPERLILY_AGENT_MODEL_PROFILE_VERSION", ""
+            ).strip(),
+            agent_provider_trigger_url=os.getenv(
+                "SUPERLILY_AGENT_PROVIDER_TRIGGER_URL", ""
+            ).strip().rstrip("/"),
+            agent_provider_trigger_token=_secret_file(
+                os.getenv("SUPERLILY_AGENT_PROVIDER_TRIGGER_TOKEN_FILE"),
+                variable="SUPERLILY_AGENT_PROVIDER_TRIGGER_TOKEN_FILE",
+            ),
+            agent_coordinator_interval_seconds=float(
+                os.getenv("SUPERLILY_AGENT_COORDINATOR_INTERVAL_SECONDS", "0.5")
+            ),
+            agent_delivery_lease_seconds=int(
+                os.getenv("SUPERLILY_AGENT_DELIVERY_LEASE_SECONDS", "15")
+            ),
+            agent_delivery_deadline_seconds=int(
+                os.getenv("SUPERLILY_AGENT_DELIVERY_DEADLINE_SECONDS", "120")
+            ),
+            agent_max_concurrent_per_conversation=int(
+                os.getenv("SUPERLILY_AGENT_MAX_CONCURRENT_PER_CONVERSATION", "1")
+            ),
+            agent_rate_window_seconds=int(
+                os.getenv("SUPERLILY_AGENT_RATE_WINDOW_SECONDS", "60")
+            ),
+            agent_max_interactions_per_window=int(
+                os.getenv("SUPERLILY_AGENT_MAX_INTERACTIONS_PER_WINDOW", "4")
+            ),
+            agent_max_interactions_per_day=int(
+                os.getenv("SUPERLILY_AGENT_MAX_INTERACTIONS_PER_DAY", "48")
             ),
             control_operators=_control_operators(
                 os.getenv("SUPERLILY_CONTROL_OPERATORS_JSON"),

@@ -34,9 +34,61 @@ Git-bound 单次 `wolfram.run@1.1.0` 5b canary、正式 pause、凭据撤销和�
 最终生产恢复 `off + ledger_only`，平台 delivery 为 0；完整签署见
 `PHASE5_PRODUCTION_ACCEPTANCE.md`。
 
+## 0024 用户可见产品切片
+
+无发送 5a/5b 签署之后，`0024_agent_product_flow` 是第一个把既有 authority
+接成真实群聊体验的增量。它不改变模型“只能提案”的边界，链路固定为：
+
+```text
+Nekro 明确 @/回复
+  -> Core 原子 ingest + exact-conversation AgentInteraction
+  -> Core 创建 system-owned AgentRun
+  -> 常驻 DeepSeek Provider 拉取冻结的有界上下文并报告 proposal
+  -> 直接回答，或 Core 精确提升一次 wolfram.run@1.1.0
+  -> 工具结果作为不可信输入回注一次 continuation
+  -> Core 创建一次原生文本 delivery intent
+  -> Nekro adapter lease/fence 发送并提交终态回执
+```
+
+模型 API 的用途是理解当前请求、决定能否直接回答、是否需要唯一 eligible 的
+Wolfram 工具，并在工具结果返回后组织最终答案。发送给 API 的不是整库或全部群史，
+而是现有 `phase5-context-v1` 配方冻结的 system policy、当前消息、明确 reply graph、
+有界最近消息、principal/capability 摘要和 eligible 工具短描述。Core 不持有
+DeepSeek API key；常驻 Model Provider 不持有 Core admin、工具 Provider 或 QQ token。
+
+首批产品 scope 只有：
+
+- Core canonical conversation：`qq:group:708309706`；
+- Nekro chat key：`onebot_v11-group_708309706`；
+- entry instance：`nekro-agent`；
+- 触发：`is_tome=true` 且 bridge 能证明为 mention/reply；
+- 模型：已审阅 `deepseek-v4-pro@1.0.0` profile；
+- 工具：至多一次 `wolfram.run@1.1.0`，仍需 exact Git-bound rollout；
+- 输出：至多一条 8 KiB 原生文本，回复当前 platform message；
+- 失败：安全短回执或不发送；不自动切回 Nekro 的第二套 planner。
+
+`AgentInteraction` 与 `AgentTextDeliveryIntent` 是 Core authority。Model Provider
+触发接口只接收 run/loop ID，再用独立 model-provider token 拉取冻结输入；它没有
+prompt push、任意 source 选择、工具调用或 delivery 接口。Nekro 只有 exact instance
+的 delivery lease，成功发送但 completion 丢失时，lease 到期保守收敛为
+`ambiguous`，不得自动重发。
+
+产品入口还有独立于模型的 Core 硬闸门：同一 conversation 同时最多 1 个未终态
+interaction、60 秒最多接受 4 个、UTC 自然日最多接受 48 个。每个 run 的冻结费用
+上限为 100,000 USD microunits（0.10 USD），所以默认测试群配置即使每次都用满预算，
+每日保守上界也只有 4.80 USD。admission 的查重、并发和配额判断由数据库按精确
+conversation 串行化；重复 source event 先命中幂等记录，不重复占用额度。
+
+项目所有者已把 `708309706` 指定为长期测试群，并长期允许真实模型回复、工具结果、
+渲染结果、失败回执和合成探针；该授权不扩展到其他群、私聊、群管、撤回、配置/
+服务控制或 5c 写操作。原“任何群消息须当次授权”规则改为：除这一精确测试群外继续
+逐次授权。
+
 ## Authority 边界
 
-`AgentRun` 只能由现有 `admin_api` 身份创建。模型 Provider 使用独立
+网络 API 上的 `AgentRun` 仍只能由现有 `admin_api` 身份创建；0024 产品入口只能由
+Core 进程内 `system:agent-product-coordinator-v1` 为已经通过 exact entry 校验的
+`AgentInteraction` 创建，外部 token 不能声明 `caller=system`。模型 Provider 使用独立
 `SUPERLILY_MODEL_PROVIDER_TOKENS_JSON` 身份；该 token 不得与 ingest、admin、
 执行 Provider、render backend 或 artifact secret 重用。模型 Provider 没有创建 run、
 选择别人的 run、调用工具或发送消息的接口。
@@ -191,5 +243,6 @@ prompt 注入、禁用工具、无效参数、等价循环、预算、失败重�
 5a/5b 不开放写调用；现有 confirmation replay/并发消费测试继续保护命令/admin
 路径，但 confirmation caller CHECK 不因 5b 放宽。
 
-生产操作员已禁止向公开群主动发送合成测试内容。Phase 5 默认只使用自动化、后台
-账本和无发送探针；任何群消息必须取得当次明确授权。
+Phase 5 默认只使用自动化、后台账本和无发送探针。唯一长期例外是测试群
+`708309706`，其真实模型回复和合成测试已获持续授权；其他群消息仍须取得当次明确
+授权。

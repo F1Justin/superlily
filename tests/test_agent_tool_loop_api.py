@@ -17,9 +17,13 @@ from superlily_contracts import (
     provider_inventory_snapshot_hash,
 )
 from superlily_core.agent_run_service import import_model_profile
+from superlily_core import agent_product_service
+from superlily_core.agent_product_service import advance_agent_product
 from superlily_core.models import (
+    AgentInteraction,
     AgentToolProposalRecord,
     AgentRunAttempt,
+    AgentTextDeliveryIntent,
     RenderDeliveryIntent,
     ToolDescriptorLifecycleEvent,
     ToolDescriptorRecord,
@@ -282,7 +286,12 @@ async def test_bounded_wolfram_promotion_falls_back_without_exact_canary(
         ) is None
 
 
-async def _activate_wolfram_canary(client, app) -> tuple[str, str]:
+async def _activate_wolfram_canary(
+    client,
+    app,
+    *,
+    canonical_conversation: str = "system:system:phase5-wolfram",
+) -> tuple[str, str]:
     app.state.settings = replace(
         app.state.settings,
         agent_mode="bounded_readonly",
@@ -400,14 +409,14 @@ async def _activate_wolfram_canary(client, app) -> tuple[str, str]:
             "expires_at": (now + timedelta(hours=1)).isoformat(),
             "max_invocations": 1,
             "rollback_mode": "ledger_only",
-            "reason": "One test-only no-delivery Wolfram AgentRun canary",
+            "reason": "One test-only exact Wolfram AgentRun canary",
             "items": [
                 {
                     "item_id": "phase5-wolfram-agent-system",
                     "tool_id": "wolfram.run",
                     "descriptor_version": "1.1.0",
                     "descriptor_hash": loaded.authority.sha256,
-                    "canonical_conversation": "system:system:phase5-wolfram",
+                    "canonical_conversation": canonical_conversation,
                     "caller": "agent",
                     "provider_id": "provider-wolfram-primary",
                     "expected_descriptor_resource_version": 2,
@@ -760,3 +769,235 @@ async def test_exact_wolfram_agent_loop_reinjects_untrusted_result_and_retries(
         assert (
             await session.scalar(select(RenderDeliveryIntent).limit(1))
         ) is None
+
+
+async def test_product_interaction_promotes_one_wolfram_call_and_delivers_once(
+    client,
+    app,
+    monkeypatch,
+) -> None:
+    descriptor_hash, inventory_hash = await _activate_wolfram_canary(
+        client,
+        app,
+        canonical_conversation="qq:group:708309706",
+    )
+    active_profile = _profile()
+    profile_hash = model_profile_hash(active_profile)
+    app.state.settings = replace(
+        app.state.settings,
+        agent_product_mode="canary",
+        agent_canary_conversations=frozenset({"qq:group:708309706"}),
+        agent_entry_instances=frozenset({"nekro-agent"}),
+        agent_model_provider_id=active_profile.provider_id,
+        agent_model_profile_version=active_profile.version,
+        agent_provider_trigger_url="http://deepseek-model-provider:8010",
+        agent_provider_trigger_token="trigger-secret-that-is-at-least-32-bytes",
+    )
+    async with app.state.database.sessions() as session:
+        await import_model_profile(
+            session,
+            active_profile,
+            source_commit="1" * 40,
+            bundle_hash=profile_hash,
+            reviewer="phase5-product-test",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    event = {
+        "schema_version": "1.0",
+        "source_event_id": "qq:group:708309706:message:product-wolfram-1",
+        "instance": {
+            "instance_id": "nekro-agent",
+            "platform": "qq",
+            "adapter": "onebot_v11",
+            "bot_id": "2022692714",
+            "role": "talk",
+        },
+        "event_type": "message",
+        "conversation": {
+            "id": "708309706",
+            "type": "group",
+            "name": "Agent Product Test",
+        },
+        "sender": {"id": "2843657817", "name": "Tester", "roles": []},
+        "message": {
+            "id": "product-wolfram-message-1",
+            "text": "莉莉，请用 Wolfram 精确计算 2+2",
+            "segments": [
+                {
+                    "type": "text",
+                    "data": {"text": "莉莉，请用 Wolfram 精确计算 2+2"},
+                }
+            ],
+            "attachments": [],
+        },
+        "references": [],
+        "occurred_at": now,
+        "metadata": {
+            "is_tome": True,
+            "chat_key": "onebot_v11-group_708309706",
+            "agent_trigger_kind": "mention",
+        },
+    }
+    accepted = await client.post(
+        "/v1/agent-interactions/evaluate",
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "phase5-product-wolfram-entry",
+        },
+        json=event,
+    )
+    assert accepted.status_code == 202, accepted.text
+    await advance_agent_product(app.state.database, app.state.settings)
+    async with app.state.database.sessions() as session:
+        interaction = await session.get(
+            AgentInteraction,
+            accepted.json()["interaction_id"],
+        )
+        assert interaction is not None and interaction.state == "planning"
+        run_id = interaction.run_id
+    assert run_id is not None
+
+    initial = await client.post(
+        f"/v1/agent-runs/{run_id}/attempts",
+        headers={
+            "Authorization": "Bearer deepseek-core-secret",
+            "Idempotency-Key": "phase5-product-wolfram-plan",
+        },
+        json=_model_report(
+            outcome="succeeded",
+            request_id="deepseek-product-plan-1",
+            raw_hash="a" * 64,
+            safe_error_code=None,
+            proposal={
+                "answer_markdown": None,
+                "tool_proposals": [
+                    {
+                        "tool_id": "wolfram.run",
+                        "descriptor_version": "1.1.0",
+                        "descriptor_hash": descriptor_hash,
+                        "arguments": {"expression": "2+2"},
+                        "explanation": "Use the bounded calculator.",
+                    }
+                ],
+                "uncertainty_basis_points": 0,
+                "safe_summary": "Proposed one exact calculation.",
+            },
+        ),
+    )
+    assert initial.status_code == 201, initial.text
+    await advance_agent_product(app.state.database, app.state.settings)
+    async with app.state.database.sessions() as session:
+        interaction = await session.get(
+            AgentInteraction,
+            accepted.json()["interaction_id"],
+        )
+        assert interaction is not None and interaction.state == "tool_pending"
+        loop_id = interaction.loop_id
+    assert loop_id is not None
+
+    lease_response = await client.post(
+        "/v1/tool-executions/lease",
+        headers=WOLFRAM_PROVIDER_HEADERS,
+        json={"schema_version": "1.0", "inventory_hash": inventory_hash},
+    )
+    assert lease_response.status_code == 200, lease_response.text
+    lease = lease_response.json()
+    invocation_id = lease["invocation_id"]
+    proof = {
+        "schema_version": "1.0",
+        "attempt_id": lease["attempt_id"],
+        "fencing_token": lease["fencing_token"],
+        "lease_secret": lease["lease_secret"],
+    }
+    assert (
+        await client.post(
+            f"/v1/tool-executions/{invocation_id}/start",
+            headers=WOLFRAM_PROVIDER_HEADERS,
+            json=proof,
+        )
+    ).status_code == 200
+    output = {"kind": "text", "text": "4"}
+    completed = await client.post(
+        f"/v1/tool-executions/{invocation_id}/complete",
+        headers=WOLFRAM_PROVIDER_HEADERS,
+        json={
+            **proof,
+            "provider_result_id": "wolfram-product-result-1",
+            "output": output,
+            "usage": ToolUsage(
+                wall_time_ms=1,
+                input_bytes=len(
+                    canonicalize_json_value({"expression": "2+2"}).canonical_bytes
+                ),
+                output_bytes=len(canonicalize_json_value(output).canonical_bytes),
+            ).model_dump(mode="json"),
+        },
+    )
+    assert completed.status_code == 200, completed.text
+
+    dispatched: list[tuple[str, str]] = []
+
+    async def fake_dispatch(_settings, *, target_type: str, target_id: str) -> None:
+        dispatched.append((target_type, target_id))
+
+    monkeypatch.setattr(agent_product_service, "_dispatch", fake_dispatch)
+    await advance_agent_product(app.state.database, app.state.settings)
+    assert dispatched == [("tool_loop", loop_id)]
+    continuation = await client.post(
+        f"/v1/agent-tool-loops/{loop_id}/attempts",
+        headers={
+            "Authorization": "Bearer deepseek-core-secret",
+            "Idempotency-Key": "phase5-product-wolfram-continuation",
+        },
+        json=_model_report(
+            outcome="succeeded",
+            request_id="deepseek-product-continuation-1",
+            raw_hash="b" * 64,
+            safe_error_code=None,
+            proposal={
+                "answer_markdown": "精确计算结果是 4。",
+                "tool_proposals": [],
+                "uncertainty_basis_points": 0,
+                "safe_summary": "Answered from one bounded result.",
+            },
+        ),
+    )
+    assert continuation.status_code == 201, continuation.text
+    await advance_agent_product(app.state.database, app.state.settings)
+
+    delivery = await client.post(
+        "/v1/agent-text-deliveries/lease",
+        headers={"Authorization": "Bearer nekro-secret"},
+        json={"schema_version": "1.0", "instance_id": "nekro-agent"},
+    )
+    assert delivery.status_code == 200, delivery.text
+    body = delivery.json()
+    assert body["text"] == "精确计算结果是 4。"
+    receipt = await client.post(
+        f"/v1/agent-text-deliveries/{body['intent_id']}/complete",
+        headers={"Authorization": "Bearer nekro-secret"},
+        json={
+            "schema_version": "1.0",
+            "instance_id": "nekro-agent",
+            "fence": body["fence"],
+            "lease_token": body["lease_token"],
+            "outcome": "succeeded",
+            "platform_message_id": "qq-product-wolfram-reply-1",
+            "safe_error_code": None,
+        },
+    )
+    assert receipt.status_code == 200, receipt.text
+    async with app.state.database.sessions() as session:
+        interaction = await session.get(
+            AgentInteraction,
+            accepted.json()["interaction_id"],
+        )
+        assert interaction is not None and interaction.state == "succeeded"
+        assert (
+            await session.scalar(
+                select(AgentTextDeliveryIntent).where(
+                    AgentTextDeliveryIntent.interaction_id == interaction.id
+                )
+            )
+        ) is not None

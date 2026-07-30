@@ -46,23 +46,33 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run(args: argparse.Namespace) -> dict:
-    if not args.core_url or not args.core_token:
+async def run_attempt(
+    target_id: str,
+    *,
+    tool_loop: bool,
+    core_url: str,
+    core_token: str,
+    api_key: str,
+    base_url: str,
+    timeout_seconds: float,
+) -> dict:
+    if not core_url or not core_token:
         raise ValueError("Core URL and model-provider token are required")
-    headers = {"Authorization": f"Bearer {args.core_token}"}
+    headers = {"Authorization": f"Bearer {core_token}"}
     planner_path = (
-        f"/v1/agent-tool-loops/{args.run_id}/planner-input"
-        if args.tool_loop
-        else f"/v1/agent-runs/{args.run_id}/planner-input"
+        f"/v1/agent-tool-loops/{target_id}/planner-input"
+        if tool_loop
+        else f"/v1/agent-runs/{target_id}/planner-input"
     )
     report_path = (
-        f"/v1/agent-tool-loops/{args.run_id}/attempts"
-        if args.tool_loop
-        else f"/v1/agent-runs/{args.run_id}/attempts"
+        f"/v1/agent-tool-loops/{target_id}/attempts"
+        if tool_loop
+        else f"/v1/agent-runs/{target_id}/attempts"
     )
     async with httpx.AsyncClient(
-        base_url=args.core_url.rstrip("/"),
-        timeout=args.timeout_seconds,
+        base_url=core_url.rstrip("/"),
+        timeout=timeout_seconds,
+        trust_env=False,
     ) as client:
         planner_response = await client.get(
             planner_path,
@@ -71,15 +81,15 @@ async def _run(args: argparse.Namespace) -> dict:
         planner_response.raise_for_status()
         planner = DeepSeekPlanner(
             DeepSeekPlannerConfig(
-                api_key=args.api_key,
-                base_url=args.base_url,
-                timeout_seconds=args.timeout_seconds,
+                api_key=api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
             )
         )
         attempt = await planner.plan(planner_response.json())
         idempotency_key = hashlib.sha256(
             (
-                f"deepseek-v4-pro:{args.run_id}:"
+                f"deepseek-v4-pro:{target_id}:"
                 f"{attempt.report.raw_output_sha256}"
             ).encode("utf-8")
         ).hexdigest()
@@ -95,8 +105,25 @@ async def _run(args: argparse.Namespace) -> dict:
         return report_response.json()
 
 
+async def _run(args: argparse.Namespace) -> dict:
+    return await run_attempt(
+        args.run_id,
+        tool_loop=args.tool_loop,
+        core_url=args.core_url,
+        core_token=args.core_token,
+        api_key=args.api_key,
+        base_url=args.base_url,
+        timeout_seconds=args.timeout_seconds,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    active_argv = list(sys.argv[1:] if argv is None else argv)
+    if active_argv and active_argv[0] == "serve":
+        from .server import serve
+
+        return serve(active_argv[1:])
+    args = _parser().parse_args(active_argv)
     try:
         result = asyncio.run(_run(args))
     except (ValueError, httpx.HTTPError) as exc:

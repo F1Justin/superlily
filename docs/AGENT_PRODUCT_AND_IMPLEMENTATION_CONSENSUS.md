@@ -1,6 +1,6 @@
 # Superlily 群聊 Agent 产品与实现共识
 
-状态：2026-07-27 整理。本文汇总此前关于群聊 Agent、工具使用、渐进式披露、
+状态：2026-07-30 更新。本文汇总此前关于群聊 Agent、工具使用、渐进式披露、
 模型路由、自然语言命令、输出渲染和未来入口的长期共识，供 Phase 5 及后续阶段设计、
 实现和验收使用。
 
@@ -17,14 +17,34 @@
 - Phase 1、Phase 2、C0-D 和 Phase 3 已完成生产签署；
 - Phase 4 已完成 RenderDocument、确定性渲染、能力规划、artifact 溯源、QQ 交付、
   四条旧命令兼容路径和生产稳定窗口；
-- Phase 5a 的 planner-only `AgentRun` shadow 已在
-  `codex/phase5-agent-runtime` 实现，但尚未完成默认禁用部署、真实模型 shadow、
-  稳定窗口和生产签署；
-- 模型仍没有 `caller=agent` 工具执行权，不能发送平台消息，也没有写操作权限。
+- Phase 5a planner-only shadow 与 5b 单次 `wolfram.run@1.1.0` 有界执行环已于
+  2026-07-30 完成无发送生产签署；生产随后回落 `off + ledger_only`；
+- `caller=agent` 只在 Git-bound exact conversation rollout 下拥有已审阅的非写工具
+  authority。模型 Provider 自身仍不能调用工具或平台 API，也没有写操作权限；
+- 下一切片是把既有 AgentRun/工具环接成第一个用户可见产品流程，而不是再制造一套
+  Nekro planner 或枚举插件命令：精确测试群触发、Core 编排、经济 DeepSeek 模型、
+  可选一次 Wolfram、Core delivery intent、Nekro adapter 发送。
 
-因此接下来的正确入口是先把 Phase 5a 作为只记录提案的 shadow 运行时验收，再逐工具
-开放 5b 只读/计算调用。不得因为本文描述了最终体验，就绕过现有阶段门直接让模型调用
-Provider、读取全量历史或执行自然语言写命令。
+不得因为开始做真实回复，就读取全量历史、复制命令业务、开放文件/shell/write、
+跳过 rollout，或让模型/Tool Provider 直接发送平台消息。
+
+### 1.1 测试群长期真实发送授权
+
+QQ 群 `708309706` 是长期测试群。项目所有者已于 2026-07-30 明确授权：该群始终允许
+Superlily 为自动化、合成探针、真实模型回复、工具结果、渲染结果和失败回执主动发送
+测试消息，不再要求每条消息另行取得授权。
+
+这是一项**精确 conversation 的发送例外**，不是普遍生产授权：
+
+- canonical key 固定为 `qq:group:708309706`，Nekro chat key 固定为
+  `onebot_v11-group_708309706`；
+- 其他群、私聊和未来平台仍默认禁止主动合成消息，除非另有明确授权；
+- 该授权不开放群管、撤回、配置、服务控制、跨群发送、5c 写工具或无限频率刷屏；
+- 初始 Agent 产品入口只处理明确 @ 莉莉或回复莉莉的消息；普通群消息不被 Core
+  Agent 接管；
+- 每次发送仍必须有 bounded content、delivery intent、幂等、lease/fence 和终态回执。
+- 初始配置同群并发为 1、每分钟最多 4 次、每日最多 48 次；结合每 run 0.10 USD
+  硬预算，测试群每日模型费用保守上界为 4.80 USD。
 
 ## 2. 产品定位：群聊 Agent 不是代码 Agent 的缩小版
 
@@ -308,7 +328,7 @@ tool、artifact、delivery、confirmation、lease、fence 和 audit 边界。实
 - 在不执行、不发送的前提下运行 planner-only shadow；
 - 用真实但经范围控制的群聊样本评估 direct answer、tool proposal 和 abstain；
 - 重点测量不必要调用、漏调用、错工具、参数错误、禁用工具请求、时效问题和成本；
-- 不把公开群合成探针当作默认验收方式。
+- 不把未授权公开群合成探针当作默认验收方式；`708309706` 使用上文长期例外。
 
 ### 14.2 Phase 5b：逐个开放只读/计算工具
 
@@ -380,7 +400,7 @@ Agent 能力不能只用“能调用工具了”验收。至少应持续观察�
 3. 本次需求属于快速回答、渲染、Agent planning、工具执行、模型路由、检索还是写操作；
 4. 本次变更增加的是实现、caller、副作用、平台、数据范围还是 failover authority；
 5. 是否可以先做合同、shadow 或精确 conversation canary；
-6. 命令兼容、旧路径回滚和生产无主动合成群消息纪律是否保留；
+6. 命令兼容、旧路径回滚和“除精确授权测试群外不主动发送”纪律是否保留；
 7. 验收指标是否覆盖正确性、时延、费用、错误收敛和未授权行为；
 8. 新设计是否与本文共识冲突；若产品共识发生变化，应先更新本文，再修改跨阶段路线。
 

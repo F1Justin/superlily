@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "phase5-agent-product-wolfram-708309706-20260730",
+  "version": "1.0.0",
+  "mode": "canary",
+  "starts_at": "2026-07-30T18:00:00+08:00",
+  "expires_at": "2026-07-31T02:00:00+08:00",
+  "max_invocations": 8,
+  "rollback_mode": "ledger_only",
+  "reason": "测试群 708309706 的 Core Agent 产品闭环仅允许八次 Wolfram 计算验收",
+  "items": [
+    {
+      "item_id": "phase5-agent-product-wolfram-708309706",
+      "tool_id": "wolfram.run",
+      "descriptor_version": "1.1.0",
+      "descriptor_hash": "ec3375907804f588d765ed643b9c8481eb2d4a578924a614652cca64d0414da4",
+      "canonical_conversation": "qq:group:708309706",
+      "caller": "agent",
+      "provider_id": "provider-wolfram-primary",
+      "expected_descriptor_resource_version": 2,
+      "expected_provider_resource_version": 1
+    }
+  ]
+}

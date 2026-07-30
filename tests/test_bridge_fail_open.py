@@ -304,3 +304,74 @@ async def test_claim_and_suppression_ack_use_synchronous_control_plane_requests(
     ]
     assert client.calls[0][1]["headers"]["Idempotency-Key"] == "event-key-123"
     assert client.calls[1][1]["headers"]["Idempotency-Key"] == "claim-ack-claim-123"
+
+
+@pytest.mark.asyncio
+async def test_nekro_agent_entry_and_delivery_use_authenticated_core_endpoints() -> None:
+    module = load_reporter_module(
+        Path("bridges/nekro/superlily_bridge/reporter.py")
+    )
+    reporter = module.BackgroundReporter(
+        "http://lily-core:8000",
+        "nekro-instance-token",
+        10,
+        claim_timeout_seconds=3,
+        report_timeout_seconds=3,
+    )
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(
+            (
+                request.url.path,
+                request.headers.get("Authorization"),
+                request.headers.get("Idempotency-Key"),
+            )
+        )
+        if request.url.path.endswith("/evaluate"):
+            return httpx.Response(
+                202,
+                request=request,
+                json={"accepted": True, "interaction_id": "interaction-1"},
+            )
+        if request.url.path.endswith("/lease"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"intent_id": "intent-1", "fence": 1},
+            )
+        return httpx.Response(200, request=request, json={"state": "succeeded"})
+
+    reporter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    accepted = await reporter.request_agent_interaction(
+        {"schema_version": "1.0"},
+        "agent-entry-key",
+        capture_event=False,
+    )
+    lease = await reporter.lease_agent_delivery("nekro-agent")
+    completed = await reporter.complete_agent_delivery(
+        "intent-1",
+        {"schema_version": "1.0"},
+    )
+    await reporter._client.aclose()
+
+    assert accepted == {"accepted": True, "interaction_id": "interaction-1"}
+    assert lease == {"intent_id": "intent-1", "fence": 1}
+    assert completed is True
+    assert calls == [
+        (
+            "/v1/agent-interactions/evaluate",
+            "Bearer nekro-instance-token",
+            "agent-entry-key",
+        ),
+        (
+            "/v1/agent-text-deliveries/lease",
+            "Bearer nekro-instance-token",
+            None,
+        ),
+        (
+            "/v1/agent-text-deliveries/intent-1/complete",
+            "Bearer nekro-instance-token",
+            None,
+        ),
+    ]

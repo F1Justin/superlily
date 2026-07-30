@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from superlily_contracts import (
     AgentAttemptReportIn,
     AgentRunCreateIn,
+    AgentTextDeliveryCompleteIn,
+    AgentTextDeliveryLeaseIn,
     AgentToolPromotionIn,
     CommandRegistrySnapshotIn,
     DeliveryCompletionIn,
@@ -61,6 +63,7 @@ from .models import (
     EventDecision,
     EventLink,
     EventObservation,
+    AgentInteraction,
     AgentToolLoop,
     IngressReceiptRecord,
     ResponseRecord,
@@ -129,6 +132,12 @@ from .agent_tool_loop_service import (
     continuation_input,
     promote_wolfram_proposal,
     record_continuation,
+)
+from .agent_product_service import (
+    accept_agent_interaction,
+    complete_agent_delivery,
+    interaction_view,
+    lease_agent_delivery,
 )
 
 router = APIRouter()
@@ -1473,6 +1482,103 @@ async def post_agent_run(
     result = await agent_run_view(session, run)
     result["duplicate"] = duplicate
     return result
+
+
+@router.post("/v1/agent-interactions/evaluate", status_code=status.HTTP_202_ACCEPTED)
+async def post_agent_interaction(
+    payload: EventIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict:
+    _verify_identity(authenticated_instance, payload.instance.instance_id)
+    observation, event_duplicate = await ingest_event(
+        session,
+        payload,
+        idempotency_key,
+        session.info["settings"],
+    )
+    interaction, duplicate, reason = await accept_agent_interaction(
+        session,
+        payload,
+        observation,
+        authenticated_instance=authenticated_instance,
+        settings=session.info["settings"],
+    )
+    receipt = await ingress_receipt_view(
+        session,
+        observation,
+        duplicate=event_duplicate,
+    )
+    if interaction is None:
+        response.status_code = status.HTTP_200_OK
+        return {
+            "schema_version": "1.0",
+            "accepted": False,
+            "duplicate": False,
+            "reason_code": reason,
+            "ingest_receipt": receipt,
+        }
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    result = interaction_view(interaction, duplicate=duplicate)
+    result["ingest_receipt"] = receipt
+    return result
+
+
+@router.post("/v1/agent-text-deliveries/lease", response_model=None)
+async def post_agent_text_delivery_lease(
+    payload: AgentTextDeliveryLeaseIn,
+    session: Session,
+    authenticated_instance: Identity,
+) -> Response | dict:
+    _verify_identity(authenticated_instance, payload.instance_id)
+    lease = await lease_agent_delivery(
+        session,
+        instance_id=authenticated_instance,
+        settings=session.info["settings"],
+    )
+    if lease is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return lease.model_dump(mode="json")
+
+
+@router.post("/v1/agent-text-deliveries/{intent_id}/complete")
+async def post_agent_text_delivery_complete(
+    intent_id: str,
+    payload: AgentTextDeliveryCompleteIn,
+    session: Session,
+    authenticated_instance: Identity,
+) -> dict:
+    intent = await complete_agent_delivery(
+        session,
+        intent_id,
+        payload,
+        authenticated_instance=authenticated_instance,
+    )
+    return {
+        "schema_version": "1.0",
+        "intent_id": intent.id,
+        "state": intent.state,
+        "platform_message_id": intent.platform_message_id,
+        "safe_error_code": intent.safe_error_code,
+        "terminal_at": intent.terminal_at,
+    }
+
+
+@router.get(
+    "/v1/agent-interactions/{interaction_id}",
+    dependencies=[Depends(require_admin)],
+)
+async def get_agent_interaction(interaction_id: str, session: Session) -> dict:
+    interaction = await session.get(AgentInteraction, interaction_id)
+    if interaction is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agent interaction not found",
+        )
+    return interaction_view(interaction)
 
 
 @router.get(

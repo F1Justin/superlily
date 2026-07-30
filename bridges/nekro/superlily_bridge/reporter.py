@@ -385,6 +385,93 @@ class BackgroundReporter:
         )
         return False
 
+    async def request_agent_interaction(
+        self,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        *,
+        capture_event: bool,
+    ) -> dict[str, Any] | None:
+        """Atomically ingest and request product handling; failures stay fail-open."""
+
+        if not self.enabled or self._client is None:
+            return None
+        durable_record = None
+        if capture_event and self._spool is not None:
+            durable_record = self._capture_durable_event(
+                ReportItem("/v1/events", payload, idempotency_key)
+            )
+            if durable_record is None:
+                return None
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/v1/agent-interactions/evaluate",
+                json=payload,
+                timeout=self.claim_timeout_seconds,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Idempotency-Key": idempotency_key,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict):
+                return None
+            if durable_record is not None:
+                receipt = body.get("ingest_receipt")
+                if isinstance(receipt, dict):
+                    try:
+                        self._spool.acknowledge(durable_record, receipt)
+                    except ReceiptMismatch as exc:
+                        self._spool.retry(durable_record, f"agent_receipt:{exc}")
+            return body
+        except Exception as exc:
+            self._warn_limited(
+                f"Lily Core Agent entry failed open: {type(exc).__name__}"
+            )
+            return None
+
+    async def lease_agent_delivery(self, instance_id: str) -> dict[str, Any] | None:
+        if not self.enabled or self._client is None:
+            return None
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/v1/agent-text-deliveries/lease",
+                json={"schema_version": "1.0", "instance_id": instance_id},
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            if response.status_code == 204:
+                return None
+            response.raise_for_status()
+            body = response.json()
+            return body if isinstance(body, dict) else None
+        except Exception as exc:
+            self._warn_limited(
+                f"Lily Core Agent delivery lease failed: {type(exc).__name__}"
+            )
+            return None
+
+    async def complete_agent_delivery(
+        self,
+        intent_id: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        if not self.enabled or self._client is None:
+            return False
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/v1/agent-text-deliveries/{intent_id}/complete",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            self._warn_limited(
+                f"Lily Core Agent delivery completion failed: {type(exc).__name__}"
+            )
+            return False
+
     @staticmethod
     def _retryable(exc: Exception) -> bool:
         return isinstance(exc, httpx.TransportError) or (

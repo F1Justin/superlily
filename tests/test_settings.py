@@ -82,6 +82,31 @@ def test_agent_shadow_requires_an_independent_model_provider_token(monkeypatch) 
     assert settings.agent_context_window_messages == 12
 
 
+def test_agent_product_canary_requires_exact_route_scope_and_trigger_identity() -> None:
+    with pytest.raises(ValueError, match="Agent product canary requires"):
+        Settings(
+            agent_mode="bounded_readonly",
+            model_provider_tokens={"deepseek-v4-pro": "model-provider-secret"},
+            agent_product_mode="canary",
+        )
+
+    settings = Settings(
+        agent_mode="bounded_readonly",
+        model_provider_tokens={"deepseek-v4-pro": "model-provider-secret"},
+        agent_product_mode="canary",
+        agent_canary_conversations=frozenset({"qq:group:708309706"}),
+        agent_entry_instances=frozenset({"nekro-agent"}),
+        agent_model_provider_id="deepseek-v4-pro",
+        agent_model_profile_version="1.0.0",
+        agent_provider_trigger_url="http://deepseek-model-provider:8010",
+        agent_provider_trigger_token="trigger-secret-that-is-at-least-32-bytes",
+    )
+
+    assert settings.agent_max_concurrent_per_conversation == 1
+    assert settings.agent_max_interactions_per_window == 4
+    assert settings.agent_max_interactions_per_day == 48
+
+
 def test_invocation_ledger_mode_loads_without_enabling_leases(monkeypatch) -> None:
     monkeypatch.setenv("SUPERLILY_TOOL_EXECUTION_MODE", "ledger_only")
     monkeypatch.setenv("SUPERLILY_TOOL_GLOBAL_STOP", "true")

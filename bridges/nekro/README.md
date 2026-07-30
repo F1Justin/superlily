@@ -1,5 +1,26 @@
 # Nekro bridge
 
+## 1.0.0 Core-owned Agent product adapter
+
+1.0.0 does not add another Nekro command catalog or planner. In an exact
+allowlisted chat, an explicitly addressed message is atomically offered to
+Core. Core owns AgentRun, the optional Wolfram loop, budgets and the native-text
+delivery intent. Only when Core returns `accepted=true` does the callback return
+`BLOCK_TRIGGER`, preventing Nekro's own configured chat model from also
+replying. Core rejection or transport failure remains fail-open
+`CONTINUE`.
+
+A supervised delivery worker leases at most one Core intent, verifies the text
+hash, replies to the triggering platform message through OneBot, and reports a
+fenced terminal receipt. A successful platform send whose completion cannot be
+committed is not retried.
+
+Initial production values are deliberately exact:
+
+- `AGENT_ENABLED=false` by default;
+- `AGENT_CANARY_CHAT_KEYS=onebot_v11-group_708309706` only during canary;
+- `AGENT_DELIVERY_POLL_SECONDS=0.5`.
+
 ## 0.9.2 真实模型纠错迭代
 
 Nekro 的普通 sandbox RPC 返回值只会写入系统消息，不会自动触发第二轮模型调用。
@@ -58,6 +79,9 @@ panel:
 - `REPORT_TIMEOUT_SECONDS=10.0`
 - `REPORT_ATTEMPTS=3`
 - `REPORT_RETRY_BACKOFF_SECONDS=0.1`
+- `AGENT_ENABLED=false`
+- `AGENT_CANARY_CHAT_KEYS=`
+- `AGENT_DELIVERY_POLL_SECONDS=0.5`
 
 The container must join the `superlily_bus` network; see
 `deploy/nekro-compose.override.yml`.
