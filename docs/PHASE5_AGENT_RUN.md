@@ -8,8 +8,9 @@
 
 ## 当前切片
 
-当前实现包含 **5a planner-only shadow** 和尚未生产签署的 **5b 单工具 Wolfram
-执行环**。数据库 head 为 `0023_agent_model_routes`，运行时仍默认
+当前实现包含 **5a planner-only shadow** 和 **5b 单工具 Wolfram 执行环**。
+二者已于 2026-07-30 完成无发送生产签署；数据库 head 为
+`0023_agent_model_routes`，运行时仍默认
 `SUPERLILY_AGENT_MODE=off`。显式切到 `shadow` 时：
 
 - `AgentRun` 的 `tool_invocation_count` 与 `delivery_intent_count` 由数据库约束固定为
@@ -24,12 +25,14 @@ Git-bound `deepseek-v4-pro@1.0.0` profile、真实 JSON Provider、缓存命中/
 `wolfram.run@1.1.0` 有效 proposal 显式提升为一个 tool loop；它仍需 exact rollout
 plan 才能从 `ledger_only` 进入队列。
 
-5a/5b 都还不是生产签署。凭据、开关、评分样本、双库证据、无发送 canary 和稳定窗口
-必须分别完成审查。
-
 2026-07-29 已在一次性本地 Core 上完成真实 DeepSeek 5a 无发送 shadow：
 1 次 attempt 成功，账本终态为 `shadow_complete`，工具调用与 delivery intent 均为
-0。该证据不等于生产部署或签署，详见 `PHASE5_5A_SHADOW_EVIDENCE.md`。
+0。该预生产证据见 `PHASE5_5A_SHADOW_EVIDENCE.md`。
+
+2026-07-30 的生产验收随后完成默认关闭迁移、真实 DeepSeek 5a shadow、exact
+Git-bound 单次 `wolfram.run@1.1.0` 5b canary、正式 pause、凭据撤销和稳定窗口。
+最终生产恢复 `off + ledger_only`，平台 delivery 为 0；完整签署见
+`PHASE5_PRODUCTION_ACCEPTANCE.md`。
 
 ## Authority 边界
 

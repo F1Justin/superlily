@@ -35,14 +35,16 @@ Core 在 `context_ready` 事件中冻结
 API key 仅在既有 Nekro 容器进程内短暂注入 Provider，没有写入仓库、SQLite 账本、
 探针文档或临时 Python 包。探针没有调用 QQ/NapCat、Renderer 或任何公开群发送路径。
 
-## 结论与剩余门
+## 结论与后续生产签署
 
-本探针满足“真实 Provider + 后台账本 + 零执行 + 零发送”的本地 5a 证据。仍需完成：
+本探针满足“真实 Provider + 后台账本 + 零执行 + 零发送”的本地 5a 证据。
+其原有剩余门已于 2026-07-30 在生产完成：
 
-1. 经操作员明确授权后，以默认 `off` 部署生产 Core 并执行 `0019` 到 `0023` 迁移；
-2. 在生产后台执行同类无发送 shadow，并确认命令路径不依赖模型健康；
+1. 以默认 `off` 部署生产 Core 并执行 `0019` 到 `0023` 迁移；
+2. 在生产后台执行同类 DeepSeek 无发送 shadow；
 3. 以 exact conversation、exact Git resource 和一次额度执行 5b
    `wolfram.run@1.1.0` 无发送 canary；
-4. 回落 `off`/`ledger_only`，完成稳定窗口和生产签署。
+4. 正式暂停 plan、回落 `off`/`ledger_only`、撤销临时凭据并完成稳定窗口。
 
-任何公开群消息仍需当次明确授权。
+完整证据见 `PHASE5_PRODUCTION_ACCEPTANCE.md`。任何公开群消息仍需当次明确授权；
+该生产签署没有开放 5c、历史检索或公开群自动回复。

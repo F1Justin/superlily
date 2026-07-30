@@ -27,12 +27,15 @@ reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。�
 `/tex` 串行对比成功且保持不变。最终 SQLite 为 463 通过、4 跳过，PostgreSQL 17
 为 467 通过，稳定窗口和零关联平台 response 均已签署。Phase 4 又于
 2026-07-26 完成 RenderDocument 1.3、能力规划、artifact 溯源、四条兼容路径和
-61 小时稳定窗口的生产签署。当前 Phase 5 已实现但尚未生产签署：5a 提供默认关闭的
-DeepSeek planner-only `AgentRun` shadow；5b 只允许经 Git-bound canary 把一个
+61 小时稳定窗口的生产签署。Phase 5a/5b 又于 2026-07-30 完成生产签署：5a 提供
+默认关闭的 DeepSeek planner-only `AgentRun` shadow；5b 只允许经 Git-bound
+exact canary 把一个
 `wolfram.run@1.1.0` proposal 提升为一次受限调用，并把有来源、限长的不可信结果回注
 模型一次。模型故障切换只能沿 run 中冻结、逐份重新授权的显式 profile route 前移。
-平台发送仍为 0，status 插件不是 Agent 前置门。实现边界见
-[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)。
+唯一生产计划已暂停并耗尽，最终为 `off + ledger_only`，平台发送仍为 0；
+status 插件不是 Agent 前置门。实现边界见
+[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)，签署证据见
+[`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)。
 
 运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
 工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
@@ -66,6 +69,8 @@ DeepSeek planner-only `AgentRun` shadow；5b 只允许经 Git-bound canary 把�
   [`docs/PHASE3_LATEX_RENDER.md`](docs/PHASE3_LATEX_RENDER.md)
 - 第五阶段 AgentRun 实施合同：
   [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)
+- 第五阶段 5a/5b 生产签署：
+  [`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)
 - 群聊 Agent 产品与实施共识：
   [`docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`](docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md)
 - 采集与归档共识：

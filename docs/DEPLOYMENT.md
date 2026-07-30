@@ -943,11 +943,11 @@ confirmation=0、plan=15、active plan=0、active attempt=0。至此第三阶段
 
 ## 19. Phase 5a/5b 默认关闭部署与无发送验收手册
 
-本节是尚未执行的生产手册，不是签署记录。2026-07-29 的只读审计显示生产 Core
+本节原为生产手册，已于 2026-07-30 按同一顺序执行完成。执行前生产 Core
 健康、仍在 `0019_phase4_planning`；`SUPERLILY_AGENT_MODE` 未设置，等价于 `off`。
 工具执行配置虽为 `canary`，但 `active_rollout_plan=null`、
-`leases_enabled=false`，所以没有当前工具执行 authority。生产尚未迁移到
-`0023_agent_model_routes`，也没有模型 Provider token。
+`leases_enabled=false`，所以当时没有工具执行 authority。执行结果见 19.6 和
+`PHASE5_PRODUCTION_ACCEPTANCE.md`。
 
 ### 19.1 部署前门
 
@@ -1068,3 +1068,24 @@ planner-only shadow 和单次只读 Wolfram loop；不得暗示 5c 写权限、�
 
 生产操作员已经禁止向公开群主动发送合成测试内容。本手册没有任何公开群发送步骤；
 若未来需要 UI/群聊可见验证，必须另行取得当次明确授权。
+
+### 19.6 2026-07-30 执行结果
+
+实现提交 `31989a8fe19824d5bc94aa3529b631213ca521aa` 与 rollout 提交
+`2253c6c634e62c82e7ae0fedb006032b37d8be8b` 均已先推送。SQLite 全量为
+547 passed/4 skipped，PostgreSQL 17 为 551 passed。迁移前 dump 已校验 hash 并在
+隔离 PostgreSQL 17 完整恢复；生产随后线性迁移到
+`0023_agent_model_routes (head)`，无 drift，PostgreSQL 未重启。
+
+5a 的真实 DeepSeek shadow 为 1 次成功 attempt、0 tool invocation、0 delivery
+intent。5b 的 exact plan 只消费 1/1：一个 valid `wolfram.run@1.1.0` proposal
+产生一次 `caller=agent` invocation、一次 lease/fence、一次成功 Provider attempt
+和一次 continuation，artifact/confirmation/delivery 均为 0。计划经正式
+preview/CAS 暂停为 `paused/rv3`。
+
+最终 Core 为 `off + ledger_only`，model token map、control operator、Host/Origin
+与 audit pepper 均为空；控制登录返回 503，一次性明文凭据文件已删除。30 分钟窗口
+跨过多个完整 inventory 周期，三个 Provider hash/heartbeat 一致，Lily/Nekro spool
+无 pending/quarantine/gap，命令 Registry 新鲜，相关容器无重启/OOM，且没有新增
+Agent invocation 或关联平台发送。完整 ID、hash、usage、备份和稳定性证据见
+`PHASE5_PRODUCTION_ACCEPTANCE.md`。

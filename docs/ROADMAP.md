@@ -106,10 +106,16 @@ Git-gated 非写工具引入 `caller=agent`；`0022_agent_tool_loops` 把一个
 逐 Provider 重新授权，并使 planning/continuation 的故障切换沿同一有序 route
 fail closed。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和离线评分已
 实现，默认仍为 `off`，平台 delivery 始终为 0。实施权威见
-`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016；双库全量已通过，但此状态不代表
-默认禁用生产部署、shadow/canary、稳定窗口或生产签署已经完成。
+`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016。
 2026-07-29 的一次性本地 Core 已完成真实 DeepSeek 5a 无发送 shadow，证据见
-`docs/PHASE5_5A_SHADOW_EVIDENCE.md`；生产部署与生产 shadow/canary 仍未开始。
+`docs/PHASE5_5A_SHADOW_EVIDENCE.md`。2026-07-30 又完成 SQLite 547 passed/4
+skipped、PostgreSQL 17 551 passed、生产备份与隔离恢复、`0019 -> 0023` 默认
+关闭迁移、真实 DeepSeek 5a shadow、exact Git-bound 单次
+`wolfram.run@1.1.0` 5b canary、正式 pause、凭据撤销和稳定窗口。最终生产为
+`off + ledger_only`、无 active rollout/attempt、plan `paused/rv3` 且 1/1，
+内部探针的 delivery intent 为 0。Phase 5a/5b 因而完成生产签署；证据见
+`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`。5c principal/authorization、历史检索和
+公开群自动回复仍未开放。
 
 ## Sequencing rules
 
@@ -346,6 +352,8 @@ Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-5-natural-language-planning
 
 ### 5a. Planner without execution
 
+Status: production-signed on 2026-07-30.
+
 - Build the light default context: system policy, current message/reply graph,
   short conversation window, and only eligible tool summaries.
 - Record proposed calls and explanations without execution.
@@ -353,12 +361,16 @@ Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-5-natural-language-planning
 
 ### 5b. Read-only execution loop
 
+Status: production-signed for one exact `wolfram.run@1.1.0` canary on
+2026-07-30; default production authority remains off.
+
 - Allow a bounded number of calls and model turns with total time/token/cost
   budgets.
 - Core validates every call against the Phase 3 descriptor and principal
   policy; the model never talks directly to providers.
-- Expose `docs.search`, `state.get`, and later `history.search` only on demand;
-  there is no default RAG injection.
+- Phase 5b exposes no retrieval store. `docs.search`, `state.get`, and
+  `history.search` remain later, separately scoped work; there is no default
+  RAG injection.
 
 ### 5c. Confirmed writes
 
