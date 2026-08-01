@@ -1,7 +1,8 @@
 # Superlily 执行路线图
 
-本文是 Phase 2 事件路由底座之后的权威实施顺序。`manifesto.md` 保留架构愿景，
-分阶段设计文档负责可实施合同与验收门。
+本文是 Superlily 当前工作的权威实施顺序。根目录 `MANIFESTO.md` 是项目宪法；
+`plan_of_codex.md` 保存此前按 Phase 展开的详细计划和历史背景，不再自动授权按编号继续
+施工。分阶段设计文档继续负责已选择工作包的合同与验收门。
 
 Tool Registry 之后的详细设计见 `docs/FUTURE_PHASES_DESIGN.md`。它定义 Phase
 4–11 的共享边界、内部工作包、故障模型和退出门，但不授权提前启动这些阶段。
@@ -11,7 +12,171 @@ Tool Registry 之后的详细设计见 `docs/FUTURE_PHASES_DESIGN.md`。它定�
 `docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`。采集与档案边界单独保留在
 `docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
 
-## 当前位置
+## 2026-08-01 当前执行方向（新会话先读）
+
+Phase 1–5 已经提供足够的采集、路由、工具、渲染和有界 Agent 基础。项目从此不再把
+`Phase 6 -> Phase 11` 当作待办队列，而以 `MANIFESTO.md` 前四条的可观察收益选择工作。
+当前工作分成两条互不冒充的使命：
+
+- **莉莉产品线**服务第 1、4 条，以“人能感觉莉莉哪里变得更好、更连续”为验收；
+- **群聊档案线**服务第 2、3 条，以“数据库能多观察、统一查看且故障后不漏”为验收。
+
+数据库档案不是莉莉的记忆。历史统一、导出和 ChatExporter 均不得自动进入 Agent
+上下文；`history.search`、`memory.lookup` 和默认 RAG 仍未获授权。
+
+### 主工作包 H：统一历史库和查询入口
+
+项目所有者于 2026-08-01 决定：把旧 NoneBot chatrecorder 与 Nekro 历史中的群聊、
+私聊、入站消息和可识别的出站消息全部纳入 Superlily PostgreSQL，使查询、导出和
+ChatExporter 最终不再需要访问旧 `botmsg` 或 `nekro_agent` 数据库。旧库在验收后可
+作为只读备份保留；本目标不授权删除原库。
+
+这是一个面向人类查看的历史 read model，不是把缺失的旧平台事实补造出来：旧记录没有
+reaction、capture completeness、可靠跨账号强身份或媒体字节时，对应字段保持空值或
+明确的 `unknown`。不得用文本相同和时间接近把两个来源永久合并成一个 canonical 事件。
+
+生产调查基线：
+
+- NoneBot `nonebot_plugin_chatrecorder_messagerecord_v2` 当前约 874 万行；Core 边界前
+  约 827 万行，其中约 788 万条 `message`、38 万条 `message_sent`；
+- Nekro `chat_message` 当前约 121 万行；Core 边界前约 104 万行；
+- 当前 Superlily 数据库约 2.3 GiB，而旧库合计已有约 6.3 GiB。历史量级远大于在线
+  热表，不能直接通过 `/v1/events` 重放，也不能无分区灌入现有 `source_events`。
+
+#### H0：实现合同和不可变来源边界
+
+第一项代码工作之前，新增 `docs/HISTORY_UNIFICATION.md` 和 ADR
+`0018-legacy-history-read-model`，冻结：
+
+- 每个源库的精确只读快照、表、主键、账号、会话和时区解释；
+- 每个实例首次 Core observation 的边界。当前已知 Lily 边界为
+  `2026-06-19 11:45:17.17105+00`，Nekro 边界为
+  `2026-06-19 11:49:44.696404+00`；边界前进入历史层，边界后只读当前 Superlily；
+- 群聊与私聊全部导入，但 conversation mapping 必须显式、可审计且可修订；
+- 原来源身份 `(source_system, source_record_id)` 永久保留，导入可重复且不会产生第二份；
+- 同源确切重复保留来源行并可在展示层折叠；跨源疑似重复只允许形成非破坏性的
+  presentation cluster，不能改写 provenance；
+- 旧 JSON 中 `\u0000`、坏 segment 或未知类型进入 `parse_warning`/有界 fallback，
+  不能阻塞仍可读取的文本。
+
+#### H1：同库分层，而不是污染在线热表
+
+在当前单线 Alembic head 后新增独立迁移（当前预期为
+`0025_legacy_history_archive`，创建前必须重验 head），在同一个 `superlily` 数据库中
+建立：
+
+- `archive.import_batches`：来源快照、边界、版本、状态、计数、hash 和错误汇总；
+- `archive.conversation_mappings`：旧 session/chat key 到规范 platform/conversation 的
+  显式映射；
+- `archive.legacy_messages`：按 `occurred_at` 月份分区的最小历史消息表；
+- `archive.message_timeline_v1`：统一旧历史与当前 Superlily 事件/响应的稳定读取入口。
+
+最小历史行保存来源、原主键、bot/account、时间、conversation、sender、方向、平台
+message ID、文本、segment、reply hint 和 parse warning。导入走只读源快照、分块
+`COPY`/staging 和批次 checkpoint，不触发 Core decision、claim、Agent、Provider 或平台
+发送副作用。所有查询索引先服务 `(conversation_type, conversation_id, occurred_at, id)`；
+不得为了可能的未来搜索先建立 embedding 或全量 RAG。
+
+#### H2：分源导入与验证
+
+严格按 `dry-run -> 小会话样本 -> 单月 -> 全量` 推进，先 NoneBot、后 Nekro。每一步
+必须验证：
+
+- 源边界前总行数以及按群聊/私聊、入站/出站、会话、月份的计数；
+- 最早/最晚时间、空文本、坏 JSON、未知 sender、重复源键和失败隔离；
+- 同一批次重跑为零新增，失败后从 checkpoint 恢复；
+- 旧库与统一 timeline 的抽样逐条对照；
+- 导入期间 Core ingestion latency、PostgreSQL 锁、连接和磁盘余量不受不可接受影响；
+- 备份能恢复出相同 batch、分区计数和抽样内容。
+
+不要在没有容量测量时一次事务导入数百万行。旧库仍在线写入时只读取冻结边界前数据，
+不得对其加表锁、改 collation、建索引或执行清理。
+
+#### H3：ChatExporter 切换为唯一统一读者
+
+`nitori.local:/Users/justin/0Projects/chatExpoter` 保持独立消费者，不复制 Core 业务逻辑。
+它改为只查询 `archive.message_timeline_v1` 或后续等价的版本化只读 API，并完成：
+
+- `group_<id>`、裸 QQ ID、NoneBot session 和 Nekro chat key 的规范映射；
+- 群聊和私聊选择；
+- 当前事件使用 Core `event_links`，旧历史使用带来源范围的 reply hint；
+- 来源标签与“显示全部来源”开关；默认折叠仅是展示行为；
+- keyset pagination、时间边界、statement timeout 和流式输出；
+- 至少覆盖跨边界时间线、私聊、bot 出站消息、坏 segment、重复展示和大范围分页的测试。
+
+切换后不得在 ChatExporter 配置、代码、SSH tunnel 或运维说明中保留对旧 `botmsg`/
+`nekro_agent` 的运行时依赖。数据库凭据继续使用独立只读角色，secret 文件权限为
+`0600`。
+
+#### H4：退出门——旧库不再是查询依赖
+
+H 工作包只有同时满足以下条件才算完成：
+
+1. 统一 timeline 覆盖两个源的全部边界前群聊与私聊，以及当前 Superlily 数据；
+2. 分源/分月/分会话计数、边界、抽样和恢复验证通过，所有拒绝行有原因；
+3. ChatExporter 的日常查询和导出只访问 Superlily；
+4. 仓库脚本、文档和运行配置没有任何消费者仍需查询两个旧库；
+5. 暂停旧库访问后完成一次真实 ChatExporter 导出和一次恢复演练；
+6. 旧库以只读备份保留到另一次明确的数据处置决定，不因“已迁移”自动删除。
+
+### C0 剩余范围
+
+C0-D 已完成且不重开。当前 C0-A 只主动推进与真实需求直接相连的历史统一、稳定读取和
+可恢复导出；H 工作包承担旧历史导入和统一查看的第一切片。
+
+多层合并转发异步展开、`archive_full` 正式启用、媒体字节长期保存和完整保留/删除传播
+仍保留在 `COLLECTION_AND_AGENT_CONSENSUS.md`，但不阻塞 H，也不因旧 Phase 顺序自动
+启动。出现明确群聊、重建或合规需求时再分别立项。
+
+### Phase 6 当前只授权采集连续性切片
+
+H/ChatExporter 完成后，下一项主要工程是 Phase 6 的 `6a` 和 `6b`：expected
+collectors/coverage shadow 与静默 Reserve collector。2026-08-01 的生产快照中，46 个
+已观察 group conversation ID 只有 10 个被两个实例共同观察，36 个只有单实例；约
+88.7% 的群事件只有一个观察实例。因此 C0-D 已解决进程/Core/PostgreSQL 故障后的
+durable replay，但还没有兑现单账号失效时的采集连续性。
+
+这一轮只允许：
+
+- 建立 protected conversation、expected collector 和覆盖状态；
+- 证明第三个独立账号/session/token/spool 能在精确测试群静默采集；
+- 逐会话报告 `full/degraded/single_collector/uncovered` 和 gap；
+- 保持 Reserve 的普通回复、命令、Agent 和主动发送全部关闭。
+
+`6c` failover simulation、`6d` 真实响应 canary 和 `6e` 扩围没有被本节自动授权；只有
+采集冗余稳定且项目所有者再次选择响应连续性工作时才进入。
+
+### Agent 产品持续测试，不扩 authority
+
+QQ 群 `708309706` 继续按长期授权进行真实 Agent 测试。这是一条贯穿 H 和 Phase 6 的
+低并发产品观察线，不是新的大型基础设施阶段：
+
+- 积累 direct answer、Wolfram、延迟、费用、失败和用户纠错样本；
+- 依据真实使用调整 persona、eligible 工具摘要和模型路由；
+- 保留 Nekro 既有行为和命令路径；
+- 不开放 5c 写操作，不为凑目录增加工具，不让 Agent 读取统一历史库；
+- 任何扩群、私聊 Agent、检索或新工具仍需独立 exact-scope rollout。
+
+### 当前总顺序和 AI 接手规则
+
+```text
+H0 合同/ADR
+  -> H1 archive schema 与迁移
+  -> H2 NoneBot + Nekro 分批导入和恢复验证
+  -> H3 ChatExporter 切换
+  -> H4 证明旧库不再是查询依赖
+  -> Phase 6a/6b 静默采集冗余
+
+Agent 708309706 真实测试：在整个序列中持续、低并发进行
+C0-A 其他档案能力：有具体需求后单独进入
+```
+
+新的 AI 会话应先读 `MANIFESTO.md`、本节、`DATABASE_INTEGRATION.md` 和当前
+`git status`，然后只认领上述序列中第一个未完成退出门。每个提交必须说明服务
+MANIFESTO 前四条中的哪一条、增加了什么可观察结果、如何回滚；不得顺手启动 Phase
+7/8、5c、自动 Reserve egress 或新的治理框架。提交后立即推送当前 GitHub 分支。
+
+## 已完成基线
 
 Phase 1、Phase 2 和 C0-D1 至 C0-D5 已签署完成；路由、claim/ACK、响应归因、
 typed platform capability 和 durable ingress 的验收证据分别见
@@ -132,8 +297,9 @@ ADR 0017 和 `DEPLOYMENT.md` 第 20 节。
 
 ## Sequencing rules
 
-1. A phase begins only after the previous phase's acceptance evidence exists,
-   rollback is documented, and production defaults remain safe.
+1. A work package begins only when the current-direction section selects it;
+   an old Phase number by itself is not authorization. Its prerequisite evidence,
+   rollback and safe production defaults must already exist.
 2. Contracts and ledgers precede execution. Execution precedes model autonomy.
 3. Read-only, deterministic, public operations migrate before costly,
    privacy-sensitive, state-changing, or administrator operations.
@@ -174,6 +340,9 @@ After C0-D is stable, `C0-A` adds nested merged-forward expansion,
 `archive_full` rollout, portable exports, reconstruction, retention/deletion
 propagation, and old-history import. C0-A and Phase 3b may be scheduled
 independently; Phase 3b does not wait for archival edge cases.
+
+2026-08-01 的现行排期只选择上文 H 工作包作为 C0-A 的历史统一/读取切片；本段保留
+完整设计范围，不代表其余 C0-A 能力已获启动授权。
 
 ## Dependency shape
 
@@ -403,6 +572,9 @@ Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-6-watchdog-incidents-and-ro
 Three-account collection/failover design:
 `docs/PHASE6_THREE_ACCOUNT_HA.md`.
 
+状态：当前只排期上文定义的 `6a` coverage shadow 和 `6b` silent Reserve
+collector，并且排在 H4 之后。`6c`–`6e` 响应 failover 尚未获授权。
+
 Availability-priority decision: the authority-neutral `HA-0` durable ingress
 spool and coverage packet is pulled forward into C0-D after Phase 3a and before
 Phase 3b. This does not deploy Reserve or enable failover egress; the remaining
@@ -451,6 +623,10 @@ platform without platform-specific branches in tool providers.
 ## Phase 8: Memory as Tool
 
 Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-8-retrieval-and-memory-as-tool`.
+
+状态：冻结。项目所有者已明确当前数据库只是人类档案，不是莉莉的记忆；H 工作包和
+ChatExporter 不得成为隐式 `history.search`、memory 或 RAG。只有未来一次明确的人格/
+隐私决策才能重新开放本阶段。
 
 Build in privacy order:
 
