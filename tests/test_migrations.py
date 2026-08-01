@@ -198,7 +198,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             row[1] for row in connection.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
 
-    assert version == ("0024_agent_product_flow",)
+    assert version == ("0025_legacy_history_archive",)
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -628,7 +628,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        assert version == ("0024_agent_product_flow",)
+        assert version == ("0025_legacy_history_archive",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -810,7 +810,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0024_agent_product_flow"
+        assert version == "0025_legacy_history_archive"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -926,6 +926,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0024_agent_product_flow"
+        assert asyncio.run(snapshot())[0] == "0025_legacy_history_archive"
     finally:
         alembic("downgrade", "base", check=False)
