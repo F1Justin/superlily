@@ -22,3 +22,4 @@
 - `0015-agent-run-authority-boundary.md`
 - `0016-model-provider-registration.md`
 - `0017-agent-product-delivery-boundary.md`
+- `0018-legacy-history-read-model.md`
