@@ -280,8 +280,10 @@ async def submit_render_document(
 ]:
     if not settings.render_enabled:
         raise RenderServiceError("render_disabled", "document rendering is disabled")
-    if document.conversation_key not in settings.render_canary_conversations:
-        raise RenderServiceError("conversation_not_canary", "conversation is not in the render canary")
+    if not settings.render_conversation_allowed(document.conversation_key):
+        raise RenderServiceError(
+            "render_conversation_forbidden", "conversation is not allowed to render"
+        )
 
     instance = await session.get(BotInstance, document.instance_id)
     if instance is None:
@@ -496,9 +498,9 @@ async def submit_passthrough_render_document(
 
     if not settings.render_enabled:
         raise RenderServiceError("render_disabled", "document rendering is disabled")
-    if document.conversation_key not in settings.render_canary_conversations:
+    if not settings.render_conversation_allowed(document.conversation_key):
         raise RenderServiceError(
-            "conversation_not_canary", "conversation is not in the render canary"
+            "render_conversation_forbidden", "conversation is not allowed to render"
         )
     if (
         source_artifact.state != "finalized"

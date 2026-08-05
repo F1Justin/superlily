@@ -247,7 +247,7 @@ async def post_response(
 def _render_http_error(exc: RenderServiceError) -> HTTPException:
     if exc.code.startswith("markdown_"):
         code = status.HTTP_422_UNPROCESSABLE_ENTITY
-    elif exc.code in {"conversation_not_canary", "artifact_forbidden", "delivery_forbidden"}:
+    elif exc.code in {"render_conversation_forbidden", "artifact_forbidden", "delivery_forbidden"}:
         code = status.HTTP_403_FORBIDDEN
     elif exc.code in {
         "artifact_not_found",

@@ -249,3 +249,32 @@ LILY_CORE_PHASE4_HELP_ENABLED=true
 生产签署不扩大群范围，也不开放自然语言工具调用；后者属于第五阶段。计划到期或暂停
 后保持 `ledger_only` 回落，新的生产 scope 必须重新走 Git-bound plan 和 control
 preview/apply。
+
+## 2026-08-05 全群聊启用
+
+Core 新增 `render_mode=all`：放行所有群聊（`onebot_v11-group_*`），私聊仍排除；
+`canary` 模式保持精确 allowlist 语义不变。判定收敛到
+`Settings.render_conversation_allowed(conversation_key)`，`submit_render_document`
+与 `submit_passthrough_render_document` 共用同一门禁；越界会话返回 403 与
+`X-Render-Error-Code: render_conversation_forbidden`（原 `conversation_not_canary`
+已删除）。Nekro bridge 新增 `RENDER_ALL_GROUPS`：置 true 时在全部群聊注入渲染
+policy 并放行 `submit_rendered_markdown` / `submit_render_document`；置 false 时
+沿用 `RENDER_CANARY_CHAT_KEYS` allowlist。
+
+生产配置：
+
+```dotenv
+SUPERLILY_RENDER_MODE=all
+SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON=["onebot_v11-group_1080353942","onebot_v11-group_861651713"]
+```
+
+Nekro：
+
+```text
+RENDER_ENABLED = true
+RENDER_ALL_GROUPS = true
+RENDER_CANARY_CHAT_KEYS = onebot_v11-group_1080353942,onebot_v11-group_861651713
+```
+
+canary 列表保留仅为快速回退：`SUPERLILY_RENDER_MODE=canary` 或
+`RENDER_ALL_GROUPS=false` 即可恢复原 allowlist，无需改回代码。

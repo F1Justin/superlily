@@ -118,6 +118,10 @@ class BridgeConfig(ConfigBase):
     )
     CLAIM_ENABLED: bool = Field(default=False, title="Enable fail-open Lily Core claims")
     RENDER_ENABLED: bool = Field(default=False, title="Enable Core document rendering")
+    RENDER_ALL_GROUPS: bool = Field(
+        default=False,
+        title="Enable Core document rendering in every group chat (overrides canary keys)",
+    )
     RENDER_CANARY_CHAT_KEYS: str = Field(
         default="",
         title="Comma-separated exact Nekro chat keys allowed to render",
@@ -268,11 +272,12 @@ def _agent_entry_allowed(message: ChatMessage) -> bool:
 
 
 def _render_allowed(ctx: AgentCtx) -> bool:
-    return bool(
-        config.RENDER_ENABLED
-        and config.CORE_TOKEN
-        and ctx.chat_key in _render_canary_chat_keys()
-    )
+    if not (config.RENDER_ENABLED and config.CORE_TOKEN):
+        return False
+    if config.RENDER_ALL_GROUPS:
+        conversation = _render_conversation(ctx.chat_key)
+        return conversation is not None and conversation["type"] == "group"
+    return ctx.chat_key in _render_canary_chat_keys()
 
 
 def instance(bot_id: str | None = None) -> dict[str, Any]:
@@ -1056,7 +1061,7 @@ async def agent_delivery_loop() -> None:
 
 @plugin.mount_prompt_inject_method(
     name="Lily Core document renderer policy",
-    description="Use the reviewed renderer for mixed Chinese text and mathematics in canary chats",
+    description="Use the reviewed renderer for mixed Chinese text and mathematics in enabled group chats",
 )
 async def render_prompt_policy(_ctx: AgentCtx) -> str:
     if not _render_allowed(_ctx):

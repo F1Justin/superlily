@@ -22,6 +22,45 @@ def test_settings_reject_unsafe_control_plane_values(field: str, value: object) 
         Settings(**{field: value})
 
 
+def test_settings_render_mode_all_requires_backend_and_opens_groups() -> None:
+    with pytest.raises(ValueError, match="render all requires"):
+        Settings(render_mode="all")
+    with pytest.raises(ValueError, match="render_mode must be off, canary, or all"):
+        Settings(render_mode="full")
+
+    settings = Settings(
+        render_mode="all",
+        artifact_root="/srv/superlily-artifacts",
+        artifact_secret_pepper="p" * 32,
+        render_backend_url="http://document-renderer:8000",
+        render_backend_token="r" * 32,
+        render_implementation_hash="1" * 64,
+    )
+    assert settings.render_enabled is True
+    assert settings.render_conversation_allowed("onebot_v11-group_706356075")
+    assert settings.render_conversation_allowed("onebot_v11-group_1080353942")
+    assert not settings.render_conversation_allowed("onebot_v11-private_123456")
+    assert not settings.render_conversation_allowed("telegram-chat_42")
+
+    canary = Settings(
+        render_mode="canary",
+        render_canary_conversations=frozenset({"onebot_v11-group_1080353942"}),
+        artifact_root="/srv/superlily-artifacts",
+        artifact_secret_pepper="p" * 32,
+        render_backend_url="http://document-renderer:8000",
+        render_backend_token="r" * 32,
+        render_implementation_hash="1" * 64,
+    )
+    assert canary.render_enabled is True
+    assert canary.render_conversation_allowed("onebot_v11-group_1080353942")
+    assert not canary.render_conversation_allowed("onebot_v11-group_706356075")
+
+    assert Settings(render_mode="off").render_enabled is False
+    assert Settings(render_mode="off").render_conversation_allowed(
+        "onebot_v11-group_1080353942"
+    ) is False
+
+
 def test_settings_reject_reused_authentication_tokens() -> None:
     with pytest.raises(ValueError, match="unique per instance"):
         Settings(ingest_tokens={"lily-command": "same", "nekro-agent": "same"})

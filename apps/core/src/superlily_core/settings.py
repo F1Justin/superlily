@@ -31,6 +31,21 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _conversation_kind(conversation_key: str) -> str | None:
+    """Return the platform conversation kind (``group``/``private``) or None.
+
+    Mirrors the bridge's ``onebot_v11-<kind>_<id>`` key grammar.
+    """
+    prefix = "onebot_v11-"
+    if not conversation_key.startswith(prefix):
+        return None
+    remainder = conversation_key[len(prefix) :]
+    kind, separator, _conversation_id = remainder.partition("_")
+    if separator and kind in {"group", "private"}:
+        return kind
+    return None
+
+
 def _token_map(value: str | None, *, variable: str) -> dict[str, str]:
     if not value:
         return {}
@@ -305,8 +320,8 @@ class Settings:
                 raise ValueError("artifact_secret_pepper must contain at least 32 characters")
         if not 60 <= self.artifact_orphan_grace_seconds <= 86_400:
             raise ValueError("artifact_orphan_grace_seconds must be between 60 and 86400")
-        if self.render_mode not in {"off", "canary"}:
-            raise ValueError("render_mode must be off or canary")
+        if self.render_mode not in {"off", "canary", "all"}:
+            raise ValueError("render_mode must be off, canary, or all")
         if self.render_mode == "canary" and (
             not self.render_canary_conversations
             or not self.render_backend_url
@@ -315,6 +330,14 @@ class Settings:
         ):
             raise ValueError(
                 "render canary requires conversations, backend URL, token, and implementation hash"
+            )
+        if self.render_mode == "all" and (
+            not self.render_backend_url
+            or not self.render_backend_token
+            or not re.fullmatch(r"[0-9a-f]{64}", self.render_implementation_hash)
+        ):
+            raise ValueError(
+                "render all requires backend URL, token, and implementation hash"
             )
         if self.render_backend_url and not re.fullmatch(
             r"http://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", self.render_backend_url
@@ -442,7 +465,19 @@ class Settings:
 
     @property
     def render_enabled(self) -> bool:
-        return self.render_mode == "canary" and self.artifact_enabled
+        return self.render_mode in {"canary", "all"} and self.artifact_enabled
+
+    def render_conversation_allowed(self, conversation_key: str) -> bool:
+        """Whether document rendering may serve this conversation.
+
+        ``canary`` mode restricts to the exact allowlist; ``all`` mode opens
+        every group chat (``*-group_*`` keys) while keeping private chats out.
+        """
+        if self.render_mode == "canary":
+            return conversation_key in self.render_canary_conversations
+        if self.render_mode == "all":
+            return _conversation_kind(conversation_key) == "group"
+        return False
 
     @classmethod
     def from_env(cls) -> "Settings":

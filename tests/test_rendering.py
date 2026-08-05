@@ -598,6 +598,93 @@ async def test_render_api_enforces_canary_stores_artifact_and_records_delivery(
 
 
 @pytest.mark.asyncio
+async def test_render_all_mode_opens_every_group_chat_and_keeps_private_out(
+    tmp_path, monkeypatch
+) -> None:
+    body = _png()
+
+    async def render_document(self, document, *, timeout_seconds):
+        del self, document, timeout_seconds
+        return RenderedDocument(
+            content=body,
+            content_sha256=sha256(body).hexdigest(),
+            width_pixels=2,
+            height_pixels=3,
+        )
+
+    monkeypatch.setattr(DocumentRendererClient, "render_document", render_document)
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'all.db'}",
+        ingest_tokens={"nekro-agent": "nekro-secret"},
+        group_default_mode="full",
+        artifact_root=str(tmp_path / "artifacts"),
+        artifact_secret_pepper="p" * 32,
+        render_mode="all",
+        render_backend_url="http://document-renderer:8000",
+        render_backend_token="r" * 32,
+        render_implementation_hash="1" * 64,
+    )
+    app = create_app(settings)
+    await app.state.database.create_schema()
+    try:
+        async with app.state.database.sessions() as session:
+            session.add(
+                BotInstance(
+                    id="nekro-agent",
+                    platform="qq",
+                    adapter="onebot_v11",
+                    bot_id="2022692714",
+                    role="talk",
+                    metadata_json={"capabilities": {"profile": "onebot_v11.qq.v1", "supported": ["send_image", "send_text"], "limits": {}}},
+                )
+            )
+            await session.commit()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            headers = {
+                "Authorization": "Bearer nekro-secret",
+                "Idempotency-Key": "render-all-0001",
+            }
+            group_document = _document().model_dump(mode="json")
+            group_document["conversation_key"] = "onebot_v11-group_706356075"
+            created = await client.post(
+                "/v1/render-documents",
+                json=group_document,
+                headers=headers,
+            )
+            assert created.status_code == 201, created.text
+            markdown = await client.post(
+                "/v1/markdown-documents",
+                json={
+                    "schema_version": "1.0",
+                    "instance_id": "nekro-agent",
+                    "conversation_key": "onebot_v11-group_706356075",
+                    "markdown": "**结论：** 已知 $f(x)=x^2+1$。",
+                },
+                headers={
+                    "Authorization": "Bearer nekro-secret",
+                    "Idempotency-Key": "render-all-0002",
+                },
+            )
+            assert markdown.status_code == 201, markdown.text
+            private_document = _document().model_dump(mode="json")
+            private_document["conversation_key"] = "onebot_v11-private_123456"
+            denied = await client.post(
+                "/v1/render-documents",
+                json=private_document,
+                headers={
+                    "Authorization": "Bearer nekro-secret",
+                    "Idempotency-Key": "render-all-0003",
+                },
+            )
+            assert denied.status_code == 403
+            assert denied.headers["x-render-error-code"] == "render_conversation_forbidden"
+    finally:
+        await app.state.database.drop_schema()
+        await app.state.database.dispose()
+
+
+@pytest.mark.asyncio
 async def test_render_cache_is_scoped_and_binds_exact_renderer_snapshot(
     tmp_path, monkeypatch
 ) -> None:
