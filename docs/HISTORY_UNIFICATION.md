@@ -32,10 +32,16 @@ Superlily 事件链负责。边界不是一个可由导入器运行时猜测的�
 | 来源 | 固定边界 | 当前 Core 观察核对 |
 | --- | --- | --- |
 | Lily / `lily-command` | `2026-06-19 11:45:17.17105+00` | 首条 `event_observations.received_at` 为 `2026-06-19 11:45:17.175088+00` |
-| Nekro / `nekro-agent` | `2026-06-19 11:49:44.696404+00` | 首条 `event_observations.received_at` 为 `2026-06-19 11:49:44.698038+00` |
+| Nekro / `nekro-agent` | Core 边界 `2026-06-19 11:49:44.696404+00`；来源谓词 `send_timestamp < 1781869784` | 首条 `event_observations.received_at` 为 `2026-06-19 11:49:44.698038+00` |
 
 H2 开始时必须重新生成每个来源的 manifest，并在边界值、来源 schema、快照身份或
 时区解释发生变化时停止导入，而不是自动调整边界。
+
+Nekro 的 Core 边界有微秒，但真实 `send_timestamp` 只有整数秒；因此不能直接用
+`to_timestamp(send_timestamp) < Core 边界`。来源侧必须保守排除包含首条 Core 观察的
+整个秒，即使用 `send_timestamp < 1781869784`。已只读核对：`send_timestamp=1781869784`
+只有源行 `id=1035299`（平台消息 ID `817661785`），正是首条 Core Nekro 观察；纳入它会
+在 timeline 形成 legacy/Core 双份。
 
 ## 3. 来源合同
 
@@ -69,9 +75,14 @@ H2 开始时必须重新生成每个来源的 manifest，并在边界值、来�
 | 指标 | 值 |
 | --- | ---: |
 | 主消息表总行数 | 8,742,661 |
-| 严格早于 Lily 边界 | 8,267,828 |
-| 其中 `message` / `message_sent` | 7,883,848 / 383,980 |
+| 严格早于 Lily 边界 | 8,262,010 |
+| 其中 `message` / `message_sent` | 7,878,503 / 383,507 |
 | 最早 / 最新 `time`（源列显示值） | 2024-08-28 13:25:30 / 2026-08-01 07:01:12 |
+
+此前记录的 `8,267,828` 是把 UTC 边界误按 `Asia/Shanghai` 墙钟解释后多纳入 8 小时
+所得；多出的 5,818 行仍在源表中，并非删除或 retention。H2 manifest 必须使用
+`time AT TIME ZONE 'UTC' < timestamptz '2026-06-19 11:45:17.17105+00'`，当前正确的
+边界前计数与 2026-07-12 dry-run 基线一致。
 
 ### 3.2 Nekro
 
@@ -104,16 +115,16 @@ H2 开始时必须重新生成每个来源的 manifest，并在边界值、来�
 | 指标 | 值 |
 | --- | ---: |
 | `chat_message` 总行数 | 1,205,359 |
-| 严格早于 Nekro 边界 | 1,035,248 |
+| 严格早于 Nekro 来源秒级边界 | 1,035,247 |
 | 早于边界的 group / private（按 raw `chat_type` 汇总） | 1,034,851 / 397 |
 | 最早 / 最新 `create_time` | 2025-09-11 10:52:59.798943+00 / 2026-08-01 06:59:58.949289+00 |
 
 ### 3.3 当前 Superlily
 
-当前库是 PostgreSQL 17，数据库 `superlily`，宿主端口 `127.0.0.1:5433`，Alembic
-head 为 `0024_agent_product_flow`，当前没有 `archive` schema。2026-08-01 的数据库
-大小为约 2,323 MB；在线表已经包含数十万级事件观察和决策行，历史导入不得与这些热表
-共用一个大事务。
+2026-08-01 的冻结基线是 PostgreSQL 17、数据库 `superlily`、宿主端口
+`127.0.0.1:5433`、Alembic `0024_agent_product_flow`，当时尚无 `archive` schema，数据库
+大小约 2,323 MB。到 2026-08-12，生产已部署 `0025_legacy_history_archive`，archive 四表
+仍全空；在线表已经包含大量事件观察和决策行，历史导入不得与这些热表共用一个大事务。
 
 ## 4. 目标 archive 边界
 
@@ -159,6 +170,30 @@ H1 迁移只创建结构，不连接或读取外部数据库。目标对象位�
 
 H2 只能按 `dry-run -> 小会话样本 -> 单月 -> 全量` 推进，顺序为 Lily 后 Nekro。每个
 批次都要有可重跑的 manifest 和 checkpoint：
+
+### 5.1 零写入导出与 manifest 合同
+
+H2 dry-run 的唯一输入格式是 UTF-8、每行一个对象的 JSONL；不能让不同导出工具自行改变
+JSON scalar 类型。Lily 展平行至少包含：字符串化的 `id`、`session_persist_id`、
+`message_id`、`bot_id`、`sender_id`，整数 `scene_type`，`type`，无时区但包含完整时钟和
+微秒的 UTC `time`，以及原始 `message` 和 `plain_text`。`bot_id` 来自 session 对应
+botmodel 的 `self_id`；入站 `sender_id` 来自 usermodel 的 `user_id`，出站 `sender_id`
+为该 session 的 `bot_id`，不能把会话中的对端用户误写成出站发送者。
+
+Nekro 行至少包含字符串化的 `id`、`sender_id`、`chat_key`、原样 `chat_type`，来源库的
+整数 epoch 秒 `send_timestamp`、带 UTC offset 和微秒且不得缺失的 `create_time`，以及
+`message_id`、`content_text`、`content_data`、`raw_cq_code`、`ext_data` 等原始字段。
+2026-08-12 只读 schema 核对确认 `send_timestamp` 是 32-bit integer；导出必须保持整数或
+等值十进制字符串，禁止先转成 binary float。manifest 同时记录微秒级 Core cutover 与
+保守的来源秒级 cutover，eligible 判断使用后者。
+
+manifest schema 固定为 `history-dry-run-v1`。`manifest_sha256` 覆盖所有导出行和快照/
+schema/映射/边界身份，并绑定上述 JSON scalar 渲染；相同快照的重跑必须复用同一导出
+schema。报告至少包含 eligible/excluded/rejected 守恒计数、重复来源身份、按月、原始会话
+key、群聊/私聊、方向、Lily bot 和 Nekro adapter 的计数、eligible 最早/最晚发生时间、
+空文本数，以及不含消息
+正文的确定性抽样。同一来源 ID 出现多次时整组拒绝，避免输入顺序决定哪一行进入历史；
+`duplicates` 统计重复出现次数，是 `rejected` 的子集，不得与 `rejected` 再相加。
 
 1. 在源库建立只读、可重复的快照或等价导出；不加表锁、不改 schema、不建索引、不改
    collation。两个来源分别取快照，不假设跨数据库原子一致。

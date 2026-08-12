@@ -114,12 +114,33 @@ PostgreSQL 上都运行。
 `superlily-tool-registry verify-descriptor` 给出。不得把共享 `status.inspect`
 测试向量当作生产 authority 导入。
 
-Historical imports start with a write-free dry run. Candidate records should be
-normalized to EventIn-shaped JSONL first, then inspected with:
+旧版 Historical imports 段落现在只是 legacy EventIn lint：候选记录先规范化成
+EventIn 形状的 JSONL，再用 `history_import` 做离线校验。报告验证 contract 并统计
+references、text fields、message IDs 与原始 source labels；它不写入 Core 存储，
+**不是 H2 importer**。
+
+真正 H2 的零写入 legacy dry-run 使用主模块 CLI：
 
 ```bash
-.venv/bin/python -m superlily_core.history_import /path/to/candidates.jsonl
+.venv/bin/python -m superlily_core.history_import legacy \
+  --source lily --cutover 2026-06-19T11:45:17.17105+00:00 \
+  --snapshot-id botmsg-readonly-snapshot-YYYYMMDDTHHMMSSZ \
+  --source-schema-version chatrecorder-v2 \
+  --mapping-version history-map-v1 \
+  --jsonl /path/to/legacy-export.jsonl
 ```
 
-The report validates contracts and counts references, text fields, message IDs,
-and original source labels; it does not write to Core storage.
+`--source` 取 `lily` 或 `nekro`；cutover 必须使用 H0 冻结的对应 UTC 值。Nekro CLI 仍传
+Core 微秒边界，但工具会按 H0 的来源粒度合同使用 `send_timestamp < 1781869784`，并在
+manifest 的 `source_cutover_boundary` 中明确记录 `2026-06-19T11:49:44+00:00`。
+输入必须是只读快照/导出行；快照身份、来源 schema 版本和映射版本都必须显式记录。
+本次调用 `writes=0`，
+不连接目标 archive，也不触发任何后续 sample 写入——sample 写入另有独立授权门。
+大批量导出可以把 `--jsonl` 设为 `-`，通过 stdin 流式传入；重复来源 ID 使用临时磁盘
+ledger 检查，结束即删除，不把百万级 identity 集合常驻内存。
+
+输入列和 JSON 类型必须遵守 `HISTORY_UNIFICATION.md` §5.1。尤其 Lily `time` 必须是
+无 offset 的完整 UTC 时间，`bot_id`/`sender_id`/`scene_type` 必须由 session 关系展平；
+Nekro `send_timestamp` 保持来源整数 epoch 秒，不能经过 binary float。报告使用
+`history-dry-run-v1`，包含逐会话及时间范围等对账维度；`sample_rejections` 只暴露来源 ID、
+有限错误码和无正文诊断。

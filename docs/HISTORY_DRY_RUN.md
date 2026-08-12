@@ -13,6 +13,11 @@ The boundary is the first observation received by Core for each instance:
 Rows at or after the corresponding boundary overlap Core ingestion and must
 never be imported.
 
+Nekro's source column has integer-second precision, so its executable source
+predicate is the conservative `send_timestamp < 1781869784`. The one row in
+second `1781869784` is the first Nekro message already observed by Core and is
+part of the overlap set.
+
 ## Lily chatrecorder
 
 The read-only snapshot at 2026-07-12 11:40 CST covered

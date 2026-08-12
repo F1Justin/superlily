@@ -1193,3 +1193,15 @@ pause，工具执行回落 `ledger_only`。
 interaction/run/attempt/loop/invocation/delivery/platform message ID、usage/cost、
 rollout counter、回滚演练、容器 restart/OOM、spool 与命令健康。未完成这些证据前，
 0024 只能称为“已实现/部署中”，不能称为生产签署。
+
+## 21. Legacy history H1 schema verification
+
+2026-08-12 只读复核确认生产 PostgreSQL 17 的 Alembic head 为
+`0025_legacy_history_archive`。`archive.import_batches`、
+`archive.conversation_mappings`、`archive.legacy_messages` 和
+`archive.source_message_identities` 均为 0 行，因此尚未发生历史导入。
+
+`archive.message_timeline_v1` 是合并当前 Core 与未来 legacy 行的视图，不是空表；复核时
+返回 898,009 行，全部来自现有 Core 观察/link read model。该动态计数只证明视图可读，
+不作为固定容量基线。H2 在建立新备份并验证恢复前只允许零写入 manifest 和只读来源抽样，
+不得开始生产小样本、单月或全量写入。

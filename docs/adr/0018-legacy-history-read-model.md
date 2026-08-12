@@ -27,7 +27,9 @@
    消息的 `reply_hint` 也必须在 legacy timeline 中保留。
 3. 每条旧消息永久保留 `(source_system, source_table, source_record_id)`、原始会话 key
    和映射版本。跨源相似消息不得变成一个 canonical event；最多在展示层形成 cluster。
-4. 使用固定的、严格小于的两个 UTC cutover boundary。对 Nekro，平台消息发生时间
+4. 使用固定的、严格小于的两个 UTC cutover boundary。Nekro 来源时间只有整数秒，故
+   来源谓词保守固定为 `send_timestamp < 1781869784`，排除包含首条 Core 观察的整个秒。
+   对 Nekro，平台消息发生时间
    `send_timestamp` 映射为 `occurred_at`，数据库落库/捕获时间 `create_time` 映射为
    `source_persisted_at`/`captured_at`；缺失 `send_timestamp` 的行必须拒绝并记录有限错误，
    不能静默回退 `create_time`。边界后的源行不导入，当前 Core 事件继续由现有 ingestion
