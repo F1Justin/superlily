@@ -873,6 +873,28 @@ hash 均为 `2bb912a8ebe92aa70c11d6843fb89c85fc1c2497d60380e9c939ab829217b775`�
 Core、Provider、worker 与 PostgreSQL restart count 均为 0。至此文本
 `wolfram.run@1.0.0` 生产迁移完成签署。
 
+### 17.1 2026-08-13 worker 许可证恢复与沙盒加固
+
+宿主权威许可证于 2026-08-10 更新，但 worker 的 root-only 运行时副本仍是旧版本；
+容器同时漂移为 `RestartPolicy=no`，所以内核启动失败后没有自动恢复。宿主内核与一份
+生产等价隔离容器均返回同一 `$MachineID=6520-06891-19277`、同一 LicenseID 与
+`2+2=4`；本次故障不是重启改变 MathID。
+
+旧副本先留存 root-only 备份，权威文件收紧为 0600，当前许可证经宿主内核验证后
+原子同步为 root:root 0400。最终 worker 镜像为
+`sha256:a3063934e96aabc8bac4824129e7ce3e8de91457d85dd18cf6654bfd02c5bc7d`，
+worker identity 为
+`e1e6a7132f8f7cfc27ee8c63544fab455c182748bcbc3a0d5e3fc0aa312b68db`，
+Provider implementation hash 为
+`0c897466009aba222d123931a3da296fcb0d3898912841200f11af1d193e5258`。
+
+隔离候选和正式 worker 都通过完整 smoke；候选还完成了受控计算超时与直接杀死内核
+两项演练，两次均由 health/restart 重新完成许可证引导并恢复 healthy。两轮对称预热
+性能门禁的五项 `native/worker` 比率均不低于 0.80。正式部署漂移检查覆盖镜像、源码、
+compose、capability、tmpfs、挂载、网络、资源、socket、引擎版本与许可证不可读终态，
+结果 failures 为空。Core、PostgreSQL、NoneBot 未重启；切换前 active AgentRun 和
+Wolfram attempt 均为 0。宿主身份 systemd worker 只完成离线 verify/security，未安装。
+
 ## 18. LaTeX Artifact Provider 与第三阶段退出
 
 2026-07-19 11:29–11:50 CST，`latex.render@1.0.0` 完成生产上线。实现来自提交

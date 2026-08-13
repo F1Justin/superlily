@@ -109,3 +109,29 @@ Core 已恢复 `ledger_only`，active plan/attempt 为 0，临时控制面关闭
 转义和强制 HTTPS Origin 已写入 `CONTROL_PLANE.md`。完整镜像、提交、账本、回滚与
 C0-D 连续性证据见 `DEPLOYMENT.md` 第 17 节。最后 300 秒窗口收到两份相同 hash 的
 inventory 与 10 次 healthy heartbeat，Provider 零新日志、相关容器零重启。
+
+## 2026-08-13 worker 恢复与身份轮换
+
+这次事件不改写 2026-07-19 的签署记录，也不扩大 `wolfram.run@1.0.0` 的执行
+authority。故障根因是宿主权威 `mathpass` 已刷新，而容器仍挂载旧的运行时副本；
+同时容器实际 restart policy 漂移为 `no`。宿主和生产等价容器都实测
+`$MachineID=6520-06891-19277`，因此没有证据支持“每次重启 MathID 改变”。
+
+恢复后 worker 使用 Wolfram 15.0.0、镜像
+`sha256:a3063934e96aabc8bac4824129e7ce3e8de91457d85dd18cf6654bfd02c5bc7d`，
+reviewed worker identity 为
+`e1e6a7132f8f7cfc27ee8c63544fab455c182748bcbc3a0d5e3fc0aa312b68db`；
+与本次 Provider 源码绑定的 implementation hash 为
+`0c897466009aba222d123931a3da296fcb0d3898912841200f11af1d193e5258`。
+旧 identity/hash 只保留为历史证据，不能用于新 inventory 或 rollout。
+
+worker 仍保留独立 OS 沙盒：只读 rootfs、私有 tmpfs、uid/gid 1000、有效
+capability 为 0、NoNewPrivs=1、内部网络断路、许可证就绪后不可读。AgentRun 的
+lease、预算、fence 和 caller 限制不能替代这层边界，因为它们约束“谁可调用和调用
+多少”，不约束被调用的 Wolfram 表达式在内核进程中能读取或连接什么。
+
+加固后的 Docker 路径包括：许可证权威预检与原子 root-only 副本、live-kernel
+healthcheck、计算超时和静默内核死亡后的容器级重引导、连续失败最多五次、镜像/
+源码/compose/capability/tmpfs/挂载/网络/稳定态的部署漂移检查，以及仅在开机时启动
+既有且精确匹配 reviewed deployment 的容器。宿主真实身份 systemd worker 作为
+离线候选保留，未安装、未切流；切换它仍需完整 smoke、性能和显式生产门禁。

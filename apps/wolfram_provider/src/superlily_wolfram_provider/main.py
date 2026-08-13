@@ -312,6 +312,25 @@ async def _worker_health(executor: WolframExecutor) -> tuple[str, dict[str, Any]
     return "healthy", health, None
 
 
+def _log_worker_health_transition(
+    previous: str | None,
+    current: str,
+    failure: str | None,
+) -> str:
+    if previous == current:
+        return current
+    if current == "healthy":
+        logger.info("wolfram worker health changed: %s -> healthy", previous or "unknown")
+    else:
+        logger.warning(
+            "wolfram worker health changed: %s -> %s (%s)",
+            previous or "unknown",
+            current,
+            failure or "no_detail",
+        )
+    return current
+
+
 async def run_reporter(config: WolframProviderConfig, *, once: bool = False) -> None:
     executor, implementation = _load_runtime(config, execution_enabled=False)
     registry = ProviderRegistryClient(
@@ -324,6 +343,7 @@ async def run_reporter(config: WolframProviderConfig, *, once: bool = False) -> 
     )
     last_inventory_report = 0.0
     inventory_hash: str | None = None
+    previous_worker_health: str | None = None
     async with registry:
         while True:
             loop_started = time.monotonic()
@@ -340,6 +360,11 @@ async def run_reporter(config: WolframProviderConfig, *, once: bool = False) -> 
                     last_inventory_report = loop_started
             if inventory_hash is not None:
                 health_state, health, failure = await _worker_health(executor)
+                previous_worker_health = _log_worker_health_transition(
+                    previous_worker_health,
+                    health_state,
+                    failure,
+                )
                 heartbeat = registry.build_heartbeat(
                     inventory_hash=inventory_hash,
                     health=health_state,
@@ -529,6 +554,7 @@ async def run_executor(config: WolframProviderConfig, *, once: bool = False) -> 
     last_heartbeat_report = 0.0
     inventory_hash: str | None = None
     idle_poll_seconds = config.poll_seconds
+    previous_worker_health: str | None = None
     async with registry, executor:
         while True:
             loop_started = time.monotonic()
@@ -546,6 +572,11 @@ async def run_executor(config: WolframProviderConfig, *, once: bool = False) -> 
                     last_inventory_report = loop_started
             if inventory_hash is not None and loop_started - last_heartbeat_report >= config.heartbeat_seconds:
                 health_state, health, failure = await _worker_health(wolfram)
+                previous_worker_health = _log_worker_health_transition(
+                    previous_worker_health,
+                    health_state,
+                    failure,
+                )
                 heartbeat = registry.build_heartbeat(
                     inventory_hash=inventory_hash,
                     health=health_state,

@@ -242,7 +242,7 @@ class WolframWorkerClient:
                 "timeout",
                 "wolfram worker exceeded its hard wall time",
             ) from exc
-        except ValueError as exc:
+        except (ValueError, asyncio.LimitOverrunError) as exc:
             raise WolframWorkerError(
                 "invalid_output",
                 "wolfram worker returned malformed bounded JSON",

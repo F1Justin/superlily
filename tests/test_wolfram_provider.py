@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,6 +17,7 @@ from superlily_wolfram_provider.main import (
     _execute_lease,
     _execution_seconds,
     _load_runtime,
+    _log_worker_health_transition,
 )
 from superlily_wolfram_provider.runtime import (
     WolframWorkerClient,
@@ -256,6 +258,17 @@ async def test_worker_malformed_or_oversized_transport_fails_closed(
     finally:
         server.close()
         await server.wait_closed()
+
+
+def test_worker_health_transition_logs_only_on_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_logger = Mock()
+    monkeypatch.setattr("superlily_wolfram_provider.main.logger", fake_logger)
+    state = _log_worker_health_transition(None, "unavailable", "failed:OSError")
+    state = _log_worker_health_transition(state, "unavailable", "failed:OSError")
+    state = _log_worker_health_transition(state, "healthy", None)
+    assert state == "healthy"
+    assert fake_logger.warning.call_count == 1
+    assert fake_logger.info.call_count == 1
 
 
 @pytest.mark.asyncio
