@@ -123,6 +123,10 @@ reviewed worker identity 为
 `e1e6a7132f8f7cfc27ee8c63544fab455c182748bcbc3a0d5e3fc0aa312b68db`；
 与本次 Provider 源码绑定的 implementation hash 为
 `0c897466009aba222d123931a3da296fcb0d3898912841200f11af1d193e5258`。
+最终 Provider 镜像为
+`sha256:b8242815ea734362b648e2c626d45343e11ba5c12864f241741f7c52abae72ef`，
+Core 接收的 inventory hash 为
+`ceb55dbfebb6e46f5f95926c7a05304f599b71ad0a929d5a68196dd29e225020`。
 旧 identity/hash 只保留为历史证据，不能用于新 inventory 或 rollout。
 
 worker 仍保留独立 OS 沙盒：只读 rootfs、私有 tmpfs、uid/gid 1000、有效

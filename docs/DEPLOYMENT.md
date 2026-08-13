@@ -887,6 +887,11 @@ worker identity 为
 `e1e6a7132f8f7cfc27ee8c63544fab455c182748bcbc3a0d5e3fc0aa312b68db`，
 Provider implementation hash 为
 `0c897466009aba222d123931a3da296fcb0d3898912841200f11af1d193e5258`。
+最终 Provider 镜像为
+`sha256:b8242815ea734362b648e2c626d45343e11ba5c12864f241741f7c52abae72ef`，
+Core 接收的新 inventory hash 为
+`ceb55dbfebb6e46f5f95926c7a05304f599b71ad0a929d5a68196dd29e225020`；
+连续 heartbeat 均为 `healthy`、`worker_status=ready`、`worker_uid=1000`。
 
 隔离候选和正式 worker 都通过完整 smoke；候选还完成了受控计算超时与直接杀死内核
 两项演练，两次均由 health/restart 重新完成许可证引导并恢复 healthy。两轮对称预热
@@ -894,6 +899,8 @@ Provider implementation hash 为
 compose、capability、tmpfs、挂载、网络、资源、socket、引擎版本与许可证不可读终态，
 结果 failures 为空。Core、PostgreSQL、NoneBot 未重启；切换前 active AgentRun 和
 Wolfram attempt 均为 0。宿主身份 systemd worker 只完成离线 verify/security，未安装。
+已安装的是 fail-closed 的 Docker 开机恢复、每日许可证预检和 15 分钟部署漂移巡检；
+三者均 active/enabled，首轮 service 通过且 journal 未记录许可证身份或文件摘要。
 
 ## 18. LaTeX Artifact Provider 与第三阶段退出
 
