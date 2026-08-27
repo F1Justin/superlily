@@ -127,7 +127,8 @@ references、text fields、message IDs 与原始 source labels；它不写入 Co
   --snapshot-id botmsg-readonly-snapshot-YYYYMMDDTHHMMSSZ \
   --source-schema-version chatrecorder-v2 \
   --mapping-version history-map-v1 \
-  --jsonl /path/to/legacy-export.jsonl
+  --jsonl /path/to/legacy-export.jsonl \
+  --output /path/to/legacy-manifest.json
 ```
 
 `--source` 取 `lily` 或 `nekro`；cutover 必须使用 H0 冻结的对应 UTC 值。Nekro CLI 仍传
@@ -138,6 +139,42 @@ manifest 的 `source_cutover_boundary` 中明确记录 `2026-06-19T11:49:44+00:0
 不连接目标 archive，也不触发任何后续 sample 写入——sample 写入另有独立授权门。
 大批量导出可以把 `--jsonl` 设为 `-`，通过 stdin 流式传入；重复来源 ID 使用临时磁盘
 ledger 检查，结束即删除，不把百万级 identity 集合常驻内存。
+
+冻结来源导出由 `scripts/history/export_lily_snapshot.sql` 和
+`scripts/history/export_nekro_snapshot.sql` 生成严格的一行一个 JSON object；脚本只执行
+`COPY (SELECT ...) TO STDOUT`，不修改来源库。导出文件和 manifest 校验通过后，H2 writer
+必须显式指定写权限开关，并依次运行 sample、month、full：
+
+```bash
+SUPERLILY_DATABASE_URL='postgresql+asyncpg://archive-writer@target/superlily' \
+  .venv/bin/python -m superlily_core.history_archive_import \
+  --source lily \
+  --jsonl /path/to/lily-snapshot.jsonl \
+  --manifest /path/to/lily-manifest.json \
+  --scope sample --conversation-key SOURCE_KEY --max-rows 100 \
+  --chunk-size 100 --write-archive
+
+SUPERLILY_DATABASE_URL='postgresql+asyncpg://archive-writer@target/superlily' \
+  .venv/bin/python -m superlily_core.history_archive_import \
+  --source lily \
+  --jsonl /path/to/lily-snapshot.jsonl \
+  --manifest /path/to/lily-manifest.json \
+  --scope month --month YYYY-MM --chunk-size 5000 --write-archive
+
+SUPERLILY_DATABASE_URL='postgresql+asyncpg://archive-writer@target/superlily' \
+  .venv/bin/python -m superlily_core.history_archive_import \
+  --source lily \
+  --jsonl /path/to/lily-snapshot.jsonl \
+  --manifest /path/to/lily-manifest.json \
+  --scope full --chunk-size 20000 --write-archive
+```
+
+Nekro 使用同样三步并把 `--source` 改为 `nekro`。每次 apply 都先重算并核对完整
+manifest；目标必须是 PostgreSQL 且位于 `0026_history_timeline_export`。writer 通过临时
+staging + `COPY` 分块提交，batch checkpoint 记录输入行号和分范围计数，来源身份 ledger
+使同一 scope 重跑为零新增；full 完成后更新 archive bulk-load 统计，避免版本化 timeline
+沿用导入前的空表计划。不得跳过 sample/month 直接全量，也不得把生产 DSN 留在 shell
+history 或仓库文件中。
 
 输入列和 JSON 类型必须遵守 `HISTORY_UNIFICATION.md` §5.1。尤其 Lily `time` 必须是
 无 offset 的完整 UTC 时间，`bot_id`/`sender_id`/`scene_type` 必须由 session 关系展平；

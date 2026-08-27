@@ -718,6 +718,7 @@ def _build_parser() -> argparse.ArgumentParser:
     legacy_parser.add_argument("--snapshot-id", required=True)
     legacy_parser.add_argument("--source-schema-version", required=True)
     legacy_parser.add_argument("--mapping-version", required=True)
+    legacy_parser.add_argument("--output", type=Path)
     return parser
 
 
@@ -746,7 +747,12 @@ def main(argv: list[str] | None = None) -> int:
         report = dry_run_payloads(iter_jsonl(args.jsonl))
     else:
         parser.error("a mode is required")
-    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    output = getattr(args, "output", None)
+    if output is None:
+        print(rendered, end="")
+    else:
+        output.write_text(rendered, encoding="utf-8")
     return 0
 
 
