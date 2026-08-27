@@ -238,3 +238,52 @@ checkpoint、拒绝隔离、批量幂等、容量验证和完整导入协议均�
 本次 H0 不做数据库写入、迁移、备份切换或服务重启。未来 H1/H2 失败时，首选回滚是停用
 archive 读取入口、保留旧库只读访问并从目标库备份恢复；不得通过删除旧库或直接删表来
 “清理”失败状态。已经导入的 archive 数据在没有独立处置决定前保留为可审计证据。
+
+## 7. H2–H4 生产验收（2026-08-27）
+
+本节是上述合同的执行证据，不改变来源边界，也不授权 Agent、RAG 或 `history.search`
+读取 archive。冻结 JSONL、manifest 和源库 dump 位于权限 `0700` 的
+`/data/backups/superlily/20260827-h2-history/`；导入前后均未写入、建索引或清理旧源库。
+
+H2 按 Lily 后 Nekro、`sample -> month -> full -> full rerun` 完成：
+
+- Lily sample `33:100` 写入 100；2024-08 选择 22,519、复用 23、写入 22,496；full
+  选择 8,262,010、复用 22,596、写入 8,239,414。最终群聊 8,261,972、私聊 38，
+  inbound 7,878,503、outbound 383,507，范围为
+  `2024-08-28 13:25:30+00` 到 `2026-06-19 11:44:46+00`。39 条 parse warning 全是
+  有路径记录的 NUL 替换；0 拒绝、0 重复；full 复跑 `existing=8,262,010`、`writes=0`。
+- Nekro sample `onebot_v11-group_928225852:100` 写入 100；2025-09 选择 68,499、
+  复用 100、写入 68,399；full 选择 1,035,247、复用 68,499、写入 966,748。最终
+  群聊 1,034,850、私聊 397，方向全部保持 `unknown`，范围为
+  `2025-09-11 10:52:59+00` 到 `2026-06-19 11:49:10+00`；0 拒绝、0 warning、0 重复；
+  full 复跑 `existing=1,035,247`、`writes=0`。
+- Nekro `source_persisted_at - occurred_at` 为 58 微秒到 2.24058 秒，0 条相等，证明
+  `occurred_at=send_timestamp`、`source_persisted_at=create_time` 的时间合同已实际生效。
+- 两来源的逐月、群聊/私聊、方向、17,139/29 个来源会话、Lily bot 和 Nekro adapter
+  聚合均与冻结 manifest 零差异；9,297,257 个 ledger 全为 `imported` 且都有复合外键
+  指向实际 legacy 行。导入期间等待锁始终为 0，Core observation 延迟的短时峰值为
+  16 秒并恢复到 1–5 秒，容器没有重启，最终核验时生产库约 23 GB。
+
+H3 在 `nitori.local:/Users/justin/0Projects/chatExpoter` 的本地提交 `2906311` 完成。
+Python 3.9 测试 6 项通过，日常 pyenv Python 3.14 命令直接加载该仓库；运行代码只查询
+`archive.message_timeline_v2` 和 `archive.conversation_mappings`。权限切换后的真实导出
+包括：群 `779593410` 跨 cutover 5,190 条、私聊 `2843657817` 123 条，以及群
+`928225852` 四分钟窗口内两条带 quoted sender/text 的回复。默认展示折叠没有修改来源
+provenance，`--all-sources` 可见 Lily/Nekro/Core 各行。
+
+H4 使用 `scripts/chat_exporter_h4_access.sql` 将 `chat_exporter` 收敛为仅有 archive schema
+USAGE，以及 timeline v2/mapping SELECT；`public.source_events` 与
+`archive.legacy_messages` 的真实账号查询均返回权限拒绝。权限收缩后上述三种真实导出仍
+通过，Nitori secret 文件保持 `0600`，配置只指向 Superlily PostgreSQL。
+旧 `botmsg` 的 `config.env.bak` 已从运行配置目录移到
+`/Users/justin/0Projects/chatExpoter-backups/config.env.botmsg-retired-20260827`，权限收紧为
+`0600`；它只用于可逆恢复，不被代码或 tunnel 读取。
+
+生产 post-import custom dump 为
+`superlily-production-postimport-0026-20260827T151500Z.dump`，大小 2,454,207,457 bytes，
+权限 `0600`，SHA-256
+`940fbb46a7dbe352998bcfb587432983e60b15ca99997941bb4ee1a42f0ff3ef`。它已恢复到隔离
+PostgreSQL 17 数据库 `superlily_h4_recovery_20260827`；Alembic head、两个完整
+batch/checkpoint、33 个来源/月组合、ledger、mapping 和每来源 100 条确定性 payload
+hash 均与生产快照完全一致，回复 fixture 也恢复为 21 行及两条完整引用。恢复库保留，
+旧 Lily/Nekro 数据库和只读备份同样保留；删除旧库仍需另一次明确的数据处置决定。

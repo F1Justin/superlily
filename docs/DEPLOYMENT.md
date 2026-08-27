@@ -1234,3 +1234,80 @@ rollout counter、回滚演练、容器 restart/OOM、spool 与命令健康。�
 返回 898,009 行，全部来自现有 Core 观察/link read model。该动态计数只证明视图可读，
 不作为固定容量基线。H2 在建立新备份并验证恢复前只允许零写入 manifest 和只读来源抽样，
 不得开始生产小样本、单月或全量写入。
+
+## 22. Legacy history H2–H4 production cutover
+
+2026-08-27 已完成生产 H2–H4；权威计数和 hash 见
+`docs/HISTORY_UNIFICATION.md` 第 7 节。生产 head 为
+`0026_history_timeline_export`，archive 有两个 `completed` batch、9,297,257 条
+legacy message/`imported` identity 和 17,168 条 conversation mapping。旧源库未被修改或
+删除。
+
+### 22.1 运行核验
+
+每次维护先确认没有另一个 writer，再检查 batch、锁和在线采集延迟：
+
+```bash
+ps -ef | rg '[h]istory_archive_import'
+docker exec deploy-postgres-1 psql -U superlily -d superlily -X -c '
+  SELECT source_system, status, source_row_count, imported_count,
+         rejected_count, duplicate_count
+  FROM archive.import_batches ORDER BY source_system;
+  SELECT count(*) FROM pg_locks WHERE NOT granted;
+  SELECT extract(epoch FROM now() - max(received_at))::int
+  FROM event_observations;
+'
+```
+
+相同 frozen snapshot 的 full 复跑必须返回 `inserted=0`、`writes=0`；不能用新 snapshot
+冒充幂等复跑。任何 manifest mismatch、ledger identity conflict、拒绝计数或锁/延迟持续
+恶化都应暂停 exact importer，保留 checkpoint 和现有 archive 行，不删除失败证据。
+
+### 22.2 ChatExporter 最小权限
+
+在 owner 连接上重放以下脚本可撤销所有 public/archive 底表直读，并重新建立唯一允许的
+consumer surface：
+
+```bash
+docker exec -i deploy-postgres-1 psql \
+  -v ON_ERROR_STOP=1 -U superlily -d superlily -X -f - \
+  < scripts/chat_exporter_h4_access.sql
+```
+
+成功输出必须为 `archive_usage=t`、`timeline_select=t`、`mappings_select=t`、
+`legacy_table_select=f`、`core_table_select=f`。Nitori 的
+`~/.config/chat-exporter/config.env` 保持 `0600`，只包含指向 Superlily 的独立
+`chat_exporter` DSN。日常命令是 `chatexporter`；旧 `botmsg`/`nekro_agent` DSN、SQL 和
+tunnel 不再是运行依赖。
+旧 `botmsg` 配置备份已退出运行目录并以 `0600` 保存在
+`/Users/justin/0Projects/chatExpoter-backups/config.env.botmsg-retired-20260827`；不得把它
+复制回 `~/.config/chat-exporter/` 作为日常回滚。
+
+若 timeline v2 发生已验证的生产故障，回滚顺序是先停止 ChatExporter 查询，再恢复上一版
+consumer 和经审阅的临时只读权限；archive、两个旧库及其备份保持不动。禁止通过给
+`chat_exporter` owner/superuser、写权限或长期 public 全表 SELECT 来规避故障。
+
+### 22.3 备份与恢复演练
+
+post-import 备份位于：
+
+```text
+/data/backups/superlily/20260827-h2-history/
+  superlily-production-postimport-0026-20260827T151500Z.dump
+```
+
+该文件为 PostgreSQL custom dump，大小 2,454,207,457 bytes，mode `0600`，SHA-256 为
+`940fbb46a7dbe352998bcfb587432983e60b15ca99997941bb4ee1a42f0ff3ef`。先用
+`pg_restore --list` 验证 archive，再恢复到新的隔离数据库；不得覆盖生产库或已有恢复库。
+本次恢复目标为容器 `superlily-h2-restore-20260827` 内的
+`superlily_h4_recovery_20260827`。恢复后逐项比较：
+
+- Alembic `0026_history_timeline_export`；
+- 两个 batch 的状态、manifest/content hash、计数和完整 checkpoint JSON；
+- 33 个来源/月组合、两个 ledger 计数和两个 mapping 计数；
+- 每来源按 source record ID 排序的 100 条 payload hash；
+- `928225852` 四分钟 timeline fixture 的 21 行、10 legacy/11 Core 和两条 reply target。
+
+本次所有比较均完全相等。隔离恢复库作为演练证据保留；容器 `/tmp` 中可重建的 dump 副本
+已删除以释放 2.45 GB，主机 `0600` 备份未删除。任何后续清理旧库或该备份都不属于本
+runbook，必须另行取得明确授权。

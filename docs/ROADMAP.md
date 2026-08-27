@@ -120,6 +120,17 @@ H 工作包只有同时满足以下条件才算完成：
 5. 暂停旧库访问后完成一次真实 ChatExporter 导出和一次恢复演练；
 6. 旧库以只读备份保留到另一次明确的数据处置决定，不因“已迁移”自动删除。
 
+**完成状态（2026-08-27）：H0–H4 已通过退出门。** 生产 PostgreSQL 17 已在
+`0026_history_timeline_export` 导入 Lily 8,262,010 条和 Nekro 1,035,247 条边界前历史，
+两个来源均为 0 拒绝、0 重复，full scope 原批次复跑均为 0 写入。所有来源/月、群聊/
+私聊、方向、会话、bot/adapter 维度与冻结 manifest 零差异；导入期间未出现等待锁，
+Core observation 延迟只有短时 16 秒峰值并恢复到 1–5 秒。ChatExporter 独立仓库提交
+`2906311` 后只读取 `archive.message_timeline_v2` 与 conversation mapping，最小权限账号
+已不能读取 Core 热表或 archive 底表；权限收缩后的跨边界、私聊和 quoted reply 真实导出
+通过。生产 post-import custom dump 已恢复为隔离的 20 GB PostgreSQL 17 数据库，两个
+batch/checkpoint、33 个来源/月组合、ledger、mapping 和确定性样本 hash 与生产快照完全
+一致。两个旧源库及其只读备份继续保留，本结论不授权删除或停用 Nekro/Lily 运行时。
+
 ### C0 剩余范围
 
 C0-D 已完成且不重开。当前 C0-A 只主动推进与真实需求直接相连的历史统一、稳定读取和
