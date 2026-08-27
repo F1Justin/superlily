@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 REPOSITORY_ROOT = Path(__file__).parents[1]
 PARENT_REVISION = "0024_agent_product_flow"
 ARCHIVE_REVISION = "0025_legacy_history_archive"
+HEAD_REVISION = "0026_history_timeline_export"
 SQLITE_ARCHIVE_PREFIX = "archive_"
 
 BEHAVIOR_BATCH_ID = "batch-history-behavior-001"
@@ -738,11 +739,11 @@ def _archive_behavior_statements(
                     "from_observation_id": BEHAVIOR_OBSERVATION_A_ID,
                     "to_source_event_id": None,
                     "relation_type": "reply_to",
-                    "target_source_event_id": "target-source-event-reply",
-                    "target_platform_message_id": "target-platform-message-reply",
-                    "target_conversation_id": "target-history-group",
+                    "target_source_event_id": None,
+                    "target_platform_message_id": "observation-platform-message-a",
+                    "target_conversation_id": "history-group-a",
                     "target_conversation_type": "group",
-                    "target_sender_id": "target-sender-reply",
+                    "target_sender_id": "sender-history-a",
                     "confidence": 91,
                     "resolver_status": "resolved",
                     "raw_json": json.dumps({"fixture": "reply-link"}),
@@ -858,10 +859,12 @@ def _timeline_time(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _assert_timeline_hint(row: dict[str, Any], *needles: str) -> None:
+def _assert_timeline_hint(row: dict[str, Any], *needles: str | None) -> None:
     hint = _timeline_json_text(row.get("reply_hint_json"))
     assert hint.strip() not in {"", "{}", "null"}, row
     for needle in needles:
+        if needle is None:
+            continue
         assert needle in hint, (needle, hint, row)
 
 
@@ -928,9 +931,9 @@ def _assert_archive_behavior_rows(
     expected_links = {
         BEHAVIOR_EVENT_LINK_REPLY_ID: {
             "relation_type": "reply_to",
-            "target_source_event_id": "target-source-event-reply",
-            "target_platform_message_id": "target-platform-message-reply",
-            "target_conversation_id": "target-history-group",
+            "target_source_event_id": None,
+            "target_platform_message_id": "observation-platform-message-a",
+            "target_conversation_id": "history-group-a",
             "target_conversation_type": "group",
         },
         BEHAVIOR_EVENT_LINK_MENTION_ID: {
@@ -1072,8 +1075,12 @@ def test_sqlite_legacy_history_archive_contract_and_round_trip(tmp_path: Path) -
     _run_alembic(env, "upgrade", "head")
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        assert version == (ARCHIVE_REVISION,)
+        assert version == (HEAD_REVISION,)
         _assert_sqlite_archive_contract(connection)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='view' AND name='archive_message_timeline_v2'"
+        ).fetchone() == (1,)
 
     _run_alembic(env, "check")
     _run_alembic(env, "downgrade", PARENT_REVISION)
@@ -1089,7 +1096,7 @@ def test_sqlite_legacy_history_archive_contract_and_round_trip(tmp_path: Path) -
     _run_alembic(env, "upgrade", "head")
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        assert version == (ARCHIVE_REVISION,)
+        assert version == (HEAD_REVISION,)
         _assert_sqlite_archive_contract(connection)
 
 
@@ -1226,6 +1233,17 @@ async def _postgres_archive_snapshot(database_url: str) -> dict[str, Any]:
                     )
                 ).all()
             )
+            view_columns_v2 = set(
+                (
+                    await connection.scalars(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'archive' "
+                            "AND table_name = 'message_timeline_v2'"
+                        )
+                    )
+                ).all()
+            )
             return {
                 "version": version,
                 "schema_exists": schema_exists,
@@ -1237,6 +1255,7 @@ async def _postgres_archive_snapshot(database_url: str) -> dict[str, Any]:
                 "partitions": partitions,
                 "timeline_count": timeline_count,
                 "view_columns": view_columns,
+                "view_columns_v2": view_columns_v2,
             }
     finally:
         await engine.dispose()
@@ -1300,6 +1319,41 @@ async def _exercise_postgres_archive_behavior(database_url: str) -> None:
                 )
                 rows = [dict(row) for row in result.mappings().all()]
                 _assert_archive_behavior_rows(set(result.keys()), rows)
+                export_rows = (
+                    await connection.execute(
+                        text(
+                            "SELECT kind, source_record_id, event_type, display_key, "
+                            "display_priority, actions_json, reply_target_sender_id, "
+                            "reply_target_text FROM archive.message_timeline_v2 "
+                            "WHERE source_record_id IN (:legacy_id, :observation_id, :response_id) "
+                            "ORDER BY kind, display_priority, id"
+                        ),
+                        {
+                            "legacy_id": "legacy-source-record-001",
+                            "observation_id": BEHAVIOR_OBSERVATION_A_ID,
+                            "response_id": BEHAVIOR_RESPONSE_ID,
+                        },
+                    )
+                ).mappings().all()
+                legacy_export = next(
+                    row for row in export_rows if row["kind"] == "legacy_message"
+                )
+                assert legacy_export["event_type"] == "message"
+                core_exports = [
+                    row for row in export_rows if row["kind"] == "core_observation"
+                ]
+                assert len(core_exports) == 2
+                assert {row["display_key"] for row in core_exports} == {
+                    f"event:{BEHAVIOR_SOURCE_EVENT_A_ID}"
+                }
+                assert core_exports[0]["display_priority"] < core_exports[1]["display_priority"]
+                assert core_exports[0]["reply_target_sender_id"] == "sender-history-a"
+                assert core_exports[0]["reply_target_text"] == "observation history a"
+                assert all(json.loads(row["actions_json"]) == [] for row in core_exports)
+                response_export = next(
+                    row for row in export_rows if row["kind"] == "core_response"
+                )
+                assert response_export["event_type"] == "message.response"
                 await connection.rollback()
                 await _assert_postgres_identity_composite_fk_rolls_back(
                     connection, archive["source_message_identities"]
@@ -1325,7 +1379,7 @@ def test_postgres_legacy_history_archive_contract_and_round_trip() -> None:
     try:
         _run_alembic(env, "upgrade", "head")
         snapshot = asyncio.run(_postgres_archive_snapshot(database_url))
-        assert snapshot["version"] == ARCHIVE_REVISION
+        assert snapshot["version"] == HEAD_REVISION
         assert snapshot["schema_exists"] is True
         assert {
             "import_batches",
@@ -1336,6 +1390,7 @@ def test_postgres_legacy_history_archive_contract_and_round_trip() -> None:
             snapshot["tables"]
         )
         assert "message_timeline_v1" in snapshot["views"]
+        assert "message_timeline_v2" in snapshot["views"]
 
         import_columns = snapshot["columns"]["import_batches"]
         assert {
@@ -1477,6 +1532,15 @@ def test_postgres_legacy_history_archive_contract_and_round_trip() -> None:
             snapshot["view_columns"]
         )
         assert snapshot["timeline_count"] == 0
+        assert {
+            "event_type",
+            "correlation_fingerprint",
+            "display_key",
+            "display_priority",
+            "actions_json",
+            "reply_target_sender_id",
+            "reply_target_text",
+        }.issubset(snapshot["view_columns_v2"])
         asyncio.run(_exercise_postgres_archive_behavior(database_url))
         after_behavior = asyncio.run(_postgres_archive_snapshot(database_url))
         assert after_behavior["timeline_count"] == 0
@@ -1489,7 +1553,7 @@ def test_postgres_legacy_history_archive_contract_and_round_trip() -> None:
 
         _run_alembic(env, "upgrade", "head")
         restored = asyncio.run(_postgres_archive_snapshot(database_url))
-        assert restored["version"] == ARCHIVE_REVISION
+        assert restored["version"] == HEAD_REVISION
         assert restored["schema_exists"] is True
         _run_alembic(env, "check")
     finally:

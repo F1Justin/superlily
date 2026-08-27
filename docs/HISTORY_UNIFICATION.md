@@ -154,6 +154,10 @@ H1 迁移只创建结构，不连接或读取外部数据库。目标对象位�
    必须保留一个 Core 观察关联的多个 `event_links` 关系行，逐行保留 `event_link_id` 及其
    关系语义；每个 link 行还必须有稳定且唯一的 timeline `id`，不得用任一行或 `MIN(id)`
    静默折叠；旧消息行同时必须保留来源提供的 `reply_hint`，不能因合并或展示而丢失。
+6. `archive.message_timeline_v2`：面向 ChatExporter 的版本化投影，在 v1 provenance 行上
+   增加稳定 `display_key`、展示优先级、Core action、当前 Core reply target 和来源范围内
+   的 legacy reply target。v2 不删除 v1 的 observation/link 行；默认折叠只在消费者展示
+   时按 Core correlation 结果发生，`all_sources` 必须仍能读取全部关系行。
 
 固定来源系统标识：
 
