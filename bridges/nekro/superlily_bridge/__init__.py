@@ -1069,6 +1069,7 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
     return """
 本频道已启用 Lily Core 统一文档渲染器。需要发送含中文长文、公式、题目列表的图片时，
 只需调用 `submit_rendered_markdown(markdown_text)`，传入一整段普通 Markdown，不要构造 JSON。
+该方法已作为全局 predefined method 注入沙盒，直接调用；禁止 import `lily_core_bridge` 或任何模块来获取它。
 在 Python 沙盒代码中，Markdown 必须放进 `r'''...'''` 原始三引号字符串，避免
 `\\alpha`、`\\frac`、`\\bar`、`\\to`、`\\text` 等 TeX 命令被 Python 转义损坏。
 可直接使用 #/## 标题、自然段、- 或 1. 列表、> 引用、``` 代码围栏和 Markdown 表格；
@@ -1323,10 +1324,10 @@ async def _deliver_render_request(
 @plugin.mount_sandbox_method(
     SandboxMethodType.BEHAVIOR,
     name="submit_rendered_markdown",
-    description="Render and send one ordinary Markdown document with inline math",
+    description="Globally injected predefined method; call directly without import. Render and send one Markdown document",
 )
 async def submit_rendered_markdown(_ctx: AgentCtx, markdown_text: str) -> str:
-    """提交普通 Markdown；无需选择段落类型或构造 JSON。
+    """全局预定义方法，直接调用且禁止 import；无需选择段落类型或构造 JSON。
 
     Args:
         markdown_text: 一整段普通 Markdown，支持标题、列表、加粗、代码和数学公式。

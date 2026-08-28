@@ -9,8 +9,11 @@ LABEL org.opencontainers.image.title="Superlily Nekro prompt-cache overlay" \
       org.opencontainers.image.version="${BUILD_VERSION}"
 
 COPY nekro-agent-prompt-cache.patch /tmp/nekro-agent-prompt-cache.patch
+COPY nekro-agent-runtime.patch /tmp/nekro-agent-runtime.patch
+COPY verify_overlay.py /tmp/verify_overlay.py
 RUN cd /app \
     && patch --batch --forward -p1 < /tmp/nekro-agent-prompt-cache.patch \
+    && patch --batch --forward -p1 < /tmp/nekro-agent-runtime.patch \
     && python -m compileall -q \
         nekro_agent/services/agent/creator.py \
         nekro_agent/services/agent/openai.py \
@@ -18,4 +21,7 @@ RUN cd /app \
         nekro_agent/services/agent/templates/compiler.py \
         nekro_agent/services/agent/templates/history.py \
         nekro_agent/schemas/sandbox.py \
-    && rm /tmp/nekro-agent-prompt-cache.patch
+        nekro_agent/services/agent/resolver.py \
+        nekro_agent/services/sandbox/runner.py \
+    && uv run python /tmp/verify_overlay.py \
+    && rm /tmp/nekro-agent-prompt-cache.patch /tmp/nekro-agent-runtime.patch /tmp/verify_overlay.py

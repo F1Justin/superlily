@@ -25,7 +25,7 @@ The validated production runtime profile is:
 
 - `AI_CHAT_CONTEXT_MAX_LENGTH: 16`
 - `AI_CONTEXT_LENGTH_PER_SESSION: 3200`
-- `AI_VISION_IMAGE_LIMIT: 0`
+- `AI_VISION_IMAGE_LIMIT: 1` (current operator choice; independent of this overlay)
 - `MEMORY_ENABLE_SYSTEM: false`
 
 Upstream source: `KroMiose/nekro-agent` tag `v2.3.3`, commit

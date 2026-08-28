@@ -1,7 +1,7 @@
 # Use with /home/justin/nekro/docker-compose.yml after `superlily_bus` exists.
 services:
   nekro_agent:
-    image: superlily/nekro-agent:2.3.3-prompt-cache3
+    image: superlily/nekro-agent:2.3.3-prompt-cache4
     build:
       context: /home/justin/superlily/deploy/nekro-agent-prompt-cache
     networks:
