@@ -1,0 +1,245 @@
+diff --git a/nekro_agent/schemas/sandbox.py b/nekro_agent/schemas/sandbox.py
+index 5bdae5b..e96222b 100644
+--- a/nekro_agent/schemas/sandbox.py
++++ b/nekro_agent/schemas/sandbox.py
+@@ -12,0 +13,4 @@ class SandboxCodeExtData(BaseModel):
++    token_cached: int = 0
++    token_cache_write: int = 0
++    usage_cost: float = 0
++    cache_discount: float = 0
+@@ -59,0 +64,4 @@ class SandboxCodeExtData(BaseModel):
++            token_cached=llm_response.token_cached,
++            token_cache_write=llm_response.token_cache_write,
++            usage_cost=llm_response.usage_cost,
++            cache_discount=llm_response.cache_discount,
+diff --git a/nekro_agent/services/agent/creator.py b/nekro_agent/services/agent/creator.py
+index c376a7c..da1375d 100644
+--- a/nekro_agent/services/agent/creator.py
++++ b/nekro_agent/services/agent/creator.py
+@@ -17 +17,6 @@ class OpenAIChatMessage:
+-    def __init__(self, role: Literal["user", "assistant", "system"], content: List[Dict[str, Any]]):
++    def __init__(
++        self,
++        role: Literal["user", "assistant", "system"],
++        content: List[Dict[str, Any]],
++        cache_breakpoint: bool = False,
++    ):
+@@ -19,0 +25 @@ class OpenAIChatMessage:
++        self.cache_breakpoint = cache_breakpoint
+@@ -21 +27 @@ class OpenAIChatMessage:
+-    def to_dict(self) -> Dict[str, Any]:
++    def to_dict(self, include_cache_control: bool = False) -> Dict[str, Any]:
+@@ -30 +36,3 @@ class OpenAIChatMessage:
+-        if all(_c["type"] == "text" for _c in self.content):
++        if all(_c["type"] == "text" for _c in self.content) and not (
++            include_cache_control and self.cache_breakpoint
++        ):
+@@ -44,0 +53,2 @@ class OpenAIChatMessage:
++        if include_cache_control and self.cache_breakpoint and merged_content:
++            merged_content[-1] = {**merged_content[-1], "cache_control": {"type": "ephemeral"}}
+@@ -46,0 +57,4 @@ class OpenAIChatMessage:
++    def mark_cache_breakpoint(self) -> "OpenAIChatMessage":
++        """Mark the end of a stable prompt prefix for providers with explicit caching."""
++        return OpenAIChatMessage(self.role, self.content, cache_breakpoint=True)
++
+@@ -83 +97,5 @@ class OpenAIChatMessage:
+-        return OpenAIChatMessage(self.role, self.content + other.content)
++        return OpenAIChatMessage(
++            self.role,
++            self.content + other.content,
++            cache_breakpoint=self.cache_breakpoint or other.cache_breakpoint,
++        )
+@@ -99 +117 @@ class OpenAIChatMessage:
+-        return OpenAIChatMessage(self.role, merged_content)
++        return OpenAIChatMessage(self.role, merged_content, cache_breakpoint=self.cache_breakpoint)
+diff --git a/nekro_agent/services/agent/openai.py b/nekro_agent/services/agent/openai.py
+index 666c566..843f913 100644
+--- a/nekro_agent/services/agent/openai.py
++++ b/nekro_agent/services/agent/openai.py
+@@ -1,0 +2 @@ import asyncio
++import hashlib
+@@ -16,0 +18 @@ from typing import (
++from urllib.parse import urlparse
+@@ -58,0 +61,4 @@ class OpenAIResponse(BaseModel):
++    token_cached: int = 0  # 缓存读取 token
++    token_cache_write: int = 0  # 缓存写入 token
++    usage_cost: float = 0  # 供应商返回的实际费用
++    cache_discount: float = 0  # 供应商返回的缓存折扣
+@@ -73,0 +80,3 @@ class OpenAIResponse(BaseModel):
++                f"缓存读取 token: {self.token_cached}\n"
++                f"缓存写入 token: {self.token_cache_write}\n"
++                f"实际费用: {self.usage_cost}\n"
+@@ -82,0 +92,3 @@ class OpenAIResponse(BaseModel):
++            f"Cached token: {self.token_cached}\n"
++            f"Cache write token: {self.token_cache_write}\n"
++            f"Actual cost: {self.usage_cost}\n"
+@@ -111,0 +124,4 @@ class OpenAIResponse(BaseModel):
++                "token_cached": self.token_cached,
++                "token_cache_write": self.token_cache_write,
++                "usage_cost": self.usage_cost,
++                "cache_discount": self.cache_discount,
+@@ -415,0 +432 @@ async def gen_openai_chat_response(
++    session_id: Optional[str] = None,
+@@ -421,2 +438,9 @@ async def gen_openai_chat_response(
+-    # messages 处理
+-    messages = [msg.to_dict() if isinstance(msg, OpenAIChatMessage) else msg for msg in messages]
++    normalized_host = (urlparse(base_url).hostname or "").lower() if base_url else ""
++    is_openrouter = normalized_host == "openrouter.ai" or normalized_host.endswith(".openrouter.ai")
++    use_explicit_gemini_cache = is_openrouter and "gemini" in model.lower()
++
++    # Gemini prompt caching on OpenRouter requires an explicit breakpoint.
++    messages = [
++        msg.to_dict(include_cache_control=use_explicit_gemini_cache) if isinstance(msg, OpenAIChatMessage) else msg
++        for msg in messages
++    ]
+@@ -442,0 +467,7 @@ async def gen_openai_chat_response(
++    if is_openrouter and session_id:
++        if gen_kwargs["extra_body"] is None:
++            gen_kwargs["extra_body"] = {}
++        metadata = dict(gen_kwargs["extra_body"].get("metadata") or {})
++        metadata.setdefault("session_id", f"nekro-{hashlib.sha256(session_id.encode()).hexdigest()[:32]}")
++        gen_kwargs["extra_body"]["metadata"] = metadata
++
+@@ -446,3 +476,0 @@ async def gen_openai_chat_response(
+-    # messages 处理
+-    messages = [msg.to_dict() if isinstance(msg, OpenAIChatMessage) else msg for msg in messages]
+-
+@@ -453,0 +482,4 @@ async def gen_openai_chat_response(
++    token_cached: int = 0
++    token_cache_write: int = 0
++    usage_cost: float = 0
++    cache_discount: float = 0
+@@ -465,0 +498,25 @@ async def gen_openai_chat_response(
++    def _usage_value(source: Any, field: str, default: Any = 0) -> Any:
++        if source is None:
++            return default
++        if isinstance(source, dict):
++            return source.get(field, default)
++        value = getattr(source, field, None)
++        if value is not None:
++            return value
++        model_extra = getattr(source, "model_extra", None)
++        return model_extra.get(field, default) if isinstance(model_extra, dict) else default
++
++    def _apply_usage(usage: Any) -> None:
++        nonlocal token_consumption, token_input, token_output, token_cached, token_cache_write
++        nonlocal usage_cost, cache_discount
++        if not usage:
++            return
++        token_consumption = int(_usage_value(usage, "total_tokens", token_consumption) or 0)
++        token_input = int(_usage_value(usage, "prompt_tokens", token_input) or 0)
++        token_output = int(_usage_value(usage, "completion_tokens", token_output) or 0)
++        prompt_details = _usage_value(usage, "prompt_tokens_details", None)
++        token_cached = int(_usage_value(prompt_details, "cached_tokens", token_cached) or 0)
++        token_cache_write = int(_usage_value(prompt_details, "cache_write_tokens", token_cache_write) or 0)
++        usage_cost = float(_usage_value(usage, "cost", usage_cost) or 0)
++        cache_discount = float(_usage_value(usage, "cache_discount", cache_discount) or 0)
++
+@@ -467 +524,3 @@ async def gen_openai_chat_response(
+-        nonlocal output, thought_chain, token_consumption, token_input, token_output, first_token_time
++        nonlocal output, thought_chain, first_token_time
++
++        _apply_usage(chunk.usage)
+@@ -482,8 +540,0 @@ async def gen_openai_chat_response(
+-        if chunk.usage:
+-            if chunk.usage.total_tokens is not None:
+-                token_consumption = chunk.usage.total_tokens
+-            if chunk.usage.prompt_tokens is not None:
+-                token_input = chunk.usage.prompt_tokens
+-            if chunk.usage.completion_tokens is not None:
+-                token_output = chunk.usage.completion_tokens
+-
+@@ -570,3 +621 @@ async def gen_openai_chat_response(
+-                token_consumption = res.usage.total_tokens if res.usage else 0
+-                token_input = res.usage.prompt_tokens if res.usage else 0
+-                token_output = res.usage.completion_tokens if res.usage else 0
++                _apply_usage(res.usage)
+@@ -607,0 +657,4 @@ async def gen_openai_chat_response(
++        token_cached=token_cached,
++        token_cache_write=token_cache_write,
++        usage_cost=usage_cost,
++        cache_discount=cache_discount,
+diff --git a/nekro_agent/services/agent/run_agent.py b/nekro_agent/services/agent/run_agent.py
+index 0ff587e..89d19ad 100644
+--- a/nekro_agent/services/agent/run_agent.py
++++ b/nekro_agent/services/agent/run_agent.py
+@@ -406,0 +407 @@ async def send_agent_request(
++                session_id=chat_key,
+diff --git a/nekro_agent/services/agent/templates/compiler.py b/nekro_agent/services/agent/templates/compiler.py
+index 943331d..fec694e 100644
+--- a/nekro_agent/services/agent/templates/compiler.py
++++ b/nekro_agent/services/agent/templates/compiler.py
+@@ -15,4 +14,0 @@ from .practice import (
+-    PracticePrompt_question_1,
+-    PracticePrompt_question_2,
+-    PracticePrompt_response_1,
+-    PracticePrompt_response_2,
+@@ -81 +77 @@ class PromptCompiler:
+-        )
++        ).mark_cache_breakpoint()
+@@ -103,0 +100,2 @@ class PromptCompiler:
++            if messages:
++                messages[-1] = messages[-1].mark_cache_breakpoint()
+@@ -106,22 +104 @@ class PromptCompiler:
+-        return [
+-            OpenAIChatMessage.from_template("user", PracticePrompt_question_1(one_time_code=EXAMPLE_SESSION_TOKEN), default_env),
+-            OpenAIChatMessage.from_template(
+-                "assistant",
+-                PracticePrompt_response_1(
+-                    one_time_code=EXAMPLE_SESSION_TOKEN,
+-                    enable_cot=self.enable_cot,
+-                    enable_at=self.enable_at,
+-                ),
+-                default_env,
+-            ),
+-            OpenAIChatMessage.from_template("user", PracticePrompt_question_2(one_time_code=EXAMPLE_SESSION_TOKEN), default_env),
+-            OpenAIChatMessage.from_template(
+-                "assistant",
+-                PracticePrompt_response_2(
+-                    one_time_code=EXAMPLE_SESSION_TOKEN,
+-                    enable_cot=self.enable_cot,
+-                    enable_at=self.enable_at,
+-                ),
+-                default_env,
+-            ),
+-        ]
++        return []
+diff --git a/nekro_agent/services/agent/templates/history.py b/nekro_agent/services/agent/templates/history.py
+index d03e852..b7cf187 100644
+--- a/nekro_agent/services/agent/templates/history.py
++++ b/nekro_agent/services/agent/templates/history.py
+@@ -465,0 +466,15 @@ class HistoryPrompt(PromptTemplate):
++def _select_recent_chat_messages(
++    messages_newest_first: List[DBChatMessage],
++    max_length: int,
++    referenced_message: Optional[DBChatMessage],
++) -> List[DBChatMessage]:
++    if max_length <= 0:
++        return []
++
++    selected = messages_newest_first[::-1][-max_length:]
++    if referenced_message and max_length >= 2 and all(msg.id != referenced_message.id for msg in selected):
++        selected = [referenced_message, *selected[-(max_length - 1) :]]
++        selected.sort(key=lambda msg: (msg.send_timestamp, msg.id))
++    return selected
++
++
+@@ -500,2 +515,16 @@ async def render_history_data(
+-    # 反转列表顺序并确保不超过最大长度
+-    recent_chat_messages = recent_chat_messages[::-1][-config.AI_CHAT_CONTEXT_MAX_LENGTH :]
++
++    # Keep the newest trigger and its direct reply target before filling the
++    # remaining slots with ordinary recent history.
++    newest_user_message = next((msg for msg in recent_chat_messages if not msg.is_system), None)
++    referenced_message: Optional[DBChatMessage] = None
++    if newest_user_message and newest_user_message.ext_data_obj.ref_msg_id:
++        referenced_message = await DBChatMessage.filter(
++            chat_key=chat_key,
++            message_id=newest_user_message.ext_data_obj.ref_msg_id,
++        ).first()
++
++    recent_chat_messages = _select_recent_chat_messages(
++        recent_chat_messages,
++        config.AI_CHAT_CONTEXT_MAX_LENGTH,
++        referenced_message,
++    )
