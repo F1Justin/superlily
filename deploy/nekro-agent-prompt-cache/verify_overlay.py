@@ -1,5 +1,6 @@
 import asyncio
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -10,8 +11,26 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, "/app")
 
 from nekro_agent.models.db_exec_code import ExecStopType
+from nekro_agent.core.os_env import _ensure_upload_dir
 from nekro_agent.services.agent.resolver import fix_code_content
 from nekro_agent.services.sandbox import runner
+
+
+def verify_upload_directory_setup() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        upload_dir = Path(temp_dir) / "uploads"
+        child_dir = upload_dir / "chat"
+        child_file = child_dir / "image.jpg"
+        child_dir.mkdir(parents=True, mode=0o700)
+        child_file.write_bytes(b"image")
+        child_file.chmod(0o600)
+        upload_dir.chmod(0o700)
+
+        _ensure_upload_dir(upload_dir)
+
+        assert stat.S_IMODE(upload_dir.stat().st_mode) == 0o755
+        assert stat.S_IMODE(child_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(child_file.stat().st_mode) == 0o600
 
 
 def verify_injected_method_import_normalization() -> None:
@@ -175,6 +194,7 @@ def main() -> None:
     if "--live" in sys.argv:
         asyncio.run(verify_live_container_lifecycle())
         return
+    verify_upload_directory_setup()
     verify_injected_method_import_normalization()
     asyncio.run(verify_container_lifecycle())
 

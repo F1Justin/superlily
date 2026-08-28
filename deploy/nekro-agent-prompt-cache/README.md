@@ -4,7 +4,7 @@ This builds a narrow production overlay on the exact Nekro Agent 2.3.3 image
 currently deployed on Kanako. It does not vendor or fork the full upstream
 repository.
 
-The patch:
+The overlay patches:
 
 - marks the end of Nekro's stable system plus practice-message prefix with an
   explicit OpenRouter Gemini cache breakpoint;
@@ -15,11 +15,16 @@ The patch:
   in the existing sandbox `extra_data` JSON;
 - preserves the current message's direct reply target when a reduced history
   window would otherwise evict it; and
-- captures usage-only final streaming chunks instead of discarding them.
+- captures usage-only final streaming chunks instead of discarding them;
+- normalizes one exact hallucinated import for the globally injected Lily
+  renderer method;
+- keeps sandbox container IDs, rather than client-bound container objects,
+  across execution bookkeeping; and
+- initializes only the uploads root directory permission instead of recursively
+  chmodding the entire upload archive on every process import.
 
 The random per-run history token remains dynamic and is never made stable.
-The overlay does not change the system prompt text, plugins, model parameters,
-or sandbox behavior. History and image limits remain runtime configuration.
+History and image limits remain runtime configuration.
 
 The validated production runtime profile is:
 
@@ -34,13 +39,10 @@ Upstream source: `KroMiose/nekro-agent` tag `v2.3.3`, commit
 Registry manifest digest:
 `sha256:0817f343aad4f9b4af72b7406a08d2790e9c22fbbedc2c6c91a577339df0668a`.
 
-Verified local image ID:
-`sha256:4c209098e439345fed92b9870bf9e4d2361650476b6ab177924f11911167e72e`.
-
 ## Commit and image identity
 
 Production builds pass the owning Superlily commit as `VCS_REF` and the Git tag
 as `BUILD_VERSION`. The resulting image exposes both values through OCI labels
-and receives both the stable `2.3.3-prompt-cache3` tag and a `git-<short-sha>`
+and receives both the stable `2.3.3-prompt-cache5` tag and a `git-<short-sha>`
 tag. The Compose override uses the stable tag; operators can compare its OCI
 revision label with the Git tag target before deployment.
