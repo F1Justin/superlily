@@ -48,15 +48,14 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 from .render_retry import (
-    FALLBACK_SENT,
-    FALLBACK_SUPPRESSED,
+    RENDER_SUPPRESSED,
     RenderRetryRequired,
     RenderRetryTracker,
-    markdown_plain_text,
     retry_instruction,
+    unavailable_instruction,
 )
 
-BRIDGE_VERSION = "1.0.0"
+BRIDGE_VERSION = "1.1.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -1078,31 +1077,11 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
 链接、Markdown 图片和原始 HTML 只会显示为文字，不会访问网络或本地文件。
 不要使用 PIL/ImageDraw 或 Matplotlib 的 text/annotate 自行排版文字和公式；Matplotlib 只用于真正的数据图表。
 该方法会直接发送渲染成品，调用成功后不要重复发送同一内容。
-任何 `INTERNAL_RENDER_*` 状态都属于内部控制信息，绝不能向用户提及渲染、失败、重试、
-不可用、坏掉或修好。首次内容错误会自动终止当前脚本并触发一次模型纠错迭代；
-只在该迭代中修正内容并再次调用本方法。工具确认 fallback/completed 后立即停止，
-不得再次发送。
+方法成功才表示成品已经发送。内容编译错误会终止当前脚本，并在下一次模型迭代中返回
+有界的真实错误类别、不可用命令和 Markdown node_id；根据该诊断修改 Markdown 后再调用。
+不得把失败的 Markdown 自动改成普通长文本发送。任何 `INTERNAL_RENDER_*` 状态都属于
+内部控制信息，绝不能向用户提及，也不得据此重复发送。
 """.strip()
-
-
-async def _send_render_text_fallback(
-    _ctx: AgentCtx,
-    *,
-    action: str,
-    markdown_text: str,
-) -> str:
-    if action == "suppress":
-        return FALLBACK_SUPPRESSED
-    try:
-        await _ctx.send_text(markdown_plain_text(markdown_text))
-    except Exception:
-        logger.exception("Lily Core ordinary-text fallback delivery failed")
-        return (
-            "INTERNAL_RENDER_FALLBACK_SEND_REQUIRED. Send the answer exactly once "
-            "with send_msg_text, without mentioning any internal status. Do not use "
-            "PIL, ImageDraw, or Matplotlib for text layout."
-        )
-    return FALLBACK_SENT
 
 
 async def _deliver_render_request(
@@ -1111,7 +1090,6 @@ async def _deliver_render_request(
     endpoint: str,
     payload: dict[str, Any],
     request_context: str,
-    fallback_text: str | None = None,
 ) -> str:
     canonical = json.dumps(
         payload,
@@ -1145,16 +1123,7 @@ async def _deliver_render_request(
                 or not isinstance(delivery_plan_id, str)
                 or not isinstance(delivery_plan, dict)
             ):
-                if fallback_text is not None:
-                    return await _send_render_text_fallback(
-                        _ctx,
-                        action=_render_retry_tracker.force_fallback(request_context),
-                        markdown_text=fallback_text,
-                    )
-                return (
-                    "INTERNAL_RENDER_RESULT_INVALID. Reply once as ordinary text "
-                    "without mentioning any internal status."
-                )
+                raise RenderRetryRequired(unavailable_instruction())
             intent_response = await client.post(
                 f"/v1/render-artifacts/{receipt['artifact_id']}/delivery-intents",
                 json={
@@ -1167,8 +1136,8 @@ async def _deliver_render_request(
             intent_response.raise_for_status()
             intent = intent_response.json()
             if not intent.get("should_send"):
-                _render_retry_tracker.force_fallback(request_context)
-                return FALLBACK_SUPPRESSED
+                _render_retry_tracker.mark_terminal(request_context)
+                return RENDER_SUPPRESSED
 
             selected_family = delivery_plan.get("selected_family")
             send_receipt: dict[str, str | None]
@@ -1249,13 +1218,13 @@ async def _deliver_render_request(
                     "Do not send it again or mention internal rendering status."
                 )
             if send_receipt["outcome"] == "ambiguous":
-                _render_retry_tracker.force_fallback(request_context)
+                _render_retry_tracker.mark_terminal(request_context)
                 return (
                     "INTERNAL_RENDER_DELIVERY_UNCONFIRMED. Do not retry or send a "
                     "fallback because that could duplicate a platform message. Never "
                     "mention internal status."
                 )
-            _render_retry_tracker.force_fallback(request_context)
+            _render_retry_tracker.mark_terminal(request_context)
             return (
                 "INTERNAL_RENDER_DELIVERY_FAILED. Do not retry this platform action. "
                 "Continue without mentioning internal status."
@@ -1273,52 +1242,34 @@ async def _deliver_render_request(
             endpoint == "/v1/markdown-documents"
             and (
                 exc.response.status_code == 422
-                or error_code == "renderer_execution_failed"
+                or error_code
+                in {"renderer_content_error", "renderer_execution_failed"}
             )
         )
-        if fallback_text is not None and content_error:
+        if content_error:
+            diagnostic: object = None
+            try:
+                body = exc.response.json()
+                detail = body.get("detail") if isinstance(body, dict) else None
+                if isinstance(detail, dict):
+                    diagnostic = detail.get("diagnostic")
+            except ValueError:
+                pass
             action = _render_retry_tracker.content_failure(request_context)
             if action == "retry":
-                raise RenderRetryRequired(retry_instruction(error_code)) from exc
-            return await _send_render_text_fallback(
-                _ctx,
-                action=action,
-                markdown_text=fallback_text,
-            )
-        if fallback_text is not None:
-            return await _send_render_text_fallback(
-                _ctx,
-                action=_render_retry_tracker.force_fallback(request_context),
-                markdown_text=fallback_text,
-            )
-        return (
-            "INTERNAL_RENDER_REQUEST_REJECTED. Reply once as ordinary text without "
-            "mentioning any internal status or drawing a text image."
-        )
-    except httpx.HTTPError:
+                raise RenderRetryRequired(
+                    retry_instruction(error_code, diagnostic)
+                ) from exc
+            return RENDER_SUPPRESSED
+        raise RenderRetryRequired(unavailable_instruction()) from exc
+    except RenderRetryRequired:
+        raise
+    except httpx.HTTPError as exc:
         logger.warning("Lily Core render request failed safely")
-        if fallback_text is not None:
-            return await _send_render_text_fallback(
-                _ctx,
-                action=_render_retry_tracker.force_fallback(request_context),
-                markdown_text=fallback_text,
-            )
-        return (
-            "INTERNAL_RENDER_TRANSPORT_FAILED. Reply once as ordinary text without "
-            "mentioning any internal status."
-        )
-    except Exception:
+        raise RenderRetryRequired(unavailable_instruction()) from exc
+    except Exception as exc:
         logger.exception("Lily Core render delivery failed")
-        if fallback_text is not None:
-            return await _send_render_text_fallback(
-                _ctx,
-                action=_render_retry_tracker.force_fallback(request_context),
-                markdown_text=fallback_text,
-            )
-        return (
-            "INTERNAL_RENDER_DELIVERY_FAILED. Reply once as ordinary text without "
-            "mentioning any internal status."
-        )
+        raise RenderRetryRequired(unavailable_instruction()) from exc
 
 
 @plugin.mount_sandbox_method(
@@ -1349,7 +1300,6 @@ async def submit_rendered_markdown(_ctx: AgentCtx, markdown_text: str) -> str:
             "markdown": markdown_text,
         },
         request_context=request_context,
-        fallback_text=markdown_text,
     )
 
 

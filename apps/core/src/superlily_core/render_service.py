@@ -18,6 +18,7 @@ from superlily_contracts import (
     DeliveryIntentIn,
     DeliveryPlanDecision,
     RenderArtifactDeletionIn,
+    RenderContentDiagnostic,
     RenderDocument,
     canonicalize_json_value,
     plan_render_delivery,
@@ -42,10 +43,16 @@ from .settings import Settings
 
 
 class RenderServiceError(RuntimeError):
-    def __init__(self, code: str, safe_detail: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        safe_detail: str,
+        diagnostic: RenderContentDiagnostic | None = None,
+    ) -> None:
         super().__init__(safe_detail)
         self.code = code
         self.safe_detail = safe_detail
+        self.diagnostic = diagnostic
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -460,11 +467,19 @@ async def submit_render_document(
         )
         raise
     except DocumentRendererError as exc:
-        error_code = f"renderer_{exc.error_code}"
+        error_code = (
+            "renderer_content_error"
+            if exc.diagnostic is not None
+            else f"renderer_{exc.error_code}"
+        )
         await _mark_attempt_failed(
             session, record, attempt, error_code, _attempt_duration(render_started)
         )
-        raise RenderServiceError(error_code, "document renderer failed safely") from exc
+        raise RenderServiceError(
+            error_code,
+            "document renderer failed safely",
+            exc.diagnostic,
+        ) from exc
     except ArtifactStoreError as exc:
         await _mark_attempt_failed(
             session,

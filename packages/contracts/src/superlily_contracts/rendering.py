@@ -24,6 +24,35 @@ _FORBIDDEN_LATEX_RE = re.compile(
 )
 
 
+class RenderContentDiagnostic(BaseModel):
+    """Bounded model-facing content diagnostic; never contains a raw TeX log."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = "1.0"
+    stage: Literal["xelatex"] = "xelatex"
+    error_class: Literal[
+        "undefined_control_sequence",
+        "missing_package_or_file",
+        "unbalanced_group",
+        "missing_math_delimiter",
+        "invalid_environment",
+        "generic_compile_error",
+    ]
+    command: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=66,
+        pattern=r"^\\(?:[A-Za-z@]{1,64}|.)$",
+    )
+    node_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    )
+
+
 def split_inline_math(value: str) -> tuple[tuple[Literal["text", "math"], str], ...]:
     r"""Split prose containing safe single-dollar inline math.
 

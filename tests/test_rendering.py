@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from superlily_contracts import (
+    RenderContentDiagnostic,
     RenderDocument,
     inline_content_plain_text,
     render_document_hash,
@@ -75,6 +76,65 @@ def _document() -> RenderDocument:
             },
         ],
     )
+
+
+@pytest.mark.asyncio
+async def test_document_renderer_client_accepts_only_strict_diagnostic_envelope(
+    monkeypatch,
+) -> None:
+    diagnostic = RenderContentDiagnostic(
+        error_class="undefined_control_sequence",
+        command=r"\notARealCommand",
+        node_id="main-equation",
+    )
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            del args
+
+        async def post(self, *args, **kwargs):
+            del args, kwargs
+            return httpx.Response(
+                422,
+                headers={"X-Render-Error-Code": "execution_failed"},
+                json={
+                    "error_code": "execution_failed",
+                    "diagnostic": diagnostic.model_dump(mode="json"),
+                },
+            )
+
+    monkeypatch.setattr(
+        "superlily_core.document_renderer_client.httpx.AsyncClient",
+        FakeClient,
+    )
+    client = DocumentRendererClient("http://renderer.test", "r" * 32)
+    with pytest.raises(DocumentRendererError) as failure:
+        await client.render_document(_document(), timeout_seconds=5)
+    assert failure.value.diagnostic == diagnostic
+
+    async def post_with_raw_log(self, *args, **kwargs):
+        del self, args, kwargs
+        return httpx.Response(
+            422,
+            headers={"X-Render-Error-Code": "execution_failed"},
+            json={
+                "error_code": "execution_failed",
+                "diagnostic": diagnostic.model_dump(mode="json"),
+                "raw_log": "must-not-transit",
+            },
+        )
+
+    monkeypatch.setattr(FakeClient, "post", post_with_raw_log)
+    with pytest.raises(DocumentRendererError) as rejected:
+        await client.render_document(_document(), timeout_seconds=5)
+    assert rejected.value.error_code == "invalid_output"
+    assert "must-not-transit" not in rejected.value.safe_detail
 
 
 def test_render_contract_is_canonical_and_rejects_tex_file_io() -> None:
@@ -937,6 +997,90 @@ async def test_expired_artifact_and_failed_attempt_are_retryable(tmp_path, monke
                 )
             ).all()
             assert [attempt.state for attempt in attempts] == ["failed", "succeeded"]
+    finally:
+        await app.state.database.drop_schema()
+        await app.state.database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_renderer_content_diagnostic_reaches_caller_but_not_persistence(
+    tmp_path, monkeypatch
+) -> None:
+    diagnostic = RenderContentDiagnostic(
+        error_class="undefined_control_sequence",
+        command=r"\notARealCommand",
+        node_id="main-equation",
+    )
+
+    async def render_document(self, document, *, timeout_seconds):
+        del self, document, timeout_seconds
+        raise DocumentRendererError(
+            "execution_failed",
+            "safe failure",
+            diagnostic,
+        )
+
+    monkeypatch.setattr(DocumentRendererClient, "render_document", render_document)
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'diagnostic.db'}",
+        ingest_tokens={"nekro-agent": "nekro-secret"},
+        group_default_mode="full",
+        artifact_root=str(tmp_path / "artifacts"),
+        artifact_secret_pepper="p" * 32,
+        render_mode="canary",
+        render_canary_conversations=frozenset({"onebot_v11-group_1080353942"}),
+        render_backend_url="http://document-renderer:8000",
+        render_backend_token="r" * 32,
+        render_implementation_hash="4" * 64,
+    )
+    app = create_app(settings)
+    await app.state.database.create_schema()
+    try:
+        async with app.state.database.sessions() as session:
+            session.add(
+                BotInstance(
+                    id="nekro-agent",
+                    platform="qq",
+                    adapter="onebot_v11",
+                    bot_id="2022692714",
+                    role="talk",
+                    metadata_json={
+                        "capabilities": {
+                            "profile": "onebot_v11.qq.v1",
+                            "supported": ["send_image", "send_text"],
+                            "limits": {},
+                        }
+                    },
+                )
+            )
+            await session.commit()
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/v1/render-documents",
+                json=_document().model_dump(mode="json"),
+                headers={
+                    "Authorization": "Bearer nekro-secret",
+                    "Idempotency-Key": "diagnostic-render-0001",
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.headers["x-render-error-code"] == "renderer_content_error"
+        assert response.json() == {
+            "detail": {
+                "message": "document renderer failed safely",
+                "diagnostic": diagnostic.model_dump(mode="json"),
+            }
+        }
+        async with app.state.database.sessions() as session:
+            attempt = (
+                await session.scalars(select(RenderAttemptRecord))
+            ).one()
+            assert attempt.state == "failed"
+            assert attempt.safe_error_code == "renderer_content_error"
+            assert r"\notARealCommand" not in repr(attempt)
     finally:
         await app.state.database.drop_schema()
         await app.state.database.dispose()

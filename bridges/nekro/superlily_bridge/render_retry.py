@@ -1,4 +1,4 @@
-"""Bounded, dependency-free retry state for model-authored Markdown rendering."""
+"""Bounded, dependency-free feedback for model-authored Markdown rendering."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import time
 from typing import Literal
 
 
-RetryAction = Literal["retry", "fallback", "suppress"]
+RetryAction = Literal["retry", "suppress"]
 
 
 @dataclass(slots=True)
@@ -18,7 +18,7 @@ class _RetryState:
 
 
 class RenderRetryTracker:
-    """Allow one corrected document, then fence every further fallback send."""
+    """Allow one corrected document and never turn content failure into a send."""
 
     def __init__(
         self,
@@ -54,81 +54,74 @@ class RenderRetryTracker:
         if state is None:
             self._states[key] = _RetryState(failures=1, updated_at=observed_at)
             return "retry"
+        state.failures += 1
         state.updated_at = observed_at
-        if state.failures == 1:
-            state.failures = 2
-            return "fallback"
         return "suppress"
 
-    def force_fallback(self, key: str, *, now: float | None = None) -> RetryAction:
+    def mark_terminal(self, key: str, *, now: float | None = None) -> None:
         observed_at = time.monotonic() if now is None else now
         self._prune(observed_at)
-        state = self._states.get(key)
-        if state is not None and state.failures >= 2:
-            state.updated_at = observed_at
-            return "suppress"
         self._states[key] = _RetryState(failures=2, updated_at=observed_at)
-        return "fallback"
 
     def succeeded(self, key: str) -> None:
         self._states.pop(key, None)
-
-
-_TABLE_SEPARATOR_RE = re.compile(
-    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
-)
-
-
-def markdown_plain_text(markdown: str) -> str:
-    """Remove presentation-only markers while preserving answer content."""
-
-    output: list[str] = []
-    in_fence = False
-    for original in markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        stripped = original.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-            continue
-        if not in_fence and _TABLE_SEPARATOR_RE.fullmatch(original):
-            continue
-        line = original
-        if not in_fence:
-            line = re.sub(r"^\s{0,3}#{1,6}[ \t]+", "", line)
-            line = re.sub(r"^\s{0,3}>[ \t]?", "", line)
-            line = line.replace("**", "")
-            if line.strip() == "$$":
-                continue
-        output.append(line.rstrip())
-    result = "\n".join(output).strip()
-    return result or "内容暂时无法以图片形式显示。"
 
 
 class RenderRetryRequired(RuntimeError):
     """Stop the current sandbox script so Nekro performs a real agent iteration."""
 
 
-def retry_instruction(error_code: str) -> str:
-    hint = (
-        "The Python string damaged TeX backslashes. Regenerate with a raw "
-        'triple-quoted string such as r"""...""".'
-        if error_code == "markdown_math_escape_corrupted"
-        else "Correct the malformed or unbalanced TeX and simplify it if needed."
-    )
+_COMMAND_RE = re.compile(r"^\\(?:[A-Za-z@]{1,64}|.)$")
+_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_DIAGNOSTIC_HINTS = {
+    "undefined_control_sequence": "uses a math command unavailable in the renderer",
+    "missing_package_or_file": "requests a TeX package or file unavailable in the renderer",
+    "unbalanced_group": "contains an extra or missing TeX brace",
+    "missing_math_delimiter": "contains an invalid math-mode delimiter",
+    "invalid_environment": "contains an invalid or mismatched TeX environment",
+    "generic_compile_error": "was rejected by XeLaTeX",
+}
+
+
+def retry_instruction(error_code: str, diagnostic: object = None) -> str:
+    if error_code == "markdown_math_escape_corrupted":
+        reason = (
+            "A Python string escape damaged TeX backslashes. Use a raw "
+            'triple-quoted string such as r"""...""".'
+        )
+    elif isinstance(diagnostic, dict):
+        error_class = diagnostic.get("error_class")
+        command = diagnostic.get("command")
+        node_id = diagnostic.get("node_id")
+        reason = _DIAGNOSTIC_HINTS.get(str(error_class), "could not be compiled")
+        if isinstance(node_id, str) and _NODE_ID_RE.fullmatch(node_id):
+            reason = f"Markdown node {node_id} {reason}"
+        else:
+            reason = f"The submitted Markdown {reason}"
+        if isinstance(command, str) and _COMMAND_RE.fullmatch(command):
+            reason += f": {command}"
+        reason += "."
+    else:
+        reason = "The submitted Markdown could not be compiled."
     return (
-        "INTERNAL_RENDER_RETRY_REQUIRED. "
-        f"{hint} Call submit_rendered_markdown exactly once more. "
-        "Do not send a user-visible message yet. Never mention internal rendering, "
-        "failure, retry, availability, or repair to the user. Do not use PIL, "
-        "ImageDraw, or Matplotlib for text layout."
+        "RENDER_CONTENT_ERROR\n"
+        f"{reason}\n"
+        "Revise the Markdown or math expression using the real diagnostic above, "
+        "then call submit_rendered_markdown again. Do not send the failed source "
+        "to the user."
     )
 
 
-FALLBACK_SENT = (
-    "INTERNAL_RENDER_FALLBACK_SENT. The answer was already delivered as ordinary "
-    "text. Do not send it again and never mention internal rendering status."
-)
+def unavailable_instruction() -> str:
+    return (
+        "RENDERER_UNAVAILABLE\n"
+        "The requested image renderer is unavailable. Do not call it again in this "
+        "turn. Use a concise ordinary-text answer only if that still satisfies the "
+        "user's request."
+    )
 
-FALLBACK_SUPPRESSED = (
-    "INTERNAL_RENDER_ALREADY_COMPLETED. Do not call a rendering or send method again "
-    "for this request and never mention internal rendering status."
+
+RENDER_SUPPRESSED = (
+    "INTERNAL_RENDER_STOPPED. No content was sent. Do not send the failed Markdown "
+    "automatically or retry another platform action for this request."
 )

@@ -6,9 +6,13 @@ import zlib
 import httpx
 import pytest
 
-from superlily_contracts import RenderDocument
+from superlily_contracts import RenderContentDiagnostic, RenderDocument
 from superlily_latex_provider.document_gateway import GatewaySettings, create_app
-from superlily_latex_provider.runtime import LatexPngResult, LatexWorkerClient
+from superlily_latex_provider.runtime import (
+    LatexPngResult,
+    LatexWorkerClient,
+    LatexWorkerError,
+)
 
 
 def _png(width: int, height: int) -> bytes:
@@ -60,3 +64,42 @@ async def test_document_gateway_authenticates_and_returns_strict_png(monkeypatch
     assert rendered.headers["content-sha256"] == sha256(body).hexdigest()
     assert rendered.headers["x-width-pixels"] == "3"
     assert rendered.headers["x-height-pixels"] == "4"
+
+
+@pytest.mark.asyncio
+async def test_document_gateway_returns_bounded_content_diagnostic(monkeypatch) -> None:
+    diagnostic = RenderContentDiagnostic(
+        error_class="undefined_control_sequence",
+        command=r"\notARealCommand",
+        node_id="math-node",
+    )
+
+    async def render_document(self, document, *, timeout_seconds):
+        del self, document, timeout_seconds
+        raise LatexWorkerError(
+            "execution_failed",
+            "document compilation failed safely",
+            diagnostic,
+        )
+
+    monkeypatch.setattr(LatexWorkerClient, "render_document", render_document)
+    app = create_app(GatewaySettings(Path("/tmp/worker.sock"), "g" * 32))
+    transport = httpx.ASGITransport(app=app)
+    document = RenderDocument(
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_1080353942",
+        blocks=[{"kind": "math", "node_id": "math-node", "latex": "x"}],
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/render-document",
+            json=document.model_dump(mode="json"),
+            headers={"Authorization": "Bearer " + "g" * 32},
+        )
+
+    assert response.status_code == 422
+    assert response.headers["x-render-error-code"] == "execution_failed"
+    assert response.json() == {
+        "error_code": "execution_failed",
+        "diagnostic": diagnostic.model_dump(mode="json"),
+    }

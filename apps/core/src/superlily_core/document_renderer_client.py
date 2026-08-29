@@ -8,7 +8,7 @@ import re
 
 import httpx
 
-from superlily_contracts import RenderDocument
+from superlily_contracts import RenderContentDiagnostic, RenderDocument
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -17,10 +17,16 @@ MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 
 
 class DocumentRendererError(RuntimeError):
-    def __init__(self, error_code: str, safe_detail: str) -> None:
+    def __init__(
+        self,
+        error_code: str,
+        safe_detail: str,
+        diagnostic: RenderContentDiagnostic | None = None,
+    ) -> None:
         super().__init__(safe_detail)
         self.error_code = error_code
         self.safe_detail = safe_detail
+        self.diagnostic = diagnostic
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +73,34 @@ class DocumentRendererClient:
             code = response.headers.get("X-Render-Error-Code", "execution_failed")
             if code not in {"timeout", "execution_failed", "invalid_output", "budget_exceeded", "internal_error"}:
                 code = "execution_failed"
-            raise DocumentRendererError(code, "document renderer failed safely")
+            diagnostic: RenderContentDiagnostic | None = None
+            if response.headers.get("content-type", "").split(";", 1)[0] == "application/json":
+                try:
+                    payload = response.json()
+                    if isinstance(payload, dict) and "diagnostic" in payload:
+                        if (
+                            set(payload) != {"error_code", "diagnostic"}
+                            or payload.get("error_code") != code
+                        ):
+                            raise ValueError("unexpected diagnostic envelope")
+                        diagnostic = RenderContentDiagnostic.model_validate(
+                            payload["diagnostic"]
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise DocumentRendererError(
+                        "invalid_output",
+                        "document renderer returned an invalid content diagnostic",
+                    ) from exc
+            if diagnostic is not None and code != "execution_failed":
+                raise DocumentRendererError(
+                    "invalid_output",
+                    "document renderer attached a diagnostic to a non-content failure",
+                )
+            raise DocumentRendererError(
+                code,
+                "document renderer failed safely",
+                diagnostic,
+            )
         content = response.content
         content_hash = response.headers.get("Content-SHA256", "")
         try:

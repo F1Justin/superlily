@@ -57,6 +57,22 @@ R0 不改变运行行为。它完成三件事：
 样例应覆盖未知 LaTeX 命令/缺少宏包等真实错误：模型能看到有用诊断，自行改写表达，
 失败草稿不会作为长文本泄漏到群聊。
 
+### R1 当前实施边界（2026-08-29）
+
+- 文档 XeLaTeX 模板加载旧 NoneBot TeX 插件使用的宏包集合，并补充 `esint`；宏包由
+  Runtime 固定加载，模型仍不能提交 `\usepackage`、文件读取或 shell escape；
+- worker 只把原始日志在内存中归约成固定 schema：错误类别、可选的未知命令和
+  `node_id`。原始日志、路径和完整失败内容不跨 Unix socket、不进入 Core 数据库；
+- Core 把内容编译错误作为 `renderer_content_error`/HTTP 422 返回调用方，数据库只记
+  安全错误码；基础设施失败仍与内容错误分开；
+- Nekro bridge `1.1.0` 把这份真实短诊断交回下一次模型迭代。只允许一次修订尝试，
+  失败草稿不再自动降级成长篇普通文本；外部平台发送仍只发生在成功产物之后；
+- 这一实施复用已有 RenderDocument、artifact、delivery intent 和唯一发送边界，不新增
+  第二套 preview/publish API，也不扩成通用 Agent 治理层。
+
+代码候选已通过真实 `\oiint` 编译、未知命令定位及 Worker→Core→bridge 契约测试；只有
+生产镜像、身份、bridge 和无外部发送探针全部钉住后，R1 才标记完成。
+
 ## R2：Cognitive Workspace / World Effect Boundary
 
 在 R1 的真实实现上概括最小边界：

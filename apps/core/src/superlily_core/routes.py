@@ -245,8 +245,8 @@ async def post_response(
 
 
 def _render_http_error(exc: RenderServiceError) -> HTTPException:
-    if exc.code.startswith("markdown_"):
-        code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    if exc.code.startswith("markdown_") or exc.code == "renderer_content_error":
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT
     elif exc.code in {"render_conversation_forbidden", "artifact_forbidden", "delivery_forbidden"}:
         code = status.HTTP_403_FORBIDDEN
     elif exc.code in {
@@ -270,9 +270,15 @@ def _render_http_error(exc: RenderServiceError) -> HTTPException:
         code = status.HTTP_503_SERVICE_UNAVAILABLE
     else:
         code = status.HTTP_502_BAD_GATEWAY
+    detail: str | dict[str, object] = exc.safe_detail
+    if exc.diagnostic is not None:
+        detail = {
+            "message": exc.safe_detail,
+            "diagnostic": exc.diagnostic.model_dump(mode="json"),
+        }
     return HTTPException(
         status_code=code,
-        detail=exc.safe_detail,
+        detail=detail,
         headers={"X-Render-Error-Code": exc.code},
     )
 

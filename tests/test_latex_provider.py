@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 
 from superlily_contracts import (
+    RenderContentDiagnostic,
+    RenderDocument,
     ToolArtifactReference,
     ToolArtifactReservationOut,
     ToolArtifactUploadOut,
@@ -31,7 +33,12 @@ from superlily_latex_provider.runtime import (
     build_worker_identity_hash,
     latex_implementation_hash,
 )
-from superlily_latex_provider.worker import render_latex_png, template_sha256
+from superlily_latex_provider.worker import (
+    DOCUMENT_TEMPLATE_PREFIX,
+    render_document_png,
+    render_latex_png,
+    template_sha256,
+)
 
 from test_artifact_store import png_bytes
 
@@ -235,6 +242,29 @@ async def test_worker_hash_mismatch_and_raw_error_fields_fail_closed(tmp_path: P
         await server.wait_closed()
 
     socket_path.unlink(missing_ok=True)
+    diagnostic = RenderContentDiagnostic(
+        error_class="undefined_control_sequence",
+        command=r"\notARealCommand",
+        node_id="math-node",
+    )
+    server, socket_path = await _worker_server(
+        tmp_path,
+        {
+            "ok": False,
+            "error_code": "execution_failed",
+            "diagnostic": diagnostic.model_dump(mode="json"),
+        },
+    )
+    try:
+        with pytest.raises(LatexWorkerError) as failure:
+            await LatexWorkerClient(socket_path).render("x", timeout_seconds=2)
+        assert failure.value.error_code == "execution_failed"
+        assert failure.value.diagnostic == diagnostic
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    socket_path.unlink(missing_ok=True)
     server, socket_path = await _worker_server(
         tmp_path,
         {"ok": False, "error_code": "execution_failed", "raw_log": "secret-formula"},
@@ -274,6 +304,79 @@ def test_real_renderer_denies_absolute_input_and_shell_escape(tmp_path: Path) ->
     )
     assert body.startswith(b"\x89PNG\r\n\x1a\n")
     assert not marker.exists()
+
+
+def test_document_template_loads_nonebot_packages_and_oiint_renders(tmp_path: Path) -> None:
+    xelatex = Path("/usr/local/texlive/2024/bin/x86_64-linux/xelatex")
+    if not xelatex.is_file():
+        pytest.skip("host TeX Live is unavailable")
+    expected_packages = {
+        "amsmath",
+        "mathtools",
+        "amsfonts",
+        "amssymb",
+        "esint",
+        "xcolor",
+        "ulem",
+        "physics",
+        "mhchem",
+        "tikz",
+        "chemfig",
+        "tcolorbox",
+        "graphicx",
+        "tikz-cd",
+        "tensor",
+        "pgfplots",
+        "enumitem",
+        "bbm",
+        "mathrsfs",
+        "ctex",
+    }
+    for package in expected_packages - {"ctex"}:
+        assert rf"\usepackage{{{package}}}" in DOCUMENT_TEMPLATE_PREFIX
+    assert r"\usepackage[punct=kaiming,fontset=none]{ctex}" in DOCUMENT_TEMPLATE_PREFIX
+
+    document = RenderDocument(
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_1080353942",
+        blocks=[
+            {
+                "kind": "math",
+                "node_id": "surface-integral",
+                "latex": r"\oiint_{\partial V} \mathbf{F}\cdot d\mathbf{S}",
+            }
+        ],
+    )
+    body = render_document_png(document, work_root=tmp_path)
+    assert body.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_document_compile_failure_returns_only_bounded_node_diagnostic(tmp_path: Path) -> None:
+    xelatex = Path("/usr/local/texlive/2024/bin/x86_64-linux/xelatex")
+    if not xelatex.is_file():
+        pytest.skip("host TeX Live is unavailable")
+    document = RenderDocument(
+        instance_id="nekro-agent",
+        conversation_key="onebot_v11-group_1080353942",
+        blocks=[
+            {
+                "kind": "math",
+                "node_id": "broken-integral",
+                "latex": r"\notARealCommand_{do-not-leak}",
+            }
+        ],
+    )
+
+    with pytest.raises(LatexWorkerError) as failure:
+        render_document_png(document, work_root=tmp_path)
+
+    assert failure.value.error_code == "execution_failed"
+    assert failure.value.diagnostic == RenderContentDiagnostic(
+        error_class="undefined_control_sequence",
+        command=r"\notARealCommand",
+        node_id="broken-integral",
+    )
+    assert "do-not-leak" not in failure.value.safe_detail
 
 
 class _ArtifactClient:

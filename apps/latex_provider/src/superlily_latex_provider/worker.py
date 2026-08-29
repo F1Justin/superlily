@@ -27,6 +27,7 @@ from superlily_contracts import (
     ParagraphBlock,
     ProgressBlock,
     QuoteBlock,
+    RenderContentDiagnostic,
     RenderDocument,
     TableBlock,
     WarningBlock,
@@ -56,14 +57,20 @@ COMPILE_TIMEOUT_SECONDS = 18
 CONVERT_TIMEOUT_SECONDS = 8
 MAX_PDF_BYTES = 8 * 1024 * 1024
 MAX_PAGE_POINTS = 2_048
+MAX_LOG_TAIL_BYTES = 16 * 1024
 _PAGE_RE = re.compile(rb"(?m)^Pages:\s+([0-9]+)\s*$")
 _SIZE_RE = re.compile(rb"(?m)^Page size:\s+([0-9.]+) x ([0-9.]+) pts")
+_INPUT_LINE_RE = re.compile(r"(?m)(?:^|[./])input\.tex:(\d+):")
+_LATEX_LINE_RE = re.compile(r"(?m)^l\.(\d+)\s")
+_CONTROL_SEQUENCE_RE = re.compile(r"\\(?:[A-Za-z@]{1,64}|.)")
+_NODE_MARKER_RE = re.compile(r"^% superlily-node:([A-Za-z0-9_.-]{1,64})$")
 
 TEMPLATE_PREFIX = r"""\documentclass[border=2pt]{standalone}
 \usepackage{amsmath}
 \usepackage{mathtools}
 \usepackage{amsfonts}
 \usepackage{amssymb}
+\usepackage{esint}
 \usepackage{xcolor}
 \usepackage{ulem}
 \usepackage{physics}
@@ -89,10 +96,24 @@ TEMPLATE_SUFFIX = "\n\\end{document}\n"
 
 DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{standalone}
 \usepackage{amsmath}
-\usepackage{amssymb}
 \usepackage{mathtools}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{esint}
 \usepackage{xcolor}
+\usepackage{ulem}
+\usepackage{physics}
+\usepackage{mhchem}
+\usepackage{tikz}
+\usepackage{chemfig}
+\usepackage{tcolorbox}
+\usepackage{graphicx}
+\usepackage{tikz-cd}
+\usepackage{tensor}
+\usepackage{pgfplots}
 \usepackage{enumitem}
+\usepackage{bbm}
+\usepackage{mathrsfs}
 \usepackage{tabularx}
 \usepackage[punct=kaiming,fontset=none]{ctex}
 \setCJKmainfont{Noto Serif CJK SC}
@@ -389,6 +410,7 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
 
 
 def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
+    marker = f"% superlily-node:{block.node_id}\n" if block.node_id else ""
     if isinstance(block, GroupBlock):
         label = (
             r"{\bfseries "
@@ -397,19 +419,21 @@ def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
             if block.label
             else ""
         )
-        return label + "".join(
-            _leaf_block_latex(child, markdown_lite=markdown_lite)
+        return marker + label + "".join(
+            (f"% superlily-node:{child.node_id}\n" if child.node_id else "")
+            + _leaf_block_latex(child, markdown_lite=markdown_lite)
             for child in block.blocks
         )
     if isinstance(block, AlternativeBlock):
         option = next(
             option for option in block.options if option.option_id == block.preferred_option_id
         )
-        return "".join(
-            _leaf_block_latex(child, markdown_lite=markdown_lite)
+        return marker + "".join(
+            (f"% superlily-node:{child.node_id}\n" if child.node_id else "")
+            + _leaf_block_latex(child, markdown_lite=markdown_lite)
             for child in option.blocks
         )
-    return _leaf_block_latex(block, markdown_lite=markdown_lite)
+    return marker + _leaf_block_latex(block, markdown_lite=markdown_lite)
 
 
 def document_latex(document: RenderDocument) -> str:
@@ -428,6 +452,79 @@ def document_latex(document: RenderDocument) -> str:
         parts.append(_render_block_latex(block, markdown_lite=markdown_lite))
     parts.append(TEMPLATE_SUFFIX)
     return "".join(parts)
+
+
+def _read_log_tail(log_path: Path) -> str:
+    try:
+        entry = log_path.lstat()
+        if not stat.S_ISREG(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+            return ""
+        with log_path.open("rb") as handle:
+            handle.seek(max(0, entry.st_size - MAX_LOG_TAIL_BYTES))
+            return handle.read(MAX_LOG_TAIL_BYTES).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _diagnostic_line(log: str, error_at: int) -> int | None:
+    bounded = log[error_at : error_at + 2_048]
+    source_line = _INPUT_LINE_RE.search(bounded) or _LATEX_LINE_RE.search(bounded)
+    return int(source_line.group(1)) if source_line is not None else None
+
+
+def _diagnostic_node_id(latex: str, line_number: int | None) -> str | None:
+    if line_number is None:
+        return None
+    node_id: str | None = None
+    for line in latex.splitlines()[:line_number]:
+        marker = _NODE_MARKER_RE.fullmatch(line)
+        if marker is not None:
+            node_id = marker.group(1)
+    return node_id
+
+
+def _diagnostic_command(log: str, error_at: int) -> str | None:
+    context = log[error_at : error_at + 2_048]
+    source_line = _LATEX_LINE_RE.search(context)
+    if source_line is None:
+        return None
+    rendered_line = context[source_line.end() :].splitlines()[0]
+    commands = _CONTROL_SEQUENCE_RE.findall(rendered_line)
+    return commands[-1] if commands else None
+
+
+def _compile_diagnostic(log_path: Path, latex: str) -> RenderContentDiagnostic:
+    """Reduce a transient XeLaTeX log to a fixed, model-actionable diagnostic."""
+
+    log = _read_log_tail(log_path)
+    error_class = "generic_compile_error"
+    command: str | None = None
+    error_at = 0
+
+    signatures = (
+        ("Undefined control sequence", "undefined_control_sequence"),
+        ("LaTeX Error: File", "missing_package_or_file"),
+        ("Missing } inserted", "unbalanced_group"),
+        ("Extra }, or forgotten", "unbalanced_group"),
+        ("Missing $ inserted", "missing_math_delimiter"),
+        ("LaTeX Error: Environment", "invalid_environment"),
+        ("ended by \\end", "invalid_environment"),
+    )
+    for signature, candidate in signatures:
+        found_at = log.find(signature)
+        if found_at >= 0:
+            error_class = candidate
+            error_at = found_at
+            break
+
+    line_number = _diagnostic_line(log, error_at)
+    if error_class == "undefined_control_sequence":
+        command = _diagnostic_command(log, error_at)
+    return RenderContentDiagnostic(
+        error_class=error_class,
+        command=command,
+        node_id=_diagnostic_node_id(latex, line_number),
+    )
 
 
 def _bounded_environment(work_dir: Path) -> dict[str, str]:
@@ -597,7 +694,11 @@ def render_document_png(
                 check=False,
             )
             if compiled.returncode != 0 or not pdf_path.is_file():
-                raise LatexWorkerError("execution_failed", "document compilation failed safely")
+                raise LatexWorkerError(
+                    "execution_failed",
+                    "document compilation failed safely",
+                    _compile_diagnostic(work_dir / "input.log", latex),
+                )
             if not 1 <= pdf_path.stat().st_size <= MAX_PDF_BYTES:
                 raise LatexWorkerError("budget_exceeded", "document PDF exceeded its hard byte bound")
             info = subprocess.run(
@@ -764,7 +865,13 @@ class LatexWorkerServer:
                 content,
             )
         except LatexWorkerError as exc:
-            await self._send(writer, {"ok": False, "error_code": exc.error_code})
+            header: dict[str, Any] = {
+                "ok": False,
+                "error_code": exc.error_code,
+            }
+            if exc.diagnostic is not None:
+                header["diagnostic"] = exc.diagnostic.model_dump(mode="json")
+            await self._send(writer, header)
         except (TimeoutError, ValueError, json.JSONDecodeError):
             await self._send(writer, {"ok": False, "error_code": "invalid_output"})
         except (OSError, RuntimeError):

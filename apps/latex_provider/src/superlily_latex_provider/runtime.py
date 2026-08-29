@@ -11,7 +11,12 @@ import re
 import stat
 from typing import Any, Literal
 
-from superlily_contracts import RenderDocument, canonicalize_json_value, strict_json_loads
+from superlily_contracts import (
+    RenderContentDiagnostic,
+    RenderDocument,
+    canonicalize_json_value,
+    strict_json_loads,
+)
 
 
 PROVIDER_ID = "provider-latex-primary"
@@ -42,10 +47,12 @@ class LatexWorkerError(RuntimeError):
             "internal_error",
         ],
         safe_detail: str,
+        diagnostic: RenderContentDiagnostic | None = None,
     ) -> None:
         super().__init__(safe_detail)
         self.error_code = error_code
         self.safe_detail = safe_detail
+        self.diagnostic = diagnostic
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,7 +235,32 @@ class LatexWorkerClient:
             code = header.get("error_code")
             if code not in allowed_codes:
                 code = "execution_failed"
-            raise LatexWorkerError(code, "latex worker failed the bounded render")  # type: ignore[arg-type]
+            if not set(header).issubset({"ok", "error_code", "diagnostic"}):
+                raise LatexWorkerError(
+                    "invalid_output",
+                    "latex worker returned unexpected failure metadata",
+                )
+            diagnostic: RenderContentDiagnostic | None = None
+            if "diagnostic" in header:
+                try:
+                    diagnostic = RenderContentDiagnostic.model_validate(
+                        header["diagnostic"]
+                    )
+                except ValueError as exc:
+                    raise LatexWorkerError(
+                        "invalid_output",
+                        "latex worker returned an invalid content diagnostic",
+                    ) from exc
+                if code != "execution_failed":
+                    raise LatexWorkerError(
+                        "invalid_output",
+                        "latex worker attached a diagnostic to a non-content failure",
+                    )
+            raise LatexWorkerError(  # type: ignore[arg-type]
+                code,
+                "latex worker failed the bounded render",
+                diagnostic,
+            )
         if set(header) != {
             "ok",
             "mime_type",

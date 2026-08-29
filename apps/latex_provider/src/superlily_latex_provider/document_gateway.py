@@ -9,6 +9,7 @@ from pathlib import Path
 import stat
 
 from fastapi import FastAPI, Header, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from superlily_contracts import RenderDocument
@@ -79,8 +80,16 @@ def create_app(settings: GatewaySettings) -> FastAPI:
                 timeout_seconds=settings.render_timeout_seconds,
             )
         except LatexWorkerError as exc:
-            return Response(
-                status_code=status.HTTP_502_BAD_GATEWAY,
+            payload: dict[str, object] = {"error_code": exc.error_code}
+            if exc.diagnostic is not None:
+                payload["diagnostic"] = exc.diagnostic.model_dump(mode="json")
+            return JSONResponse(
+                status_code=(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT
+                    if exc.diagnostic is not None
+                    else status.HTTP_502_BAD_GATEWAY
+                ),
+                content=payload,
                 headers={"X-Render-Error-Code": exc.error_code},
             )
         return Response(
