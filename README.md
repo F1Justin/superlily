@@ -37,6 +37,8 @@ Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 
 - 项目宪法：[`MANIFESTO.md`](MANIFESTO.md)
 - 唯一路线：[`docs/ROADMAP.md`](docs/ROADMAP.md)
+- 双仓统一目标与工作看板：
+  [`SuperLily GitHub Project`](https://github.com/users/F1Justin/projects/1)
 - R0 生产基线：[`docs/R0_BASELINE.md`](docs/R0_BASELINE.md)
 - 架构决策：[`docs/adr/README.md`](docs/adr/README.md)
 - 当前架构：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
