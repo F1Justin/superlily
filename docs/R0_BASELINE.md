@@ -56,7 +56,8 @@ Alembic 代码尚不能解析 `0026`。容器健康检查仍为 healthy。R0 只
 
 ## Cognitive Runtime 基线
 
-- 仓库：`/home/justin/SuperLily-Nekro-Runtime`
+- 仓库：[`F1Justin/superlily-nekro-runtime`](https://github.com/F1Justin/superlily-nekro-runtime)
+- 生产 checkout：`/home/justin/SuperLily-Nekro-Runtime`
 - 分支：`superlily/runtime-v2.3.3`
 - tag：`v2.3.3-superlily.4`
 - commit：`b56e4655205c0e896b9e18a71da0b8580a3e2a12`

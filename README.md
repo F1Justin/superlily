@@ -5,16 +5,19 @@ Superlily 是 [`MANIFESTO.md`](MANIFESTO.md) 约束的 Lily Core 与长期社交
 artifact/Renderer、平台投递和冻结的 Core Agent v1 参考实现；旧群聊历史也已统一进入
 PostgreSQL archive read model。
 
-当前生产认知运行时不是 Core Agent v1，而是独立维护的 SuperLily Nekro Runtime fork。
-项目将在现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop，
-不会把 Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
+当前生产认知运行时不是 Core Agent v1，而是独立维护的
+[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)。项目将在
+现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop，不会把
+Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 
 当前权威状态：
 
 - P1–P4：stable foundation；
 - P5 Core Agent v1：accepted / frozen reference；
 - H0–H4：completed；
-- Cognitive Runtime：`v2.3.3-superlily.4` / `b56e465`；
+- Cognitive Runtime：
+  [`v2.3.3-superlily.4`](https://github.com/F1Justin/superlily-nekro-runtime/tree/v2.3.3-superlily.4)
+  / `b56e465`；
 - 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
 
 ## 目录
@@ -26,6 +29,9 @@ PostgreSQL archive read model。
 - `registry`：Git-reviewed descriptor、Provider 与精确 rollout authority；
 - `deploy`：Docker Compose 和部署配置；
 - `docs`：当前路线、合同、ADR、运维说明和正式验收证据。
+- 外部 Runtime 仓库：
+  [`F1Justin/superlily-nekro-runtime`](https://github.com/F1Justin/superlily-nekro-runtime)，
+  精确生产身份由 `deploy/nekro-runtime.lock.yml` 锁定。
 
 ## 权威入口
 

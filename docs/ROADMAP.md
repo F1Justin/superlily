@@ -11,7 +11,8 @@ Phase 编号自动产生下一项工作。
 - P1–P4 是已经生产验收的 stable foundation；
 - P5 Core Agent v1 已接受并冻结为安全参考实现，不是当前产品大脑的替换计划；
 - H0–H4 已完成；
-- 当前生产 Cognitive Runtime 是 SuperLily Nekro Runtime
+- 当前生产 Cognitive Runtime 是
+  [SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)
   `v2.3.3-superlily.4`，commit `b56e465`；
 - 详细可复核身份、数据库和成本数据见 [`R0_BASELINE.md`](R0_BASELINE.md)。
 
