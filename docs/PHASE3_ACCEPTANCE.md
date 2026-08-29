@@ -486,7 +486,8 @@ Core 仍为 ledger_only 且控制面默认关闭。详细证据见 `DEPLOYMENT.m
   equivalence, latency, errors, budgets and evidence window are signed.
   `status.inspect` 保留旧状态入口；`wolfram.run` 与旧 `/wf` 同样返回 `4`；
   `latex.render` 与旧 `/tex` 均在不发送 QQ 的串行对比中成功生成 PNG。第三阶段没有
-  把旧命令切到新路径，命令统一适配仍按路线留给后续阶段。
+  把旧命令切到新路径；命令统一适配不是本次签署内容，未来只能按当前路线由真实需求
+  重新立项。
 
 ## 控制面、安全与运维
 

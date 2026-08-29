@@ -1,10 +1,10 @@
 # Superlily 数据库与外部接入指南
 
-状态：当前实现说明
+状态：stable foundation 接入说明
 
-最后核对：2026-07-31
+最后核对：2026-08-29
 
-适用版本：Alembic `0024_agent_product_flow`
+适用版本：Alembic `0026_history_timeline_export`
 
 本文面向需要读取 Superlily 数据，或把服务、Provider、机器人桥接器和脚本接入 Core 的开发者。它说明当前数据库的部署方式、数据边界和安全接入路径，但不替代协议与迁移本身：
 
@@ -17,16 +17,17 @@
 
 ## 1. 当前生产快照
 
-以下是 2026-07-31 对运行中生产栈的只读核对结果。容量和行数会继续变化。
+以下是 2026-08-29 对运行中生产栈的只读核对结果。容量和行数会继续变化；冻结身份和
+已知 Core 镜像漂移见 [`R0_BASELINE.md`](R0_BASELINE.md)。
 
 | 项目 | 当前值 |
 | --- | --- |
 | 数据库 | PostgreSQL 17.10 |
-| 数据库名 / Schema | `superlily` / `public` |
-| Alembic head | `0024_agent_product_flow` |
-| 业务表 | 56 张，另有 `alembic_version` |
-| 索引 / 非内部触发器 | 211 / 31 |
-| 数据库大小 | 约 2.21 GiB |
+| 数据库名 / Schema | `superlily` / `public`、`archive` |
+| Alembic head | `0026_history_timeline_export` |
+| 业务表 | 86 张（所有非系统 schema） |
+| 索引 / trigger | 352 / 62（`public` 与 `archive`） |
+| 数据库大小 | 约 23 GB |
 | 字符集 / 时区 | UTF-8 / UTC |
 | 默认事务隔离 | `read committed` |
 | 扩展 | 仅 `plpgsql`；未安装 `pgvector` |

@@ -2,6 +2,9 @@
 
 ## Current roadmap position
 
+R0 于 2026-08-29 将 P1–P4 正式冻结为 stable foundation。下列内容是其生产验收
+证据，不再承担后续工作排序；当前唯一实施路线见 [`ROADMAP.md`](ROADMAP.md)。
+
 - [x] Phase 1 observability spine is deployed.
 - [x] Phase 2a reply links, unresolved-link retention, debug views, and a
   non-writing history-import dry run are implemented.

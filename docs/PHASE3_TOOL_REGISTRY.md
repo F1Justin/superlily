@@ -579,10 +579,10 @@ Phase 3 implementation may begin only when Phase 2 acceptance records:
   rollback evidence;
 - committed Phase 2 code and documentation.
 
-## Handoff to later phases
+## Frozen foundation seams
 
-Phase 3 must leave stable seams for `FUTURE_PHASES_DESIGN.md` without
-implementing them early:
+Phase 3 留下的下列 seam 已成为 stable foundation；本节记录兼容边界，不再生成后续
+Phase 任务：
 
 - validated structured output remains distinct from RenderDocument and
   platform delivery;
@@ -595,7 +595,6 @@ implementing them early:
 - descriptors do not embed QQ segments, model prompts, renderer markup,
   Watchdog policy, memory retrieval, or device commands.
 
-The detailed Phase 4–11 work packets and release dependencies are in
-`docs/FUTURE_PHASES_DESIGN.md`. Their design may be reviewed during Phase 3,
-but their migrations, endpoints, credentials, and production authority remain
-disabled until the numbered gates in `ROADMAP.md` pass.
+任何新 Renderer、Agent、failover、memory 或设备工作都必须按当前
+[`ROADMAP.md`](ROADMAP.md) 由真实需求重新立项，不能从本合同推导 production
+authority。

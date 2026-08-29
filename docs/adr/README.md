@@ -1,7 +1,7 @@
 # 架构决策记录
 
-第三阶段在实现合同或 authority 边界前，先提交简短、可追溯的架构决策记录。已经
-接受的 ADR 只能由后续 ADR 取代；形成生产证据后，不得把原记录改写成另一项决定。
+在实现合同或 authority 边界前，先提交简短、可追溯的架构决策记录。已经接受的 ADR
+只能由后续 ADR 取代；形成生产证据后，不得把原记录改写成另一项决定。
 
 当前记录：
 
@@ -23,3 +23,4 @@
 - `0016-model-provider-registration.md`
 - `0017-agent-product-delivery-boundary.md`
 - `0018-legacy-history-read-model.md`
+- `0019-cognitive-runtime-direction.md`

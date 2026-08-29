@@ -2,6 +2,11 @@
 
 Date: 2026-08-28 CST
 
+R0 current production: `v2.3.3-superlily.4` / `b56e465` / image
+`superlily/nekro-agent:2.3.3-superlily.4`. The current 100-call production
+baseline is frozen in [`R0_BASELINE.md`](R0_BASELINE.md); the table below is the
+one-variable rollout evidence that led to it.
+
 ## Scope
 
 This rollout keeps Nekro's traditional Python sandbox agent intact. Changes are
@@ -60,7 +65,8 @@ make the nonce stable or expose the raw chat key as routing metadata.
 
 ## Rollback
 
-Set the `nekro_agent` image in `deploy/nekro-compose.override.yml` back to
-`kromiose/nekro-agent:latest`, remove its `build` block, and recreate only the
-`nekro_agent` service with both Compose files. PostgreSQL, Qdrant, NapCat, Lily
-Core, data mounts, and sandbox images do not need to be changed.
+Rollback must select a previously reviewed and pinned SuperLily Runtime tag,
+never the moving `kromiose/nekro-agent:latest`. The immediate predecessor is
+`v2.3.3-superlily.3` / `92f8231`; recreate only `nekro_agent` after verifying
+the selected source commit and image identity. PostgreSQL, Qdrant, NapCat,
+Lily Core, data mounts, and sandbox images do not need to be changed.

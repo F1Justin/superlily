@@ -1,17 +1,18 @@
 # Phase 5 AgentRun 实施合同
 
-本文是 Phase 5 的实现权威，细化 `FUTURE_PHASES_DESIGN.md` 的自然语言规划边界。
-在本文被后续 ADR 取代前，模型输出始终只是请求，不是 Core authority。
-群聊快速路径、模型自主选择、渐进式披露、Unix 原语、自然语言命令、模型路由和
-输出体验的长期产品约束见 `AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`；本文只
-规定当前 Phase 5 authority、合同和发布门。
+状态：accepted / frozen reference。
+
+本文保留 Phase 5 Core Agent v1 的实现合同与安全不变量。它不再承担后续产品路线，
+也不表示当前生产 Cognitive Runtime 将迁入 Core。模型输出始终只是请求，不是 Core
+authority；当前方向见 [`ROADMAP.md`](ROADMAP.md) 与
+[`ADR 0019`](adr/0019-cognitive-runtime-direction.md)。
 
 ## 当前切片
 
-当前实现包含 **5a planner-only shadow** 和 **5b 单工具 Wolfram 执行环**。
-二者已于 2026-07-30 完成无发送生产签署；数据库 head 为
-`0023_agent_model_routes`，运行时仍默认
-`SUPERLILY_AGENT_MODE=off`。显式切到 `shadow` 时：
+冻结参考实现包含 **5a planner-only shadow** 和 **5b 单工具 Wolfram 执行环**。
+二者已于 2026-07-30 完成无发送生产签署；当时数据库 head 为
+`0023_agent_model_routes`，运行时默认 `SUPERLILY_AGENT_MODE=off`。显式切到
+`shadow` 时：
 
 - `AgentRun` 的 `tool_invocation_count` 与 `delivery_intent_count` 由数据库约束固定为
   0；
@@ -24,10 +25,6 @@ Git-bound `deepseek-v4-pro@1.0.0` profile、真实 JSON Provider、缓存命中/
 精确定价和离线评分器已经进入实现。切到 `bounded_readonly` 后，也只允许把一个
 `wolfram.run@1.1.0` 有效 proposal 显式提升为一个 tool loop；它仍需 exact rollout
 plan 才能从 `ledger_only` 进入队列。
-
-2026-07-29 已在一次性本地 Core 上完成真实 DeepSeek 5a 无发送 shadow：
-1 次 attempt 成功，账本终态为 `shadow_complete`，工具调用与 delivery intent 均为
-0。该预生产证据见 `PHASE5_5A_SHADOW_EVIDENCE.md`。
 
 2026-07-30 的生产验收随后完成默认关闭迁移、真实 DeepSeek 5a shadow、exact
 Git-bound 单次 `wolfram.run@1.1.0` 5b canary、正式 pause、凭据撤销和稳定窗口。
@@ -210,8 +207,8 @@ fanout 1、artifact 0；continuation 再提工具一律拒绝，最终结果仍�
 intent。`0023_agent_model_routes` 同时覆盖初始 planning 与 continuation 的显式
 Provider failover；不存在未经审阅的隐式降级。
 
-5b 不创建历史检索库，不把 `history.search` 作为退出条件。检索与记忆等待 Phase 8
-的 conversation scope 和保留策略。
+5b 不创建历史检索库，不把 `history.search` 作为退出条件。检索与记忆至今仍未获
+授权；如出现真实产品需求，按当前路线 R5 重新定义 conversation scope 和保留策略。
 
 ## 5c 阻塞项
 

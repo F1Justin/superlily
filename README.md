@@ -1,89 +1,58 @@
 # Superlily
 
-Superlily 是 [`manifesto.md`](manifesto.md) 描述的 Lily Core。Phase 1 建立可观测
-脊柱；Phase 2 建立规范关联、确定性裁决、运行时命令清单、结果审计和 fail-open
-claim canary；C0-D 建立持久采集 spool、commit receipt、action observation 和覆盖诊断。
-这些阶段均已完成生产签署。
+Superlily 是 [`MANIFESTO.md`](MANIFESTO.md) 约束的 Lily Core 与长期社交主体工程。
+当前稳定基础已经覆盖事件观察与规范关联、持久采集、工具 authority、可恢复执行、
+artifact/Renderer、平台投递和冻结的 Core Agent v1 参考实现；旧群聊历史也已统一进入
+PostgreSQL archive read model。
 
-Phase 3 已于 2026-07-19 完成生产签署。Phase 3a 的 descriptor authority、Provider
-身份、inventory/heartbeat 和共享 SDK 已上线；Phase 3b 的 invocation/attempt 账本、
-lease/fence/reaper、控制面 M0–M3、
-`status.inspect@1.0.2` 和 Git-bound rollout plan 已部署；四个独立 stop 与一次无平台
-发送的生产 canary、八项异常恢复故障矩阵和修正后的稳定窗口均已完成。13 份一次性
-计划全部暂停并耗尽，Core 恢复 `ledger_only`。`0016_confirm_artifacts` 的精确确认、
-内容寻址 artifact、Provider SDK、清理器与数据库防篡改已经完成双数据库全量回归，
-并已按默认关闭状态完成生产备份/恢复、迁移和零 authority 签署。文本模式
-`wolfram.run@1.0.0` 的 descriptor、独立 Provider、既有 Wolfram 15.0 私有 socket
-边界和中文 ADR 已实现，SQLite 455 项通过、4 项跳过，PostgreSQL 17 为 459 项通过，
-受限容器中的真实 `2+2` 探针返回 `4`。生产随后完成 reviewed 空转、descriptor
-激活和最多一次的 Git-bound canary；唯一 attempt/fence 返回 `4`、artifact=0，旧
-`/wf` data source 串行对比同样返回 `4`。计划已暂停并耗尽，Core 恢复
-`ledger_only`、控制面关闭；完整 inventory 稳定周期也已通过。自然语言、conversation
-和平台发送权限均未扩大。`latex.render@1.0.0` 随后完成独立无凭据 worker、生产
-artifact store、reviewer 激活和最多一次的 Git-bound canary：
-它把 XeLaTeX/Poppler 放进无网络、无凭据、1 GiB cgroup 的独立 worker，通过
-reserve/upload/finalize 返回最多 4 MiB、2048×2048 的内容寻址 PNG。唯一 attempt
-得到 finalized/referenced 的 34,883 字节、2048×499 PNG，计划随即暂停并耗尽；旧
-`/tex` 串行对比成功且保持不变。最终 SQLite 为 463 通过、4 跳过，PostgreSQL 17
-为 467 通过，稳定窗口和零关联平台 response 均已签署。Phase 4 又于
-2026-07-26 完成 RenderDocument 1.3、能力规划、artifact 溯源、四条兼容路径和
-61 小时稳定窗口的生产签署。Phase 5a/5b 又于 2026-07-30 完成生产签署：5a 提供
-默认关闭的 DeepSeek planner-only `AgentRun` shadow；5b 只允许经 Git-bound
-exact canary 把一个
-`wolfram.run@1.1.0` proposal 提升为一次受限调用，并把有来源、限长的不可信结果回注
-模型一次。模型故障切换只能沿 run 中冻结、逐份重新授权的显式 profile route 前移。
-唯一生产计划已暂停并耗尽，最终为 `off + ledger_only`，平台发送仍为 0；
-status 插件不是 Agent 前置门。实现边界见
-[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)，签署证据见
-[`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)。
-后续 `0024_agent_product_flow` 已完成生产 canary：仅长期测试群 `708309706`
-的明确 @/回复可进入 Core-owned Agent 流程，使用常驻 DeepSeek、可选一次 Wolfram
-和一次 fenced 原生文字回复；其他群、历史检索及写操作仍关闭。真实 direct、
-Wolfram、幂等、模型 Provider 故障和正式 pause/reactivate 回滚证据见
-[`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`](docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md)。
+当前生产认知运行时不是 Core Agent v1，而是独立维护的 SuperLily Nekro Runtime fork。
+项目将在现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop，
+不会把 Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 
-运行时仍刻意 fail-open：遥测故障不阻塞 Lily/Nekro，claim 故障保留原有行为；
-工具执行则必须显式 fail closed，缺 authority、身份、健康、预算或 fence 时不执行。
+当前权威状态：
+
+- P1–P4：stable foundation；
+- P5 Core Agent v1：accepted / frozen reference；
+- H0–H4：completed；
+- Cognitive Runtime：`v2.3.3-superlily.4` / `b56e465`；
+- 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
 
 ## 目录
 
-- `packages/contracts`：版本化采集/工具合同、authority 校验、共享向量和 payload
-  sanitizer。
-- `apps/core`：FastAPI 采集/查询/工具账本/控制面服务和数据库模型。
-- `apps/status_provider`：独立、受硬边界约束的 `status.inspect` Provider。
-- `apps/wolfram_provider`：文本模式、复用现有隔离 worker 的 `wolfram.run` Provider。
-- `apps/model_provider`：Phase 5 常驻、独立身份的 DeepSeek 严格 JSON planner
-  Provider。
-- `apps/latex_provider`：无凭据渲染 worker 与 artifact-only `latex.render` Provider。
-- `bridges/lily_nonebot`：Lily/NoneBot observer 与 durable reporter。
-- `bridges/nekro`：Nekro observer 与 durable reporter。
-- `registry`：Git-reviewed descriptor、Provider 和短时 rollout plan authority。
-- `deploy`：Docker Compose、固定依赖和集成配置。
-- `docs`：设计、运维、安全、路线和验收证据。
+- `packages/contracts`：版本化采集、工具、Agent 和投递合同；
+- `apps/core`：FastAPI Core、PostgreSQL 模型、authority 与审计服务；
+- `apps/*_provider`：独立、受边界约束的工具和模型 Provider；
+- `bridges/lily_nonebot`、`bridges/nekro`：平台观察与接入桥；
+- `registry`：Git-reviewed descriptor、Provider 与精确 rollout authority；
+- `deploy`：Docker Compose 和部署配置；
+- `docs`：当前路线、合同、ADR、运维说明和正式验收证据。
 
-## 文档入口
+## 权威入口
 
+- 项目宪法：[`MANIFESTO.md`](MANIFESTO.md)
+- 唯一路线：[`docs/ROADMAP.md`](docs/ROADMAP.md)
+- R0 生产基线：[`docs/R0_BASELINE.md`](docs/R0_BASELINE.md)
+- 架构决策：[`docs/adr/README.md`](docs/adr/README.md)
+- 当前架构：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- HTTP/数据合同：[`docs/CONTRACTS.md`](docs/CONTRACTS.md)
+- 数据库与外部接入：[`docs/DATABASE_INTEGRATION.md`](docs/DATABASE_INTEGRATION.md)
+- 部署与运维：[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 - 本地开发：[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
-- 权威实施顺序：[`docs/ROADMAP.md`](docs/ROADMAP.md)
-- 第三阶段协议：[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md)
-- 第三阶段故障矩阵：[`docs/PHASE3_FAULT_DRILLS.md`](docs/PHASE3_FAULT_DRILLS.md)
-- 确认与 Artifact 实施包：
-  [`docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md`](docs/PHASE3_CONFIRMATIONS_ARTIFACTS.md)
-- 文本 Wolfram 实施与上线验收：
-  [`docs/PHASE3_WOLFRAM_TEXT.md`](docs/PHASE3_WOLFRAM_TEXT.md)
-- LaTeX artifact 实施与上线验收：
-  [`docs/PHASE3_LATEX_RENDER.md`](docs/PHASE3_LATEX_RENDER.md)
-- 第五阶段 AgentRun 实施合同：
-  [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)
-- 第五阶段 5a/5b 生产签署：
-  [`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)
-- 第五阶段测试群 Agent 产品签署：
+- 安全边界：[`docs/SECURITY.md`](docs/SECURITY.md)
+
+## 冻结合同与验收证据
+
+- P1–P2：[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)、
+  [`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)
+- P3：[`docs/PHASE3_TOOL_REGISTRY.md`](docs/PHASE3_TOOL_REGISTRY.md)、
+  [`docs/PHASE3_ACCEPTANCE.md`](docs/PHASE3_ACCEPTANCE.md)
+- P4：[`docs/PHASE4_RENDER_DOCUMENT.md`](docs/PHASE4_RENDER_DOCUMENT.md)
+- P5：[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md)、
+  [`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`](docs/PHASE5_PRODUCTION_ACCEPTANCE.md)、
   [`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`](docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md)
-- 群聊 Agent 产品与实施共识：
-  [`docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`](docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md)
-- 采集与归档共识：
-  [`docs/COLLECTION_AND_AGENT_CONSENSUS.md`](docs/COLLECTION_AND_AGENT_CONSENSUS.md)
-- C0-D 签署：[`docs/C0D_ACCEPTANCE.md`](docs/C0D_ACCEPTANCE.md)
-- 后续阶段设计：[`docs/FUTURE_PHASES_DESIGN.md`](docs/FUTURE_PHASES_DESIGN.md)
-- 三账号高可用：[`docs/PHASE6_THREE_ACCOUNT_HA.md`](docs/PHASE6_THREE_ACCOUNT_HA.md)
-- Phase 2 最终审计：[`docs/PHASE2_FINAL_AUDIT.md`](docs/PHASE2_FINAL_AUDIT.md)
+- H0–H4：[`docs/HISTORY_UNIFICATION.md`](docs/HISTORY_UNIFICATION.md)、
+  [`docs/adr/0018-legacy-history-read-model.md`](docs/adr/0018-legacy-history-read-model.md)
+- Nekro prompt/cache：[`docs/NEKRO_PROMPT_OPTIMIZATION.md`](docs/NEKRO_PROMPT_OPTIMIZATION.md)
+
+这些文件约束已经存在的基础，不会因 Phase 编号自动授权继续施工。被 R0 删除的旧路线
+和中间文档仍保存在 Git 历史中，不再出现在当前工作树。

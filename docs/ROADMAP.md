@@ -1,714 +1,95 @@
-# Superlily 执行路线图
+# Superlily 权威路线图
 
-本文是 Superlily 当前工作的权威实施顺序。根目录 `MANIFESTO.md` 是项目宪法；
-`plan_of_codex.md` 保存此前按 Phase 展开的详细计划和历史背景，不再自动授权按编号继续
-施工。分阶段设计文档继续负责已选择工作包的合同与验收门。
+本文是当前唯一的实施路线。项目目标以根目录 [`MANIFESTO.md`](../MANIFESTO.md)
+为最高约束；已经接受的 ADR、合同和生产验收只说明现有基础及其不变量，不会因为旧
+Phase 编号自动产生下一项工作。
 
-Tool Registry 之后的详细设计见 `docs/FUTURE_PHASES_DESIGN.md`。它定义 Phase
-4–11 的共享边界、内部工作包、故障模型和退出门，但不授权提前启动这些阶段。
+## 当前结论
 
-渐进式工具披露、Unix 风格资源探索、自然语言命令兼容、快速聊天路径、成本感知模型
-路由和 reaction 反馈语义等长期产品共识，记录在
-`docs/AGENT_PRODUCT_AND_IMPLEMENTATION_CONSENSUS.md`。采集与档案边界单独保留在
-`docs/COLLECTION_AND_AGENT_CONSENSUS.md`。
+截至 2026-08-29：
 
-## 2026-08-01 当前执行方向（新会话先读）
+- P1–P4 是已经生产验收的 stable foundation；
+- P5 Core Agent v1 已接受并冻结为安全参考实现，不是当前产品大脑的替换计划；
+- H0–H4 已完成；
+- 当前生产 Cognitive Runtime 是 SuperLily Nekro Runtime
+  `v2.3.3-superlily.4`，commit `b56e465`；
+- 详细可复核身份、数据库和成本数据见 [`R0_BASELINE.md`](R0_BASELINE.md)。
 
-Phase 1–5 已经提供足够的采集、路由、工具、渲染和有界 Agent 基础。项目从此不再把
-`Phase 6 -> Phase 11` 当作待办队列，而以 `MANIFESTO.md` 前四条的可观察收益选择工作。
-当前工作分成两条互不冒充的使命：
+旧 P6–P11、三账号 HA、通用 Web Admin、Memory/RAG、活动系统、具身入口和“替换
+Nekro”不再构成排队中的阶段。只有出现真实产品需求并重新作出明确决定时，才建立
+新的范围与验收门。
 
-- **莉莉产品线**服务第 1、4 条，以“人能感觉莉莉哪里变得更好、更连续”为验收；
-- **群聊档案线**服务第 2、3 条，以“数据库能多观察、统一查看且故障后不漏”为验收。
+## 运行时方向
 
-数据库档案不是莉莉的记忆。历史统一、导出和 ChatExporter 均不得自动进入 Agent
-上下文；`history.search`、`memory.lookup` 和默认 RAG 仍未获授权。
+Superlily 不采用某个现成 Agent Harness 作为预定终点。Pi、Codex、DSH 和其他优秀
+Harness 只用于研究为什么自然执行、真实反馈、临时脚手架和可逆试错有效；项目把这些
+原则转化为适合长期社交主体的自有运行时。它们不是候选 backend、部署依赖、shadow
+实现或 A/B 对象。
 
-### 主工作包 H：统一历史库和查询入口
+当前生产实现就是 SuperLily 的 Nekro fork。近期没有“换 Runtime”任务，也不为尚未
+存在的第二实现预建多后端框架。方向决策见
+[`ADR 0019`](adr/0019-cognitive-runtime-direction.md)。
 
-项目所有者于 2026-08-01 决定：把旧 NoneBot chatrecorder 与 Nekro 历史中的群聊、
-私聊、入站消息和可识别的出站消息全部纳入 Superlily PostgreSQL，使查询、导出和
-ChatExporter 最终不再需要访问旧 `botmsg` 或 `nekro_agent` 数据库。旧库在验收后可
-作为只读备份保留；本目标不授权删除原库。
+## R0：冻结当前成功基线（已完成）
 
-这是一个面向人类查看的历史 read model，不是把缺失的旧平台事实补造出来：旧记录没有
-reaction、capture completeness、可靠跨账号强身份或媒体字节时，对应字段保持空值或
-明确的 `unknown`。不得用文本相同和时间接近把两个来源永久合并成一个 canonical 事件。
+R0 不改变运行行为。它完成三件事：
 
-生产调查基线：
+1. 钉住 P1–P5、H0–H4、数据库、Runtime 镜像/源码和 Nekro 成本事实；
+2. 删除会继续指挥施工的旧路线、未来阶段预案和已被正式签署覆盖的中间文档；
+3. 建立本路线图、R0 基线和 ADR 0019 作为新的权威入口。
 
-- NoneBot `nonebot_plugin_chatrecorder_messagerecord_v2` 当前约 874 万行；Core 边界前
-  约 827 万行，其中约 788 万条 `message`、38 万条 `message_sent`；
-- Nekro `chat_message` 当前约 121 万行；Core 边界前约 104 万行；
-- 当前 Superlily 数据库约 2.3 GiB，而旧库合计已有约 6.3 GiB。历史量级远大于在线
-  热表，不能直接通过 `/v1/events` 重放，也不能无分区灌入现有 `source_events`。
+## R1：Renderer 的认知反馈回路
 
-#### H0：实现合同和不可变来源边界
-
-第一项代码工作之前，新增 `docs/HISTORY_UNIFICATION.md` 和 ADR
-`0018-legacy-history-read-model`，冻结：
-
-- 每个源库的精确只读快照、表、主键、账号、会话和时区解释；
-- 每个实例首次 Core observation 的边界。当前已知 Lily 边界为
-  `2026-06-19 11:45:17.17105+00`，Nekro 边界为
-  `2026-06-19 11:49:44.696404+00`；Nekro 来源列只有整数秒，因此其可执行来源谓词固定为
-  `send_timestamp < 1781869784`，包含首条 Core 观察的整个秒都归当前 Superlily；
-- 群聊与私聊全部导入，但 conversation mapping 必须显式、可审计且可修订；
-- 原来源身份 `(source_system, source_record_id)` 永久保留，导入可重复且不会产生第二份；
-- 同源确切重复保留来源行并可在展示层折叠；跨源疑似重复只允许形成非破坏性的
-  presentation cluster，不能改写 provenance；
-- 旧 JSON 中 `\u0000`、坏 segment 或未知类型进入 `parse_warning`/有界 fallback，
-  不能阻塞仍可读取的文本。
-
-#### H1：同库分层，而不是污染在线热表
-
-在当前单线 Alembic head 后新增独立迁移（当前预期为
-`0025_legacy_history_archive`，创建前必须重验 head），在同一个 `superlily` 数据库中
-建立：
-
-- `archive.import_batches`：来源快照、边界、版本、状态、计数、hash 和错误汇总；
-- `archive.conversation_mappings`：旧 session/chat key 到规范 platform/conversation 的
-  显式映射；
-- `archive.legacy_messages`：按 `occurred_at` 月份分区的最小历史消息表；
-- `archive.message_timeline_v1`：统一旧历史与当前 Superlily 事件/响应的稳定读取入口。
-
-最小历史行保存来源、原主键、bot/account、时间、conversation、sender、方向、平台
-message ID、文本、segment、reply hint 和 parse warning。导入走只读源快照、分块
-`COPY`/staging 和批次 checkpoint，不触发 Core decision、claim、Agent、Provider 或平台
-发送副作用。所有查询索引先服务 `(conversation_type, conversation_id, occurred_at, id)`；
-不得为了可能的未来搜索先建立 embedding 或全量 RAG。
-
-#### H2：分源导入与验证
-
-严格按 `dry-run -> 小会话样本 -> 单月 -> 全量` 推进，先 NoneBot、后 Nekro。每一步
-必须验证：
-
-- 源边界前总行数以及按群聊/私聊、入站/出站、会话、月份的计数；
-- 最早/最晚时间、空文本、坏 JSON、未知 sender、重复源键和失败隔离；
-- 同一批次重跑为零新增，失败后从 checkpoint 恢复；
-- 旧库与统一 timeline 的抽样逐条对照；
-- 导入期间 Core ingestion latency、PostgreSQL 锁、连接和磁盘余量不受不可接受影响；
-- 备份能恢复出相同 batch、分区计数和抽样内容。
-
-不要在没有容量测量时一次事务导入数百万行。旧库仍在线写入时只读取冻结边界前数据，
-不得对其加表锁、改 collation、建索引或执行清理。
-
-#### H3：ChatExporter 切换为唯一统一读者
-
-`nitori.local:/Users/justin/0Projects/chatExpoter` 保持独立消费者，不复制 Core 业务逻辑。
-它改为只查询 `archive.message_timeline_v1` 或后续等价的版本化只读 API，并完成：
-
-- `group_<id>`、裸 QQ ID、NoneBot session 和 Nekro chat key 的规范映射；
-- 群聊和私聊选择；
-- 当前事件使用 Core `event_links`，旧历史使用带来源范围的 reply hint；
-- 来源标签与“显示全部来源”开关；默认折叠仅是展示行为；
-- keyset pagination、时间边界、statement timeout 和流式输出；
-- 至少覆盖跨边界时间线、私聊、bot 出站消息、坏 segment、重复展示和大范围分页的测试。
-
-切换后不得在 ChatExporter 配置、代码、SSH tunnel 或运维说明中保留对旧 `botmsg`/
-`nekro_agent` 的运行时依赖。数据库凭据继续使用独立只读角色，secret 文件权限为
-`0600`。
-
-#### H4：退出门——旧库不再是查询依赖
-
-H 工作包只有同时满足以下条件才算完成：
-
-1. 统一 timeline 覆盖两个源的全部边界前群聊与私聊，以及当前 Superlily 数据；
-2. 分源/分月/分会话计数、边界、抽样和恢复验证通过，所有拒绝行有原因；
-3. ChatExporter 的日常查询和导出只访问 Superlily；
-4. 仓库脚本、文档和运行配置没有任何消费者仍需查询两个旧库；
-5. 暂停旧库访问后完成一次真实 ChatExporter 导出和一次恢复演练；
-6. 旧库以只读备份保留到另一次明确的数据处置决定，不因“已迁移”自动删除。
-
-**完成状态（2026-08-27）：H0–H4 已通过退出门。** 生产 PostgreSQL 17 已在
-`0026_history_timeline_export` 导入 Lily 8,262,010 条和 Nekro 1,035,247 条边界前历史，
-两个来源均为 0 拒绝、0 重复，full scope 原批次复跑均为 0 写入。所有来源/月、群聊/
-私聊、方向、会话、bot/adapter 维度与冻结 manifest 零差异；导入期间未出现等待锁，
-Core observation 延迟只有短时 16 秒峰值并恢复到 1–5 秒。ChatExporter 独立仓库提交
-`2906311` 后只读取 `archive.message_timeline_v2` 与 conversation mapping，最小权限账号
-已不能读取 Core 热表或 archive 底表；权限收缩后的跨边界、私聊和 quoted reply 真实导出
-通过。生产 post-import custom dump 已恢复为隔离的 20 GB PostgreSQL 17 数据库，两个
-batch/checkpoint、33 个来源/月组合、ledger、mapping 和确定性样本 hash 与生产快照完全
-一致。两个旧源库及其只读备份继续保留，本结论不授权删除或停用 Nekro/Lily 运行时。
-
-### C0 剩余范围
-
-C0-D 已完成且不重开。当前 C0-A 只主动推进与真实需求直接相连的历史统一、稳定读取和
-可恢复导出；H 工作包承担旧历史导入和统一查看的第一切片。
-
-多层合并转发异步展开、`archive_full` 正式启用、媒体字节长期保存和完整保留/删除传播
-仍保留在 `COLLECTION_AND_AGENT_CONSENSUS.md`，但不阻塞 H，也不因旧 Phase 顺序自动
-启动。出现明确群聊、重建或合规需求时再分别立项。
-
-### Phase 6 当前只授权采集连续性切片
-
-H/ChatExporter 完成后，下一项主要工程是 Phase 6 的 `6a` 和 `6b`：expected
-collectors/coverage shadow 与静默 Reserve collector。2026-08-01 的生产快照中，46 个
-已观察 group conversation ID 只有 10 个被两个实例共同观察，36 个只有单实例；约
-88.7% 的群事件只有一个观察实例。因此 C0-D 已解决进程/Core/PostgreSQL 故障后的
-durable replay，但还没有兑现单账号失效时的采集连续性。
-
-这一轮只允许：
-
-- 建立 protected conversation、expected collector 和覆盖状态；
-- 证明第三个独立账号/session/token/spool 能在精确测试群静默采集；
-- 逐会话报告 `full/degraded/single_collector/uncovered` 和 gap；
-- 保持 Reserve 的普通回复、命令、Agent 和主动发送全部关闭。
-
-`6c` failover simulation、`6d` 真实响应 canary 和 `6e` 扩围没有被本节自动授权；只有
-采集冗余稳定且项目所有者再次选择响应连续性工作时才进入。
-
-### Agent 产品持续测试，不扩 authority
-
-QQ 群 `708309706` 继续按长期授权进行真实 Agent 测试。这是一条贯穿 H 和 Phase 6 的
-低并发产品观察线，不是新的大型基础设施阶段：
-
-- 积累 direct answer、Wolfram、延迟、费用、失败和用户纠错样本；
-- 依据真实使用调整 persona、eligible 工具摘要和模型路由；
-- 保留 Nekro 既有行为和命令路径；
-- 不开放 5c 写操作，不为凑目录增加工具，不让 Agent 读取统一历史库；
-- 任何扩群、私聊 Agent、检索或新工具仍需独立 exact-scope rollout。
-
-### 当前总顺序和 AI 接手规则
+第一项行为改动只处理已经发生的 Renderer 失败，不扩成通用治理工程：
 
 ```text
-H0 合同/ADR
-  -> H1 archive schema 与迁移
-  -> H2 NoneBot + Nekro 分批导入和恢复验证
-  -> H3 ChatExporter 切换
-  -> H4 证明旧库不再是查询依赖
-  -> Phase 6a/6b 静默采集冗余
-
-Agent 708309706 真实测试：在整个序列中持续、低并发进行
-C0-A 其他档案能力：有具体需求后单独进入
+模型生成内容
+  -> 可逆 preview / compile
+  -> 把短而充分的真实诊断直接返回模型
+  -> 模型自然修改并重试
+  -> 成功产物
+  -> 唯一一次受控 publish / send
 ```
 
-新的 AI 会话应先读 `MANIFESTO.md`、本节、`DATABASE_INTEGRATION.md` 和当前
-`git status`，然后只认领上述序列中第一个未完成退出门。每个提交必须说明服务
-MANIFESTO 前四条中的哪一条、增加了什么可观察结果、如何回滚；不得顺手启动 Phase
-7/8、5c、自动 Reserve egress 或新的治理框架。提交后立即推送当前 GitHub 分支。
+目标是把认知试错与外部发送分开。不得再用泛化的
+`renderer_execution_failed`、层层状态汇报或继续堆 prompt 约束冒充反馈。首个验收
+样例应覆盖未知 LaTeX 命令/缺少宏包等真实错误：模型能看到有用诊断，自行改写表达，
+失败草稿不会作为长文本泄漏到群聊。
 
-## 已完成基线
+## R2：Cognitive Workspace / World Effect Boundary
 
-Phase 1、Phase 2 和 C0-D1 至 C0-D5 已签署完成；路由、claim/ACK、响应归因、
-typed platform capability 和 durable ingress 的验收证据分别见
-`ACCEPTANCE.md` 与 `C0D_ACCEPTANCE.md`。C0-A 的长期档案完整性仍可独立推进，
-不是 Phase 3b 的 correctness 前置。
+在 R1 的真实实现上概括最小边界：
 
-Phase 3a 已签署真实 `status.inspect@1.0.0` authority、独立 Provider 身份、
-共享 Provider SDK 和只报告的运行时。该描述符继续保留为不可变历史 authority。
+- Cognitive Workspace 允许私有、可逆的临时文件、执行反馈、局部重试和脚手架；
+- World/Core 继续掌握身份、观察事实、长期档案、权限、持久副作用、平台发送和回执；
+- 只有拟产生持久或外部影响的结果跨越 effect boundary；
+- Core 不要求记录模型每次内部编译、搜索或临时修改，也不把 Runtime session 当作莉莉
+  的身份或世界真相。
 
-Phase 3b 的第一切片 `0014_tool_invocations` 已于 2026-07-19 上线。execution mode
-为 `ledger_only`：调用提案会冻结 descriptor、input、principal、capability 和 policy
-快照，但只能终止为 `recorded_only` 或 `rejected`。Lily/Nekro bridge 0.5.1 已为
-心跳和两个 reporter worker 增加监督与自恢复，两个实例生产心跳已恢复新鲜。
+这一阶段不预设通用多后端接口，不让新的抽象层先于真实能力增长。
 
-`0015_tool_attempts`、Provider 拉取的单活动 lease、单调 fence、attempt secret、
-数据库时间、恢复 reaper 和三个历史执行模式已实现，并在 SQLite 与
-PostgreSQL 17 各通过 313 项测试。历史可执行候选 `status.inspect@1.0.1` 已在
-`ledger_only` 部署；canary 前审查又新增不可变 `1.0.2`，使用创建时不继承 secret 的
-独立 worker、硬 wall-time/输出边界和带裕量的 320 MiB 诚实预算。详细边界见
-`docs/PHASE3B_EXECUTION.md`。
+## R3：演进现有 Nekro Runtime
 
-`0015` 与新 Provider 先在生产以 `ledger_only` 安全空转，随后又在
-`0015d_rollout_plans` 上完成首次有界生产执行。`status.inspect@1.0.2`
-已通过审阅者控制面激活为 `active/rv4`；五份来自完整 Git commit
-的单次计划分别证明 global stop、descriptor suspension、Provider quarantine、
-rollout plan pause 和一次成功 canary。四条停止路径在 deadline 前均为
-lease=204/零 attempt；成功路径仅产生 1 个 attempt/fence，没有平台发送。首批五份
-计划均已暂停，Core 恢复 `ledger_only`、无 active plan/lease。随后八份单调用计划
-完成 safe retry、旧 fence、非法输出、快慢时钟、取消路径以及 Core/PostgreSQL
-中断的生产故障矩阵；所有计划均暂停并耗尽，两个不确定结果保留。修正空 lease
-keep-alive 边界后，Provider 又跨过完整 inventory 稳定周期且无日志异常。详细证据见
-`docs/PHASE3_FAULT_DRILLS.md`。
+在当前 fork 内逐步形成更自然的 Agent loop：给模型真实、有界的执行反馈，允许它在
+可逆工作空间中试错和搭临时脚手架，同时保持外部副作用边界。每次改动由真实失败样本
+驱动，并分别观察成功率、回复体验、token/cache 和费用；不以替换 Nekro 为目标。
 
-直接改数据库激活 descriptor 的路径继续被禁止。ADR 0005 的治理包中，M0 会话/
-审计底座已默认禁用部署；M1 descriptor lifecycle preview/CAS 已完成实现、审查和
-双数据库发布前回归。M1 使用服务端 canonical preview、reviewer 角色、新鲜再认证、
-精确资源版本、幂等键、运行时重算和只追加 before/after 证据；数据库也拒绝 authority
-改写、证据删改和无匹配 lifecycle event 的状态更新。
+## R4：参考工程研究线
 
-M1 当前 SQLite 为 334 项通过、1 项 PostgreSQL 专用测试跳过，PostgreSQL 17 分段
-合计 335 项通过；迁移往返和 drift 均通过。生产已默认禁用迁移到
-`0015b_descriptor_mutations`，operator/Host/Origin/pepper 为空，5 张控制面表为零，
-`ledger_only` 且零 attempt。M2 Provider quarantine 已完成实现、审查与双数据库
-全量回归：SQLite 341 项通过、2 项 PostgreSQL 专用测试跳过，PostgreSQL 17 合计
-343 项通过，并已默认禁用部署到 `0015c_provider_quarantine`：Provider 仍为
-`active/resource_version=1`，控制面五表为零，preview 返回 503。M3 Git-bound 精确
-rollout plan 现已完成实现和双数据库关键回归：环境 scope 被废止，执行模式只作为
-`off/ledger_only/canary` 上限；reviewed plan 精确绑定工具、会话、caller、Provider、
-资源版本、24 小时内窗口和调用上限，调用创建与 lease 都会重验并支持可审计 pause。
-默认禁用生产迁移与首次计划已于 2026-07-19 完成：`0015d` head/no
-drift，五份计划各消费 1 次并停在 `paused/rv3`，Registry 无 active plan/lease。
-四个独立 stop 和首个 `admin_api` 精确 canary 已有生产证据；恢复故障矩阵与稳定
-窗口现也已签署。`0016_confirm_artifacts` 随后完成精确请求 confirmation、批准时
-消费 rollout、内容寻址 artifact、Provider reserve/upload/finalize SDK、保留期/
-orphan 清理和字段级数据库 guard。SQLite 全量为 439 通过、4 跳过，PostgreSQL 17
-全量为 443 通过；生产已经备份并在独立 PostgreSQL 17 磁盘卷中恢复验证，随后默认
-关闭迁移到 `0016`，新表全零、旧调用/计划计数不变且无 schema drift。它仍不扩大
-conversation、caller 或自然语言 authority，工具循环仍属 Phase 5。
+持续研究 Pi、Codex、DSH 和其他 Harness，但产出必须是可验证的设计原则或现有
+Runtime 的小改进。不得把研究对象写成集成路线。任何把它们变成 backend、部署依赖或
+生产候选的提议，都必须由新的明确 ADR 改变本决策。
 
-文本模式 `wolfram.run@1.0.0` 的实现与发布前审查现已完成：它由独立 Provider 通过
-私有 Unix socket 复用既有 Wolfram 15.0 隔离 worker，只返回有界文本，不接收图片、
-不产生 artifact、不发送平台消息。worker image/source/version/隔离配置进入部署身份，
-取消无法被旧协议证明时保守收敛为 `unknown_completion`。SQLite 全量为 455 通过、
-4 跳过，PostgreSQL 17 全量为 459 通过；受限镜像的真实 `2+2` 探针返回 `4`。
-生产随后从完整 Git commit 注册 Provider、导入并通过 reviewer 激活 descriptor；
-一份最多一次的 plan 经 operator 激活后，唯一 `admin_api` canary 用一个 attempt/fence
-返回 `4`、wall=8 ms、artifact=0。旧 `/wf` data source 串行对比同样返回 `4`。
-计划已暂停并耗尽，Core 恢复 `ledger_only`、active plan/attempt 为 0、临时控制面关闭。
-随后两份 300 秒间隔的 inventory hash 一致，10 次 heartbeat 全部 healthy，Provider
-零新日志、相关容器零重启。文本 `wolfram.run` 因而完成迁移签署。随后
-`latex.render@1.0.0` 已完成实现与生产签署：独立 Provider 调用无网络、无凭据、只读
-rootfs、1 GiB/1 CPU/128 PIDs 的 XeLaTeX/Poppler worker，图片只能通过
-reserve/upload/finalize 成为单张 4 MiB、2048×2048 内的 PNG。真实宿主/容器渲染、
-恶意 TeX、错误脱敏、严格 socket/framing 和 artifact 顺序测试已通过；旧 `/tex`
-未改，自然语言和平台发送仍关闭。SQLite 全量为 463 通过、4 跳过，隔离 PostgreSQL
-17 为 467 全通过。生产 artifact store 已从备份/恢复后启用；descriptor 为
-`active/rv2`，精确一次 canary 产生一个 finalized/referenced PNG，plan 已
-`paused/rv3`、1/1，随后跨过完整 inventory 周期。Core 最终为 `ledger_only`、无
-active plan/attempt，控制面关闭。至此第三阶段退出门全部通过，下一阶段为统一
-Renderer。详细证据见 `PHASE3_WOLFRAM_TEXT.md`、`PHASE3_LATEX_RENDER.md`、
-`DEPLOYMENT.md` 第 17–18 节、ADR 0013 与 ADR 0014。
+## R5：需求触发的产品扩展
 
-Phase 4 已于 2026-07-26 完成生产签署：RenderDocument 1.3、能力规划、artifact
-溯源、Nekro 0.9.0 Markdown 入口、Lily 0.6.0 逐命令回滚和四条兼容路径终态回执均已
-验收，61 小时稳定窗口结束后生产回落 `ledger_only`。
+多平台、Fumo、Live2D、线下活动、长期任务、检索、更多账号与控制面，只在出现具体
+用户需求时立项。新工作必须回答 `MANIFESTO.md` 第五条的问题，给出用户可感知结果或
+新增数据库可观察事实，并提供精确范围、失败边界和回滚路径。
 
-Phase 5a/5b 实现现位于 `codex/phase5-agent-runtime`。`0020_agent_runs` 提供不可变
-模型 profile、AgentRun/event/attempt/proposal 账本；`0021_agent_tool_callers` 只为
-Git-gated 非写工具引入 `caller=agent`；`0022_agent_tool_loops` 把一个
-`wolfram.run@1.1.0` proposal、一次 invocation、不可信结果和一次模型 continuation
-收进有界账本；`0023_agent_model_routes` 冻结 primary/fallback profile、路由原因和
-逐 Provider 重新授权，并使 planning/continuation 的故障切换沿同一有序 route
-fail closed。DeepSeek V4 Pro profile、严格 JSON Provider、缓存分价和离线评分已
-实现，默认仍为 `off`，平台 delivery 始终为 0。实施权威见
-`docs/PHASE5_AGENT_RUN.md`、ADR 0015 与 ADR 0016。
-2026-07-29 的一次性本地 Core 已完成真实 DeepSeek 5a 无发送 shadow，证据见
-`docs/PHASE5_5A_SHADOW_EVIDENCE.md`。2026-07-30 又完成 SQLite 547 passed/4
-skipped、PostgreSQL 17 551 passed、生产备份与隔离恢复、`0019 -> 0023` 默认
-关闭迁移、真实 DeepSeek 5a shadow、exact Git-bound 单次
-`wolfram.run@1.1.0` 5b canary、正式 pause、凭据撤销和稳定窗口。最终生产为
-`off + ledger_only`、无 active rollout/attempt、plan `paused/rv3` 且 1/1，
-内部探针的 delivery intent 为 0。Phase 5a/5b 因而完成生产签署；证据见
-`docs/PHASE5_PRODUCTION_ACCEPTANCE.md`。
+## 接手与提交规则
 
-`0024_agent_product_flow` 已于 2026-07-30 完成长期测试群生产 canary。它只把
-Nekro 的明确 mention/reply 接到 Core-owned `AgentInteraction`、system-owned
-`AgentRun`、常驻
-DeepSeek Provider、可选一次 `wolfram.run@1.1.0` 和一次 fenced 原生文本 delivery；
-精确 scope 仅为长期测试群 `qq:group:708309706`。其他群、普通未定向消息、私聊、
-历史检索、文件/shell/write 与 5c authority 均保持关闭。单群同时最多 1 个 run、
-每 60 秒最多 4 次、每日最多 48 次；每 run 费用硬上限为 0.10 USD，因此这份测试
-配置每日模型费用的保守上界为 4.80 USD。发布前 SQLite 全量为 556 passed/4
-skipped，隔离 PostgreSQL 17 为 560 passed；默认关闭迁移、Git-bound exact rollout、
-真实群发送、回滚演练和稳定窗口均已完成。生产真实 direct、Wolfram、幂等、Provider
-故障恢复与 pause/reactivate 证据见
-`docs/PHASE5_AGENT_PRODUCT_ACCEPTANCE.md`。实施权威见 `docs/PHASE5_AGENT_RUN.md`、
-ADR 0017 和 `DEPLOYMENT.md` 第 20 节。
+新任务先读 `MANIFESTO.md`、本文、`R0_BASELINE.md`、当前 `git status` 和相关 accepted
+ADR/合同，再判断它属于 R1–R5 的哪一项。不得从已删除文档、Git 历史中的旧 Phase
+顺序或外部 Harness 的功能表自动生成任务。
 
-## Sequencing rules
-
-1. A work package begins only when the current-direction section selects it;
-   an old Phase number by itself is not authorization. Its prerequisite evidence,
-   rollback and safe production defaults must already exist.
-2. Contracts and ledgers precede execution. Execution precedes model autonomy.
-3. Read-only, deterministic, public operations migrate before costly,
-   privacy-sensitive, state-changing, or administrator operations.
-4. Tools return structured results and artifacts; tools do not send platform
-   messages. Rendering and delivery are separate responsibilities.
-5. Missing identity, authority, capability, registry freshness, confirmation,
-   budget, or provider health always reduces authority rather than expanding
-   it.
-6. Existing command entry points stay available until their tool-backed path
-   has passed shadow comparison, exact-conversation canary, and rollback.
-
-## Completed authority-neutral packet: C0-D collection reliability
-
-C0-D is an earlier-layer reliability repair scheduled after deployed Phase 3a
-and before Phase 3b. Its detailed scope and acceptance criteria are in
-`docs/COLLECTION_AND_AGENT_CONSENSUS.md`.
-
-- Define exact capture profiles, versioned sanitizer/completeness metadata,
-  and normalized basic platform actions; reaction capture records facts and
-  assigns no feedback semantics.
-- Keep image bytes out of PostgreSQL while retaining ordered placeholders and
-  available metadata. Any future binary retention uses bounded object storage.
-- Replace loss-prone in-memory-only telemetry with idempotent durable bridge
-  spools, commit receipts, replay, watermarks, lag/gap diagnostics, quotas, and
-  quarantine.
-- Preserve per-account observations and resolve only with verified strong
-  identity. Old or unresolved data is never merged by text/time similarity.
-
-C0-D is complete only when outage/restart replay loses no controlled records,
-Lily and Nekro basic action notices are represented with honest completeness
-status, receipt/coverage diagnostics and media policy are enforced, and
-command/claim/Registry behavior is unchanged.
-
-Those gates passed and were signed on 2026-07-18. The production evidence and
-exact controlled sequence ranges are recorded in `C0D_ACCEPTANCE.md`.
-
-After C0-D is stable, `C0-A` adds nested merged-forward expansion,
-`archive_full` rollout, portable exports, reconstruction, retention/deletion
-propagation, and old-history import. C0-A and Phase 3b may be scheduled
-independently; Phase 3b does not wait for archival edge cases.
-
-2026-08-01 的现行排期只选择上文 H 工作包作为 C0-A 的历史统一/读取切片；本段保留
-完整设计范围，不代表其余 C0-A 能力已获启动授权。
-
-## Dependency shape
-
-The numbered phases describe release gates, not a ban on preparatory design.
-Contracts for a later phase may be designed early, but production authority is
-enabled only in dependency order:
-
-```text
-Phase 2 event identity / decisions / claims / capabilities
-    -> Phase 3 tool contract / invocation ledger / provider protocol
-        -> Phase 4 renderer IR / artifact delivery / capability degradation
-            -> Phase 5 natural-language planning and tool loop
-
-Phase 3 health + audit -> Phase 6 Watchdog
-Phase 4 adapter boundary -> Phase 7 additional platforms
-Phase 3 query tools + Phase 5 on-demand calls -> Phase 8 Memory as Tool
-Phases 3/4/6/7 -> Phase 9 event operations
-Phases 4/7/9 -> Phase 10 Fumo and avatar adapters
-All stable boundaries -> Phase 11 optional legacy runtime replacement
-```
-
-## Phase 3: Tool Registry and controlled execution
-
-Detailed design: `docs/PHASE3_TOOL_REGISTRY.md`. Phase acceptance is in
-`docs/PHASE3_ACCEPTANCE.md`；已实现的 mutation boundary 与仍待未来实现的浏览器
-operator UI 见 `docs/CONTROL_PLANE.md`。
-
-### 3a. Authoritative tool descriptors
-
-状态：2026-07-18 已完成真实、经审阅的 `status.inspect@1.0.0` authority 与
-只报告的 Provider。此处描述的是当时的 3a 退出门；后续 invocation 与 lease
-表面由 3b 的独立迁移提供，不改变 3a 的历史签署。
-
-- Define versioned input/output JSON Schemas, side-effect class, permission,
-  confirmation, timeout, rate, concurrency, resource, privacy, provider, and
-  required-output-capability metadata.
-- Accept authenticated runtime provider snapshots, but keep reviewed authority
-  separate from runtime discovery just as Phase 2 separates static command
-  review from matcher inventory.
-- Expose admin audit views for loaded, stale, missing, incompatible, and
-  unreviewed tools.
-- Use a Git-tracked reviewed descriptor bundle as the authority source. Store
-  immutable canonical descriptor copies/hashes and lifecycle records in the
-  database; neither provider inventory nor the control panel edits descriptor
-  authority in 3a.
-- Separate stable provider registration/authentication from dynamic inventory
-  and heartbeat health. Provider credentials are not bot-ingest/admin tokens.
-- Do not execute tools in 3a.
-
-Exit gate: descriptor canonicalization and hashes are deterministic; unknown or
-stale providers cannot become callable; schema compatibility and authority are
-covered on SQLite and PostgreSQL.
-
-### 3b. Invocation ledger and provider lease protocol
-
-状态：`0014_tool_invocations`、`0015_tool_attempts`、M0–M3 控制面和
-`status.inspect@1.0.2` 已完成实现、双数据库回归与生产部署。
-`status.inspect@1.0.2` 已为 `active`；五份 Git-bound 单次计划已完成独立
-stop 和首次成功 canary，随后全部暂停，生产恢复 `ledger_only`。实施、
-证据与回滚细节见 `docs/PHASE3B_EXECUTION.md`、`docs/PHASE3_ACCEPTANCE.md`
-和 `docs/DEPLOYMENT.md`。
-
-- Add an auditable invocation state machine, attempts, confirmations, leases,
-  fencing tokens, deadlines, cancellation, structured errors, and artifact
-  references.
-- Providers pull authenticated leases from Core. Core does not open inbound
-  ports into Lily/Nekro and does not run plugin code inside the API process.
-- Validate input before queueing and output before success. Capture the exact
-  descriptor, principal, policy, capability, and budget snapshots used.
-- Apply idempotency per source event/tool/request and never retry an ambiguous
-  state-changing completion automatically.
-- Ship `off`, `ledger_only`, and Git-bound exact canary ceilings plus independent
-  global stop, tool suspension, provider quarantine, and rollout-plan pause
-  before a real lease. `enforce` remains closed in the first M3 package.
-  Canary scope binds exact tool/version, conversation, caller, and provider.
-- Use database time for leases/deadlines. Specify cancellation, reaping, late
-  completion, invalid output, clock skew, unknown completion, and starvation
-  transitions before implementation.
-- Implement reserve/upload/finalize content-addressed artifacts before
-  `latex.render` or image-producing Wolfram output can succeed.
-
-Exit gate: crash/restart, duplicate delivery, expired lease, timeout,
-cancellation, malformed result, provider outage, and Core outage all have
-tested deterministic outcomes.
-
-### 3c. First providers and migration order
-
-状态：三个退出门代表工具均已完成公共协议生产 canary。后续
-`markdown.render_image`、`history.search` 和写工具属于各自后续阶段或新增 scope，
-不再作为第三阶段退出条件。
-
-Recommended order:
-
-1. `status.inspect`: read-only, deterministic, small structured output.
-2. `wolfram.run`: bounded compute, persistent worker, explicit time/memory and
-   expression-size budgets.
-3. `latex.render`: read-only artifact production with MIME/hash/size metadata.
-4. `markdown.render_image`: artifact production after renderer boundaries are
-   stable enough to avoid duplication with Phase 4.
-5. `history.search`: read-only but privacy-sensitive; requires conversation
-   scope and audit policy first.
-6. Configuration, moderation, announcements, restarts, and other writes only
-   after sender authorization and confirmation are implemented.
-
-Each old command becomes a compatibility adapter that creates a typed tool
-invocation. The provider may initially wrap existing code, but command parsing,
-permission checks, tool execution, result structure, rendering, and sending
-must become separately observable steps.
-
-### 3d. Shadow and canary migration
-
-- Shadow only metadata and read-only results; never double-execute a write.
-- Compare old-command output with tool-backed structured output using bounded,
-  redacted diff records.
-- Canary one tool and one exact conversation at a time.
-- Keep the old path as rollback until latency, error rate, result equivalence,
-  resource budgets, and audit completeness pass a stable window.
-
-Phase 3 exit gate: at least `status.inspect`, `wolfram.run`, and
-`latex.render` use the common descriptor and invocation protocol; command
-compatibility remains; no natural-language model has execution authority yet.
-The control panel may expose read-only effective state during Phase 3, but
-mutating operator controls remain gated by the roles/session/audit requirements
-in `CONTROL_PLANE.md`.
-
-## Phase 4: Unified Renderer
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-4-unified-renderer-and-delivery-boundary`.
-
-Current implementation status (2026-07-26): RenderDocument 1.3, deterministic
-capability planning, full artifact provenance/retention/deletion, QQ plus constrained
-text-adapter semantic proof, and explicit status/Wolfram/LaTeX/help converters are
-complete. Nekro 0.9.0 accepts one ordinary Markdown document instead of model-authored
-blocks JSON. Lily 0.6.0 retains the old command matchers as per-command rollback until
-an exact tool invocation has produced a delivery intent. SQLite full-suite, PostgreSQL
-Alembic round-trip, and the focused PostgreSQL fault matrix pass. Production is on
-`0019_phase4_planning`; the Git-bound exact command plan was activated and has now
-window-expired into deterministic `ledger_only` fallback, the control plane has no
-unexpired session, four compatibility paths have terminal platform
-receipts, and the no-send `recorded_only` rollback path is proven. A production
-status pickup race found during canary was fixed by bounding all provider idle pickup
-to one second and re-running the full suite. Scoped render reuse now binds the exact
-renderer snapshot hash, so an implementation/font bundle, normalized input, capability
-decision, source artifact, or idempotency scope change cannot reuse a stale artifact;
-there is no cross-conversation global render cache. The final SQLite suite is
-512 passed / 4 skipped, the exact-snapshot regression also passes on an isolated
-PostgreSQL 17 instance, and the post-provider-fix production window has no restarts,
-active invocations, pending delivery intents, or new failed/timed-out/ambiguous records.
-After action-specific restart approval, production Core was replaced at 19:44 CST
-with the exact-snapshot image from `c38d6f0`; it returned healthy on migration
-`0019`, both bridges and all three providers re-established fresh heartbeats, and
-the switch created no tool invocation or delivery intent. The 2026-07-26 closing
-audit, more than 61 hours after that switch, still shows zero relevant restarts,
-healthy readiness and fresh heartbeats, no active invocation or pending delivery,
-and no tool invocation after rollout expiry. Post-expiry ordinary chat rendering
-continued independently with 22 successful delivery intents.
-
-### Deliverables
-
-- Define a versioned `RenderDocument` intermediate representation for text,
-  headings, tables, code, math, images, cards, progress, warnings, and artifact
-  references.
-- Add content-addressed artifacts with MIME, hash, byte size, dimensions,
-  provenance, TTL, access scope, and retention.
-- Implement renderer providers separately from platform delivery.
-- Negotiate against the Phase 2 capability snapshot and record every
-  degradation, such as Markdown to image or image to plain text.
-- Cache only deterministic, non-sensitive render results; include renderer
-  version and normalized input in cache keys.
-
-Implementation authority and acceptance evidence live in
-`docs/PHASE4_RENDER_DOCUMENT.md`. The exact command canary is
-`registry/rollouts/phase4-command-canary-20260723.json`; it contains only groups
-1080353942 and 861651713, caller `command`, and the three reviewed descriptor hashes.
-
-### Safety and exit gate
-
-Untrusted HTML/SVG/Markdown is sanitized; local-file and remote-fetch policy is
-explicit; font and image work has resource limits. Wolfram, LaTeX, status, and
-help results render identically through command and tool paths, with QQ text
-and image fallbacks tested. Tools no longer call platform send APIs directly.
-Synthetic validation must not send to public conversations without explicit
-authorization for that specific action; default production proof uses automated
-tests, append-only ledgers, and no-send probes.
-
-## Phase 5: Natural-language Tool Calling
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-5-natural-language-planning-and-controlled-tool-loop`.
-
-### 5a. Planner without execution
-
-Status: production-signed on 2026-07-30.
-
-- Build the light default context: system policy, current message/reply graph,
-  short conversation window, and only eligible tool summaries.
-- Record proposed calls and explanations without execution.
-- Measure false calls, missed calls, schema validity, and permission requests.
-
-### 5b. Read-only execution loop
-
-Status: production-signed for one exact `wolfram.run@1.1.0` canary on
-2026-07-30; default production authority remains off.
-
-- Allow a bounded number of calls and model turns with total time/token/cost
-  budgets.
-- Core validates every call against the Phase 3 descriptor and principal
-  policy; the model never talks directly to providers.
-- Phase 5b exposes no retrieval store. `docs.search`, `state.get`, and
-  `history.search` remain later, separately scoped work; there is no default
-  RAG injection.
-
-### 5c. Confirmed writes
-
-- State-changing tools require explicit confirmation bound to principal, tool,
-  normalized arguments, scope, expiry, and invocation ID.
-- A changed argument or expired confirmation returns to proposal state.
-- High-risk operations can require a second administrator or an out-of-band
-  channel.
-
-Exit gate: adversarial prompts, tool-result injection, loops, provider errors,
-timeouts, budget exhaustion, confirmation replay, and model failover are
-covered; command behavior remains independent of model availability.
-
-## Phase 6: Three-account coordination and Watchdog
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-6-watchdog-incidents-and-role-failover`.
-Three-account collection/failover design:
-`docs/PHASE6_THREE_ACCOUNT_HA.md`.
-
-状态：当前只排期上文定义的 `6a` coverage shadow 和 `6b` silent Reserve
-collector，并且排在 H4 之后。`6c`–`6e` 响应 failover 尚未获授权。
-
-Availability-priority decision: the authority-neutral `HA-0` durable ingress
-spool and coverage packet is pulled forward into C0-D after Phase 3a and before
-Phase 3b. This does not deploy Reserve or enable failover egress; the remaining
-Phase 6 release gates stay in numbered order.
-
-- Model Command, Talk, and Watchdog as explicit roles with capability and
-  health snapshots, not hard-coded account IDs.
-- Run collection active/active/active across Command, Talk, and a continuously
-  connected silent Reserve account. Response remains active/passive: Reserve
-  speaks only while holding a bounded logical-role lease.
-- Add durable per-adapter ingress spools and coverage/watermark diagnostics;
-  another in-memory observer does not by itself guarantee no message loss.
-- Define a degradation matrix per tool: primary provider, permitted fallback,
-  required health, reduced limits, and forbidden failover.
-- Reserve's adapter collects protected ordinary chat for ingestion coverage,
-  but Watchdog/incident logic consumes only health, coverage, status, and
-  incident events. It cannot silently acquire chat context or tool authority.
-- Use leases/fencing for failover, cooldown and hysteresis for recovery, and
-  an administrator-visible incident timeline.
-- When automatic failover is active, managed egress becomes lease-required;
-  ingress remains durable and fail-open. This prevents a partitioned primary
-  and Reserve from speaking simultaneously.
-
-Exit gate: loss of each bot, NapCat, provider, Core, PostgreSQL, and network
-path has a tested outcome; failback does not duplicate a reply or invocation.
-
-## Phase 7: Additional platform entry points
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-7-additional-platforms-and-web-admin`.
-
-Order: Telegram administrator private chat, Web Admin, then lower-priority
-WeChat/Discord/email/live-stream adapters.
-
-- Keep platform adapters limited to identity, events, references,
-  capabilities, delivery, and platform acknowledgements.
-- Map principals across platforms explicitly; never equate display names.
-- Web Admin initially exposes read-only audit and health, then confirmation and
-  configuration behind stronger authentication, CSRF protection, and an
-  immutable audit trail.
-- Cross-platform forwarding is a state-changing tool with consent and privacy
-  policy, not an adapter shortcut.
-
-Exit gate: the same event/tool/render contracts work on QQ and one second
-platform without platform-specific branches in tool providers.
-
-## Phase 8: Memory as Tool
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-8-retrieval-and-memory-as-tool`.
-
-状态：冻结。项目所有者已明确当前数据库只是人类档案，不是莉莉的记忆；H 工作包和
-ChatExporter 不得成为隐式 `history.search`、memory 或 RAG。只有未来一次明确的人格/
-隐私决策才能重新开放本阶段。
-
-Build in privacy order:
-
-1. `state.get`: explicit structured group/task/event state.
-2. `docs.search`: curated documentation with source/version metadata.
-3. `history.search`: scoped lexical/SQL search over authorized conversations.
-4. `memory.lookup`: curated long-lived facts with provenance and expiry.
-5. Embeddings/reranking only where exact retrieval is insufficient.
-
-Every result carries source, scope, time, confidence, and redaction metadata.
-Writes require a separate reviewed path; inferred personal profiles are not
-silently persisted. Retention, deletion, export, and consent are acceptance
-requirements, not later cleanup.
-
-## Phase 9: Event operations
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-9-event-operations`.
-
-- Treat programs, tickets, check-in, raffle pools, staff actions, timers, OBS
-  scenes, and announcements as structured state and tools.
-- Use an event-scoped role model and a rehearsal/simulation mode.
-- Make raffle inputs and draws reproducible and auditable; secrets and attendee
-  data receive stricter retention.
-- Add offline/degraded runbooks so a venue network failure does not stall the
-  event.
-
-Exit gate: a full rehearsal can be replayed from the audit log, and every
-state-changing action has confirmation, operator identity, and rollback or
-compensation behavior.
-
-## Phase 10: Fumo and avatar adapters
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-10-fumo-and-avatar-adapters`.
-
-- Define versioned output intents: `speak`, `subtitle`, `emotion`, `action`,
-  `display_card`, and `attention`.
-- Devices and Live2D/OBS clients render intents but own no planning or tool
-  authority.
-- Add session leases, physical emergency stop/mute, privacy indicators for
-  microphones/cameras, bounded queues, and safe offline behavior.
-
-Exit gate: disconnects, stale commands, duplicated intents, audio feedback,
-and operator override are tested; no device credential grants Core admin tool
-authority.
-
-## Phase 11: Optional legacy runtime replacement
-
-Detailed design: `docs/FUTURE_PHASES_DESIGN.md#phase-11-optional-legacy-runtime-replacement`.
-
-Replacement is evidence-driven and component-by-component. A custom OneBot or
-Satori adapter, plugin host, agent loop, runner, sandbox, or admin UI replaces
-NoneBot/Nekro only after the shared contracts have proven that component is a
-replaceable boundary. Each replacement needs traffic shadowing, behavior and
-latency comparison, a data-migration boundary, and immediate rollback.
-
-The project is complete without full replacement if the legacy runtimes remain
-healthy providers behind stable Lily Core contracts.
-
-## Cross-phase production gates
-
-Every authority-increasing release records:
-
-- schema migration upgrade/downgrade on SQLite and the production PostgreSQL
-  major version;
-- deterministic contract/hash compatibility;
-- authentication and principal binding;
-- permission, confirmation, capability, and budget decisions;
-- idempotency/concurrency/crash behavior;
-- redaction, retention, and artifact privacy audit;
-- latency/error/resource baselines and alert thresholds;
-- exact canary scope, fail-open/fail-closed choice, rollback, and a stable
-  evidence window;
-- updated operator runbook and acceptance checklist.
+每次提交只包含本次范围，并在提交后立即推送当前远端分支。

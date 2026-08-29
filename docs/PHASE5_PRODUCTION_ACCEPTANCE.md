@@ -210,4 +210,5 @@ watermark 继续前移，因此不归因于本次内部 canary，也不被写成
 - Lily/Nekro spool 无 pending/quarantine/gap，确定性命令 Registry 新鲜；
 - 探针关联的 Renderer、delivery、QQ/NapCat 发送均为 0。
 
-5c 仍被真实 principal/authorization 工作包阻塞；`history.search` 仍等待 Phase 8。
+本次签署没有开放 5c 或 `history.search`。二者至今仍未获授权；如果出现真实产品
+需求，按当前路线 R5 重新立项，而不是继续旧 Phase 顺序。

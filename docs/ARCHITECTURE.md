@@ -1,8 +1,9 @@
-# Phase-two architecture
+# Superlily stable foundation architecture
 
-Phase one remains the observability spine. Phase two adds deterministic
-canonical decisions and an optional, fail-open claim path without moving tool
-execution into Core.
+本文记录 P1–P2 stable foundation 的架构边界。后续 P3–P5 与 history archive 在其
+独立合同和 ADR 中扩展该基础；本文不承担当前路线排序。Phase one remains the
+observability spine. Phase two adds deterministic canonical decisions and an
+optional, fail-open claim path without moving tool execution into Core.
 
 ```text
 Lily / NoneBot  ── bounded telemetry queue ─┐
