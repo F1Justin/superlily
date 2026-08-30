@@ -65,8 +65,9 @@ R0 不改变运行行为。它完成三件事：
   `node_id`。原始日志、路径和完整失败内容不跨 Unix socket、不进入 Core 数据库；
 - Core 把内容编译错误作为 `renderer_content_error`/HTTP 422 返回调用方，数据库只记
   安全错误码；基础设施失败仍与内容错误分开；
-- Nekro bridge `1.1.0` 把这份真实短诊断交回下一次模型迭代。只允许一次修订尝试，
-  失败草稿不再自动降级成长篇普通文本；外部平台发送仍只发生在成功产物之后；
+- Nekro bridge `1.1.1` 把这份真实短诊断交回模型现有的有界 Agent loop，自身不再
+  维护按请求计数的重试状态。失败草稿不自动降级成长篇普通文本；外部平台发送仍只
+  发生在成功产物之后；
 - 这一实施复用已有 RenderDocument、artifact、delivery intent 和唯一发送边界，不新增
   第二套 preview/publish API，也不扩成通用 Agent 治理层。
 

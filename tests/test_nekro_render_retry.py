@@ -16,34 +16,6 @@ def _load_retry_module():
     return module
 
 
-def test_content_failure_allows_one_real_iteration_then_suppresses() -> None:
-    retry = _load_retry_module()
-    tracker = retry.RenderRetryTracker(ttl_seconds=60, max_entries=4)
-
-    assert tracker.content_failure("source-1", now=1) == "retry"
-    assert tracker.content_failure("source-1", now=2) == "suppress"
-    assert tracker.content_failure("source-1", now=3) == "suppress"
-
-    tracker.succeeded("source-1")
-    assert tracker.content_failure("source-1", now=4) == "retry"
-
-
-def test_terminal_state_never_turns_a_failure_into_a_text_send() -> None:
-    retry = _load_retry_module()
-    tracker = retry.RenderRetryTracker(ttl_seconds=60, max_entries=4)
-
-    tracker.mark_terminal("source-1", now=1)
-    assert tracker.content_failure("source-1", now=2) == "suppress"
-
-
-def test_expired_retry_state_does_not_leak_to_a_new_request() -> None:
-    retry = _load_retry_module()
-    tracker = retry.RenderRetryTracker(ttl_seconds=10, max_entries=4)
-
-    assert tracker.content_failure("source-1", now=1) == "retry"
-    assert tracker.content_failure("source-1", now=12) == "retry"
-
-
 def test_retry_instruction_contains_only_bounded_actionable_diagnostic() -> None:
     retry = _load_retry_module()
 
@@ -81,9 +53,10 @@ def test_bridge_raises_for_real_iteration_and_has_no_failure_fallback() -> None:
         encoding="utf-8"
     )
 
-    assert "_render_retry_tracker.content_failure" in source
     assert "raise RenderRetryRequired" in source
     assert "retry_instruction(error_code, diagnostic)" in source
+    assert "RenderRetryTracker" not in source
+    assert "content_failure" not in source
     assert "_send_render_text_fallback" not in source
     assert "fallback_text=markdown_text" not in source
     assert "markdown_plain_text" not in source

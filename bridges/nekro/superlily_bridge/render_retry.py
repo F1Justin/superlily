@@ -2,69 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-import time
-from typing import Literal
-
-
-RetryAction = Literal["retry", "suppress"]
-
-
-@dataclass(slots=True)
-class _RetryState:
-    failures: int
-    updated_at: float
-
-
-class RenderRetryTracker:
-    """Allow one corrected document and never turn content failure into a send."""
-
-    def __init__(
-        self,
-        *,
-        ttl_seconds: float = 900.0,
-        max_entries: int = 1_024,
-    ) -> None:
-        self.ttl_seconds = ttl_seconds
-        self.max_entries = max_entries
-        self._states: dict[str, _RetryState] = {}
-
-    def _prune(self, now: float) -> None:
-        expired = [
-            key
-            for key, state in self._states.items()
-            if now - state.updated_at >= self.ttl_seconds
-        ]
-        for key in expired:
-            self._states.pop(key, None)
-        overflow = len(self._states) - self.max_entries + 1
-        if overflow > 0:
-            oldest = sorted(
-                self._states,
-                key=lambda key: self._states[key].updated_at,
-            )[:overflow]
-            for key in oldest:
-                self._states.pop(key, None)
-
-    def content_failure(self, key: str, *, now: float | None = None) -> RetryAction:
-        observed_at = time.monotonic() if now is None else now
-        self._prune(observed_at)
-        state = self._states.get(key)
-        if state is None:
-            self._states[key] = _RetryState(failures=1, updated_at=observed_at)
-            return "retry"
-        state.failures += 1
-        state.updated_at = observed_at
-        return "suppress"
-
-    def mark_terminal(self, key: str, *, now: float | None = None) -> None:
-        observed_at = time.monotonic() if now is None else now
-        self._prune(observed_at)
-        self._states[key] = _RetryState(failures=2, updated_at=observed_at)
-
-    def succeeded(self, key: str) -> None:
-        self._states.pop(key, None)
 
 
 class RenderRetryRequired(RuntimeError):

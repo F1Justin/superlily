@@ -50,12 +50,11 @@ from .reporter import BackgroundReporter, ReportItem
 from .render_retry import (
     RENDER_SUPPRESSED,
     RenderRetryRequired,
-    RenderRetryTracker,
     retry_instruction,
     unavailable_instruction,
 )
 
-BRIDGE_VERSION = "1.1.0"
+BRIDGE_VERSION = "1.1.1"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -171,7 +170,6 @@ _render_send_receipt: ContextVar[asyncio.Future[dict[str, str | None]] | None] =
     "superlily_render_send_receipt",
     default=None,
 )
-_render_retry_tracker = RenderRetryTracker()
 TRIGGER_BIND_MAX_WAIT_SECONDS = 3600.0
 TRIGGER_BIND_POLL_SECONDS = 0.1
 ONEBOT_QQ_CAPABILITIES = {
@@ -1136,7 +1134,6 @@ async def _deliver_render_request(
             intent_response.raise_for_status()
             intent = intent_response.json()
             if not intent.get("should_send"):
-                _render_retry_tracker.mark_terminal(request_context)
                 return RENDER_SUPPRESSED
 
             selected_family = delivery_plan.get("selected_family")
@@ -1212,19 +1209,16 @@ async def _deliver_render_request(
             )
             completion_response.raise_for_status()
             if send_receipt["outcome"] == "succeeded":
-                _render_retry_tracker.succeeded(request_context)
                 return (
                     "INTERNAL_RENDER_DELIVERED. The answer is already delivered. "
                     "Do not send it again or mention internal rendering status."
                 )
             if send_receipt["outcome"] == "ambiguous":
-                _render_retry_tracker.mark_terminal(request_context)
                 return (
                     "INTERNAL_RENDER_DELIVERY_UNCONFIRMED. Do not retry or send a "
                     "fallback because that could duplicate a platform message. Never "
                     "mention internal status."
                 )
-            _render_retry_tracker.mark_terminal(request_context)
             return (
                 "INTERNAL_RENDER_DELIVERY_FAILED. Do not retry this platform action. "
                 "Continue without mentioning internal status."
@@ -1255,12 +1249,9 @@ async def _deliver_render_request(
                     diagnostic = detail.get("diagnostic")
             except ValueError:
                 pass
-            action = _render_retry_tracker.content_failure(request_context)
-            if action == "retry":
-                raise RenderRetryRequired(
-                    retry_instruction(error_code, diagnostic)
-                ) from exc
-            return RENDER_SUPPRESSED
+            raise RenderRetryRequired(
+                retry_instruction(error_code, diagnostic)
+            ) from exc
         raise RenderRetryRequired(unavailable_instruction()) from exc
     except RenderRetryRequired:
         raise
