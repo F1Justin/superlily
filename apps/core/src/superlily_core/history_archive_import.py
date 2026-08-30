@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
 import asyncpg
@@ -90,10 +90,7 @@ class ImportSelection:
             return True
         if self.scope == "month":
             return item["occurred_at"].strftime("%Y-%m") == self.month
-        return (
-            item["source_conversation_key"] == self.conversation_key
-            and selected_count < int(self.max_rows or 0)
-        )
+        return item["source_conversation_key"] == self.conversation_key and selected_count < int(self.max_rows or 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,10 +149,7 @@ def _sanitize(value: Any, warnings: list[str], path: str = "$") -> Any:
     if isinstance(value, list):
         return [_sanitize(item, warnings, f"{path}[{index}]") for index, item in enumerate(value)]
     if isinstance(value, Mapping):
-        return {
-            str(key): _sanitize(item, warnings, f"{path}.{key}")
-            for key, item in value.items()
-        }
+        return {str(key): _sanitize(item, warnings, f"{path}.{key}") for key, item in value.items()}
     return value
 
 
@@ -249,9 +243,7 @@ def build_archive_record(
     source_table = LILY_SOURCE_TABLE if source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_TABLE
 
     if source == LILY_SOURCE_SYSTEM:
-        segments = _parse_json_field(
-            row.get("message"), expected=list, field="message", warnings=warnings
-        )
+        segments = _parse_json_field(row.get("message"), expected=list, field="message", warnings=warnings)
         reply_hint = _reply_hint_lily(segments)
         content_text = _clean_scalar(row.get("plain_text"), warnings, "plain_text") or ""
         raw_fields = {
@@ -260,14 +252,18 @@ def build_archive_record(
             "scene_id": row.get("scene_id", row.get("conversation_id")),
             "scene_type": row.get("scene_type"),
         }
-        mapping_metadata = {"bot_id": normalized.get("bot_id"), "reason": mapping_reason}
+        mapping_metadata = {
+            "bot_id": normalized.get("bot_id"),
+            "reason": mapping_reason,
+        }
     else:
         segments = _parse_json_field(
-            row.get("content_data"), expected=list, field="content_data", warnings=warnings
+            row.get("content_data"),
+            expected=list,
+            field="content_data",
+            warnings=warnings,
         )
-        ext_data = _parse_json_field(
-            row.get("ext_data"), expected=dict, field="ext_data", warnings=warnings
-        )
+        ext_data = _parse_json_field(row.get("ext_data"), expected=dict, field="ext_data", warnings=warnings)
         reply_hint = _reply_hint_nekro(ext_data)
         content_text = _clean_scalar(row.get("content_text"), warnings, "content_text") or ""
         raw_fields = {
@@ -279,7 +275,10 @@ def build_archive_record(
             "ext_data": ext_data,
             "update_time": row.get("update_time"),
         }
-        mapping_metadata = {"adapter_key": normalized.get("adapter_key"), "reason": mapping_reason}
+        mapping_metadata = {
+            "adapter_key": normalized.get("adapter_key"),
+            "reason": mapping_reason,
+        }
 
     source_record_id = normalized["source_record_id"]
     legacy_message_id = _deterministic_id("message", source, source_table, source_record_id)
@@ -293,9 +292,7 @@ def build_archive_record(
         "legacy_message_id": legacy_message_id,
         "occurred_at": normalized["occurred_at"].isoformat(),
         "source_persisted_at": (
-            None
-            if normalized["source_persisted_at"] is None
-            else normalized["source_persisted_at"].isoformat()
+            None if normalized["source_persisted_at"] is None else normalized["source_persisted_at"].isoformat()
         ),
         "bot_id": normalized.get("bot_id") or _clean_scalar(row.get("bot_id"), warnings, "bot_id"),
         "source_conversation_key": normalized["source_conversation_key"],
@@ -397,8 +394,13 @@ async def _ensure_target(conn: asyncpg.Connection) -> None:
     if not database:
         raise RuntimeError("target database could not be identified")
     revision = await conn.fetchval("SELECT version_num FROM alembic_version")
-    if revision != "0026_history_timeline_export":
-        raise RuntimeError(f"archive target must be at 0026_history_timeline_export, got {revision}")
+    if revision not in {
+        "0026_history_timeline_export",
+        "0027_name_observation_history",
+    }:
+        raise RuntimeError(
+            f"archive target must be at 0026_history_timeline_export or 0027_name_observation_history, got {revision}"
+        )
     required = await conn.fetchval(
         """
         SELECT count(*) = 4
@@ -447,9 +449,7 @@ async def _ensure_batch(
         _json_canonical(
             {
                 "manifest_rejections": manifest.get("by_rejection_code", {}),
-                "excluded_at_or_after_cutover": manifest.get(
-                    "excluded_at_or_after_cutover", 0
-                ),
+                "excluded_at_or_after_cutover": manifest.get("excluded_at_or_after_cutover", 0),
             }
         ),
     )
@@ -515,7 +515,9 @@ async def _write_chunk(
     async with conn.transaction():
         await conn.execute("TRUNCATE history_import_stage")
         await conn.copy_records_to_table(
-            "history_import_stage", records=[item.stage_tuple() for item in records], columns=_STAGE_COLUMNS
+            "history_import_stage",
+            records=[item.stage_tuple() for item in records],
+            columns=_STAGE_COLUMNS,
         )
         conflict = await conn.fetchrow(
             """
@@ -531,8 +533,7 @@ async def _write_chunk(
         )
         if conflict:
             raise RuntimeError(
-                "source identity conflict for "
-                f"{conflict['source_record_id']}: state={conflict['state']}"
+                f"source identity conflict for {conflict['source_record_id']}: state={conflict['state']}"
             )
         await conn.execute(
             """
@@ -568,9 +569,7 @@ async def _write_chunk(
             """
         )
         if mapping_conflict:
-            raise RuntimeError(
-                f"conversation mapping conflict for {mapping_conflict['source_conversation_key']}"
-            )
+            raise RuntimeError(f"conversation mapping conflict for {mapping_conflict['source_conversation_key']}")
         await conn.execute(
             """
             INSERT INTO archive.legacy_messages (
@@ -699,11 +698,7 @@ async def apply_archive_import(
         raise ValueError("archive apply requires a manifest with zero duplicate source identities")
     canonical_source = str(verified["source_system"])
     source_table = str(verified["source_table"])
-    source_boundary = (
-        LILY_CUTOVER_BOUNDARY
-        if canonical_source == LILY_SOURCE_SYSTEM
-        else NEKRO_SOURCE_CUTOVER_BOUNDARY
-    )
+    source_boundary = LILY_CUTOVER_BOUNDARY if canonical_source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_CUTOVER_BOUNDARY
     conn = await asyncpg.connect(_asyncpg_dsn(database_url), command_timeout=120)
     batch_id: str | None = None
     try:
@@ -747,18 +742,11 @@ async def apply_archive_import(
         for line_number, row in enumerate(iter_jsonl(jsonl_path), start=1):
             if line_number <= last_line:
                 continue
-            if (
-                selection.scope == "sample"
-                and selected_count >= int(selection.max_rows or 0)
-            ):
+            if selection.scope == "sample" and selected_count >= int(selection.max_rows or 0):
                 break
             chunk_last_line = line_number
             try:
-                normalized = (
-                    _normalize_lily(row)
-                    if canonical_source == LILY_SOURCE_SYSTEM
-                    else _normalize_nekro(row)
-                )
+                normalized = _normalize_lily(row) if canonical_source == LILY_SOURCE_SYSTEM else _normalize_nekro(row)
                 if normalized["occurred_at"] >= source_boundary:
                     continue
                 if not selection.includes(normalized, selected_count):
@@ -774,9 +762,7 @@ async def apply_archive_import(
             except _RejectedRow as exc:
                 if selection.scope != "full":
                     continue
-                source_record_id = (
-                    str(row.get("id")).strip() if row.get("id") is not None else None
-                )
+                source_record_id = str(row.get("id")).strip() if row.get("id") is not None else None
                 digest = hashlib.sha256(_json_canonical(row).encode("utf-8")).hexdigest()
                 ledgered = await _record_rejection(
                     conn,

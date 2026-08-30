@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import threading
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import HTTPException, status
 from sqlalchemy import exists, func, or_, select, text as sql_text, update
@@ -46,11 +46,13 @@ from .models import (
     CollectorWatermark,
     CommandRegistrySnapshot,
     ConversationCaptureProfile,
+    ConversationNameObservation,
     EventClaim,
     EventDecision,
     EventLink,
     EventObservation,
     IngressReceiptRecord,
+    IdentityNameObservation,
     InstanceStatusTransition,
     PlatformActionObservation,
     ResponseRecord,
@@ -87,6 +89,166 @@ def _dump_list(items: list[Any], settings: Settings) -> list[dict[str, Any]]:
 
 def _dump_mapping(value: dict[str, Any], settings: Settings) -> dict[str, Any]:
     return sanitize_payload(value, _metadata_policy(settings)) or {}
+
+
+def _name_observation_id(kind: str, *parts: str) -> str:
+    return str(uuid5(NAMESPACE_URL, ":".join(("superlily-name", kind, *parts))))
+
+
+def _observed_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+async def _record_identity_name(
+    session: AsyncSession,
+    *,
+    payload: EventIn,
+    observation: EventObservation,
+    conversation_id: str,
+    name_kind: str,
+    name_value: str | None,
+) -> None:
+    if payload.sender is None or (value := _observed_name(name_value)) is None:
+        return
+
+    filters = [
+        IdentityNameObservation.platform == payload.instance.platform,
+        IdentityNameObservation.user_id == payload.sender.id,
+        IdentityNameObservation.name_kind == name_kind,
+        IdentityNameObservation.instance_id == observation.instance_id,
+    ]
+    if name_kind != "account_name":
+        filters.extend(
+            (
+                IdentityNameObservation.conversation_type == payload.conversation.type,
+                IdentityNameObservation.conversation_id == conversation_id,
+            )
+        )
+    latest = await session.scalar(
+        select(IdentityNameObservation)
+        .where(*filters)
+        .order_by(
+            IdentityNameObservation.observed_at.desc(),
+            IdentityNameObservation.recorded_at.desc(),
+            IdentityNameObservation.id.desc(),
+        )
+        .limit(1)
+    )
+    if latest is not None and latest.name_value == value:
+        return
+
+    session.add(
+        IdentityNameObservation(
+            id=_name_observation_id(
+                "identity",
+                "superlily_core",
+                "event_observation",
+                observation.id,
+                name_kind,
+            ),
+            platform=payload.instance.platform,
+            user_id=payload.sender.id,
+            conversation_type=payload.conversation.type,
+            conversation_id=conversation_id,
+            name_kind=name_kind,
+            name_value=value,
+            observed_at=payload.occurred_at,
+            instance_id=observation.instance_id,
+            source_system="superlily_core",
+            source_record_type="event_observation",
+            source_record_id=observation.id,
+            observation_method="message" if payload.message is not None else "event",
+            provenance_json={
+                "reported_source_event_id": payload.source_event_id,
+                "event_type": payload.event_type,
+            },
+        )
+    )
+
+
+async def _record_observed_names(
+    session: AsyncSession,
+    payload: EventIn,
+    observation: EventObservation,
+    conversation_id: str,
+) -> None:
+    if payload.sender is not None:
+        if payload.sender.account_name is not None or payload.sender.display_name is not None:
+            await _record_identity_name(
+                session,
+                payload=payload,
+                observation=observation,
+                conversation_id=conversation_id,
+                name_kind="account_name",
+                name_value=payload.sender.account_name,
+            )
+            await _record_identity_name(
+                session,
+                payload=payload,
+                observation=observation,
+                conversation_id=conversation_id,
+                name_kind="conversation_display_name",
+                name_value=payload.sender.display_name,
+            )
+        else:
+            await _record_identity_name(
+                session,
+                payload=payload,
+                observation=observation,
+                conversation_id=conversation_id,
+                name_kind="effective_display_name",
+                name_value=payload.sender.name,
+            )
+
+    conversation_name = _observed_name(payload.conversation.name)
+    if conversation_name is None:
+        return
+    latest = await session.scalar(
+        select(ConversationNameObservation)
+        .where(
+            ConversationNameObservation.platform == payload.instance.platform,
+            ConversationNameObservation.conversation_type == payload.conversation.type,
+            ConversationNameObservation.conversation_id == conversation_id,
+            ConversationNameObservation.instance_id == observation.instance_id,
+        )
+        .order_by(
+            ConversationNameObservation.observed_at.desc(),
+            ConversationNameObservation.recorded_at.desc(),
+            ConversationNameObservation.id.desc(),
+        )
+        .limit(1)
+    )
+    if latest is not None and latest.name_value == conversation_name:
+        return
+    session.add(
+        ConversationNameObservation(
+            id=_name_observation_id(
+                "conversation",
+                "superlily_core",
+                "event_observation",
+                observation.id,
+            ),
+            platform=payload.instance.platform,
+            conversation_type=payload.conversation.type,
+            conversation_id=conversation_id,
+            name_value=conversation_name,
+            observed_at=payload.occurred_at,
+            instance_id=observation.instance_id,
+            source_system="superlily_core",
+            source_record_type="event_observation",
+            source_record_id=observation.id,
+            observation_method=(
+                "conversation_inventory" if payload.event_type == "meta.conversation_name_snapshot" else "event"
+            ),
+            provenance_json={
+                "reported_source_event_id": payload.source_event_id,
+                "event_type": payload.event_type,
+            },
+        )
+    )
 
 
 async def _capture_policy_snapshot(
@@ -195,12 +357,16 @@ async def ensure_instance(
     }
     dialect = session.bind.dialect.name
     if dialect == "postgresql":
-        statement = postgresql_insert(BotInstance).values(**values).on_conflict_do_update(
-            index_elements=[BotInstance.id], set_=updates
+        statement = (
+            postgresql_insert(BotInstance)
+            .values(**values)
+            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates)
         )
     elif dialect == "sqlite":
-        statement = sqlite_insert(BotInstance).values(**values).on_conflict_do_update(
-            index_elements=[BotInstance.id], set_=updates
+        statement = (
+            sqlite_insert(BotInstance)
+            .values(**values)
+            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates)
         )
     else:
         record = await session.get(BotInstance, instance.instance_id)
@@ -333,8 +499,7 @@ async def _validate_existing_observation(
         )
     conflicts = (
         source.platform != payload.instance.platform
-        or source.event_type
-        != canonical_event_type(payload.instance.platform, payload.event_type)
+        or source.event_type != canonical_event_type(payload.instance.platform, payload.event_type)
         or source.conversation_type != payload.conversation.type
         or source.conversation_id != conversation_id
         or existing.sender_id != (payload.sender.id if payload.sender else None)
@@ -350,14 +515,17 @@ async def _validate_existing_observation(
     existing_native = existing.metadata_json.get("native_identity")
     incoming_native = payload.metadata.get("native_identity")
     if isinstance(existing_native, dict) and isinstance(incoming_native, dict):
-        for field in ("real_seq", "time", "user_id", "group_id", "msg_uid", "msg_random"):
+        for field in (
+            "real_seq",
+            "time",
+            "user_id",
+            "group_id",
+            "msg_uid",
+            "msg_random",
+        ):
             existing_value = _native_identity_scalar(existing_native, field)
             incoming_value = _native_identity_scalar(incoming_native, field)
-            if (
-                existing_value is not None
-                and incoming_value is not None
-                and existing_value != incoming_value
-            ):
+            if existing_value is not None and incoming_value is not None and existing_value != incoming_value:
                 conflicts = True
                 break
     if conflicts:
@@ -371,12 +539,9 @@ async def _validate_existing_observation(
         (
             existing.capture_status != capture_values["capture_status"],
             existing.sanitizer_version != capture_values["sanitizer_version"],
-            existing.collector_sanitizer_version
-            != capture_values["collector_sanitizer_version"],
-            existing.original_payload_sha256
-            != capture_values["original_payload_sha256"],
-            existing.original_payload_size_bytes
-            != capture_values["original_payload_size_bytes"],
+            existing.collector_sanitizer_version != capture_values["collector_sanitizer_version"],
+            existing.original_payload_sha256 != capture_values["original_payload_sha256"],
+            existing.original_payload_size_bytes != capture_values["original_payload_size_bytes"],
             existing.omitted_fields_json != capture_values["omitted_fields_json"],
             existing.platform_extra_json != capture_values["platform_extra_json"],
             existing.capture_reason != capture_values["capture_reason"],
@@ -392,9 +557,7 @@ async def _validate_existing_observation(
     if len(stored_actions) != len(payload.actions):
         capture_conflicts = True
     else:
-        for action_index, (stored, incoming) in enumerate(
-            zip(stored_actions, payload.actions, strict=True)
-        ):
+        for action_index, (stored, incoming) in enumerate(zip(stored_actions, payload.actions, strict=True)):
             target_conversation = incoming.target_conversation or payload.conversation
             target_conversation_id = canonical_conversation_id(
                 payload.instance.platform,
@@ -413,10 +576,8 @@ async def _validate_existing_observation(
                 or stored.operation != incoming.operation
                 or stored.actor_principal_id != incoming.actor_principal_id
                 or stored.subject_principal_id != incoming.subject_principal_id
-                or stored.target_reported_source_event_id
-                != incoming.target_source_event_id
-                or stored.target_platform_message_id
-                != incoming.target_platform_message_id
+                or stored.target_reported_source_event_id != incoming.target_source_event_id
+                or stored.target_platform_message_id != incoming.target_platform_message_id
                 or stored.target_conversation_id != target_conversation_id
                 or stored.target_conversation_type != target_conversation.type
                 or stored.value_json != _dump_mapping(incoming.value, settings)
@@ -467,8 +628,7 @@ async def ensure_source_event(
                 window = timedelta(seconds=correlation_window_seconds)
                 candidates = (
                     await session.scalars(
-                        candidate_query
-                        .where(
+                        candidate_query.where(
                             SourceEvent.occurred_at >= payload.occurred_at - window,
                             SourceEvent.occurred_at <= payload.occurred_at + window,
                         )
@@ -477,14 +637,10 @@ async def ensure_source_event(
                     )
                 ).all()
         else:
-            candidates = (
-                await session.scalars(candidate_query.order_by(SourceEvent.first_received_at))
-            ).all()
+            candidates = (await session.scalars(candidate_query.order_by(SourceEvent.first_received_at))).all()
         for candidate in candidates:
             candidate_observations = (
-                await session.scalars(
-                    select(EventObservation).where(EventObservation.source_event_id == candidate.id)
-                )
+                await session.scalars(select(EventObservation).where(EventObservation.source_event_id == candidate.id))
             ).all()
             candidate_time_values = [
                 value
@@ -492,9 +648,9 @@ async def ensure_source_event(
                 if (value := _native_identity_time(item.metadata_json)) is not None
             ]
             candidate_times = set(candidate_time_values)
-            complete_candidate_time = bool(candidate_observations) and len(
-                candidate_time_values
-            ) == len(candidate_observations)
+            complete_candidate_time = bool(candidate_observations) and len(candidate_time_values) == len(
+                candidate_observations
+            )
             if len(candidate_times) > 1:
                 time_conflicts += 1
                 continue
@@ -516,9 +672,7 @@ async def ensure_source_event(
                     candidate_occurred_at = candidate_occurred_at.replace(tzinfo=timezone.utc)
                 if incoming_occurred_at.tzinfo is None:
                     incoming_occurred_at = incoming_occurred_at.replace(tzinfo=timezone.utc)
-                if abs((candidate_occurred_at - incoming_occurred_at).total_seconds()) > (
-                    correlation_window_seconds
-                ):
+                if abs((candidate_occurred_at - incoming_occurred_at).total_seconds()) > (correlation_window_seconds):
                     time_conflicts += 1
                     continue
             compatible.append(candidate)
@@ -706,8 +860,7 @@ def _command_eligible(observation: EventObservation) -> bool:
         if segment_type == "at":
             target = _segment_target_id(segment)
             to_observing_bot = target == str(observation.bot_id) and bool(
-                observation.metadata_json.get("to_me")
-                or observation.metadata_json.get("is_tome")
+                observation.metadata_json.get("to_me") or observation.metadata_json.get("is_tome")
             )
             if to_observing_bot:
                 continue
@@ -755,13 +908,14 @@ async def _reply_context(
 
     from_observation_ids = {item.from_observation_id for item in links}
     from_observations = (
-        await session.scalars(
-            select(EventObservation).where(EventObservation.id.in_(from_observation_ids))
-        )
+        await session.scalars(select(EventObservation).where(EventObservation.id.in_(from_observation_ids)))
     ).all()
     link_instance_by_observation = {item.id: item.instance_id for item in from_observations}
     target_message_keys = {
-        (link_instance_by_observation.get(item.from_observation_id), item.target_platform_message_id)
+        (
+            link_instance_by_observation.get(item.from_observation_id),
+            item.target_platform_message_id,
+        )
         for item in links
         if item.target_platform_message_id and link_instance_by_observation.get(item.from_observation_id)
     }
@@ -925,18 +1079,23 @@ async def _recompute_event_decision_unlocked(
         elif reply_context.status in {"unresolved", "ambiguous", "conflict"}:
             mentioned_platform_ids = set()
     mentioned_bot_instances = {
-        bot_id_to_instance[target]
-        for target in mentioned_platform_ids
-        if target in bot_id_to_instance
+        bot_id_to_instance[target] for target in mentioned_platform_ids if target in bot_id_to_instance
     }
 
     ordered_observations = sorted(
         observations,
-        key=lambda item: (0 if item.instance_id == "lily-command" else 1, item.received_at, item.id),
+        key=lambda item: (
+            0 if item.instance_id == "lily-command" else 1,
+            item.received_at,
+            item.id,
+        ),
     )
     preferred = next(
         (item for item in ordered_observations if item.instance_id == "lily-command" and item.text),
-        next((item for item in ordered_observations if item.text), ordered_observations[0]),
+        next(
+            (item for item in ordered_observations if item.text),
+            ordered_observations[0],
+        ),
     )
     aggregate_metadata = {
         "to_me": any(bool(item.metadata_json.get("to_me")) for item in observations),
@@ -971,9 +1130,7 @@ async def _recompute_event_decision_unlocked(
         command_registry_error=registry_error,
         command_registry_runtime=registry_runtime,
         sender_bot_instance_id=(
-            bot_id_to_instance.get(str(preferred.sender_id))
-            if preferred.sender_id is not None
-            else None
+            bot_id_to_instance.get(str(preferred.sender_id)) if preferred.sender_id is not None else None
         ),
         conversation_mode=settings.conversation_mode(
             source.platform,
@@ -1222,14 +1379,11 @@ async def _resolve_stored_action(
         target_filters.extend(
             (
                 SourceEvent.id == action.target_reported_source_event_id,
-                EventObservation.reported_source_event_id
-                == action.target_reported_source_event_id,
+                EventObservation.reported_source_event_id == action.target_reported_source_event_id,
             )
         )
     if action.target_platform_message_id:
-        target_filters.append(
-            EventObservation.platform_message_id == action.target_platform_message_id
-        )
+        target_filters.append(EventObservation.platform_message_id == action.target_platform_message_id)
     if not target_filters:
         action.target_source_event_id = None
         action.resolver_status = "unavailable"
@@ -1304,15 +1458,11 @@ async def _resolve_actions_targeting_observation(
     source: SourceEvent,
 ) -> None:
     hints = [
-        PlatformActionObservation.target_reported_source_event_id
-        == observation.reported_source_event_id,
+        PlatformActionObservation.target_reported_source_event_id == observation.reported_source_event_id,
         PlatformActionObservation.target_reported_source_event_id == source.id,
     ]
     if observation.platform_message_id:
-        hints.append(
-            PlatformActionObservation.target_platform_message_id
-            == observation.platform_message_id
-        )
+        hints.append(PlatformActionObservation.target_platform_message_id == observation.platform_message_id)
     candidates = (
         await session.scalars(
             select(PlatformActionObservation)
@@ -1370,8 +1520,7 @@ async def _advance_collector_watermark(
             .where(
                 IngressReceiptRecord.instance_id == receipt.instance_id,
                 IngressReceiptRecord.spool_id == receipt.spool_id,
-                IngressReceiptRecord.collector_sequence
-                > watermark.highest_contiguous_sequence,
+                IngressReceiptRecord.collector_sequence > watermark.highest_contiguous_sequence,
             )
             .order_by(IngressReceiptRecord.collector_sequence)
         )
@@ -1393,9 +1542,7 @@ async def _ensure_ingress_receipt_locked(
     payload: EventIn,
 ) -> IngressReceiptRecord:
     existing = await session.scalar(
-        select(IngressReceiptRecord).where(
-            IngressReceiptRecord.observation_id == observation.id
-        )
+        select(IngressReceiptRecord).where(IngressReceiptRecord.observation_id == observation.id)
     )
     ingress = payload.ingress
     if existing is not None:
@@ -1417,7 +1564,10 @@ async def _ensure_ingress_receipt_locked(
             normalized_actual_time = normalized_actual_time.replace(tzinfo=timezone.utc)
         if normalized_expected_time is not None and normalized_expected_time.tzinfo is None:
             normalized_expected_time = normalized_expected_time.replace(tzinfo=timezone.utc)
-        if (*actual[:3], normalized_actual_time) != (*expected[:3], normalized_expected_time):
+        if (*actual[:3], normalized_actual_time) != (
+            *expected[:3],
+            normalized_expected_time,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="event replay changed its durable spool binding",
@@ -1475,9 +1625,7 @@ async def ingress_receipt_view(
     duplicate: bool,
 ) -> dict[str, Any]:
     receipt = await session.scalar(
-        select(IngressReceiptRecord).where(
-            IngressReceiptRecord.observation_id == observation.id
-        )
+        select(IngressReceiptRecord).where(IngressReceiptRecord.observation_id == observation.id)
     )
     assert receipt is not None
     watermark = (
@@ -1500,12 +1648,8 @@ async def ingress_receipt_view(
         "sequence": receipt.collector_sequence,
         "record_sha256": receipt.record_sha256,
         "committed_at": receipt.committed_at,
-        "highest_contiguous_sequence": (
-            watermark.highest_contiguous_sequence if watermark is not None else None
-        ),
-        "highest_seen_sequence": (
-            watermark.highest_seen_sequence if watermark is not None else None
-        ),
+        "highest_contiguous_sequence": (watermark.highest_contiguous_sequence if watermark is not None else None),
+        "highest_seen_sequence": (watermark.highest_seen_sequence if watermark is not None else None),
     }
 
 
@@ -1530,9 +1674,7 @@ async def ingest_event(
         payload,
     )
     if existing:
-        await _validate_existing_observation(
-            session, existing, payload, fingerprint, conversation_id, settings
-        )
+        await _validate_existing_observation(session, existing, payload, fingerprint, conversation_id, settings)
         await _ensure_ingress_receipt(session, existing, payload)
         await session.commit()
         return existing, True
@@ -1547,9 +1689,7 @@ async def ingest_event(
             payload,
         )
         if existing:
-            await _validate_existing_observation(
-                session, existing, payload, fingerprint, conversation_id, settings
-            )
+            await _validate_existing_observation(session, existing, payload, fingerprint, conversation_id, settings)
             await _ensure_ingress_receipt(session, existing, payload)
             await session.commit()
             return existing, True
@@ -1600,6 +1740,7 @@ async def ingest_event(
         instance.last_event_at = payload.occurred_at
         try:
             await session.flush()
+            await _record_observed_names(session, payload, record, conversation_id)
             await session.execute(
                 update(ResponseRecord)
                 .where(
@@ -1654,11 +1795,9 @@ async def ingest_event(
             if payload.ingress is not None:
                 collision = await session.scalar(
                     select(IngressReceiptRecord).where(
-                        IngressReceiptRecord.instance_id
-                        == payload.instance.instance_id,
+                        IngressReceiptRecord.instance_id == payload.instance.instance_id,
                         IngressReceiptRecord.spool_id == payload.ingress.spool_id,
-                        IngressReceiptRecord.collector_sequence
-                        == payload.ingress.sequence,
+                        IngressReceiptRecord.collector_sequence == payload.ingress.sequence,
                     )
                 )
                 if collision is not None:
@@ -1709,10 +1848,12 @@ async def ingest_response(
     if trigger_source_event_id:
         reported_candidates = (
             await session.scalars(
-                select(EventObservation).where(
-                EventObservation.instance_id == payload.instance.instance_id,
-                EventObservation.reported_source_event_id == trigger_source_event_id,
-                ).limit(2)
+                select(EventObservation)
+                .where(
+                    EventObservation.instance_id == payload.instance.instance_id,
+                    EventObservation.reported_source_event_id == trigger_source_event_id,
+                )
+                .limit(2)
             )
         ).all()
         if len(reported_candidates) > 1:
@@ -1746,9 +1887,7 @@ async def ingest_response(
                 )
             trigger_source = reported_source
             trigger_source_event_id = reported_source.id
-            trigger_resolution_status = (
-                "reported_source" if reported_observation is not None else "canonical_source"
-            )
+            trigger_resolution_status = "reported_source" if reported_observation is not None else "canonical_source"
         else:
             trigger_resolution_status = "unresolved"
 
@@ -1985,9 +2124,7 @@ async def _ensure_claim_decision(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        decision = await session.scalar(
-            select(EventDecision).where(EventDecision.source_event_id == source.id)
-        )
+        decision = await session.scalar(select(EventDecision).where(EventDecision.source_event_id == source.id))
     return decision
 
 
@@ -2014,9 +2151,7 @@ async def acknowledge_event_claim(
     claim_id: str,
     authenticated_instance: str,
 ) -> tuple[EventClaim, bool]:
-    record = await session.scalar(
-        select(EventClaim).where(EventClaim.id == claim_id).with_for_update()
-    )
+    record = await session.scalar(select(EventClaim).where(EventClaim.id == claim_id).with_for_update())
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="claim_id not found")
     if record.instance_id != authenticated_instance:
@@ -2045,9 +2180,7 @@ async def evaluate_event_claim(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventClaim, bool, EventObservation, bool]:
-    observation, event_duplicate = await ingest_event(
-        session, payload, idempotency_key, settings
-    )
+    observation, event_duplicate = await ingest_event(session, payload, idempotency_key, settings)
     source = await session.get(SourceEvent, observation.source_event_id)
     assert source is not None
     existing = await session.scalar(
@@ -2123,15 +2256,8 @@ async def evaluate_event_claim(
     # install and acknowledge suppression before the target takes the claim
     # lock.  Safety does not depend on this wait: a timeout still becomes an
     # abstain.  It only makes the healthy-path canary consistently observable.
-    if (
-        enforced
-        and action == "allow"
-        and settings.claim_coalesce_milliseconds > 0
-    ):
-        deadline = (
-            asyncio.get_running_loop().time()
-            + min(settings.claim_coalesce_milliseconds, 500) / 1000
-        )
+    if enforced and action == "allow" and settings.claim_coalesce_milliseconds > 0:
+        deadline = asyncio.get_running_loop().time() + min(settings.claim_coalesce_milliseconds, 500) / 1000
         while asyncio.get_running_loop().time() < deadline:
             observed_peers = set(
                 (
@@ -2225,10 +2351,7 @@ async def evaluate_event_claim(
                 "enforced_deny_instance_ids": sorted(enforced_deny_instance_ids),
                 "acknowledged_deny_instance_ids": sorted(acknowledged_deny_instance_ids),
             }
-            if (
-                not observed_peer_instance_ids
-                or acknowledged_deny_instance_ids != observed_peer_instance_ids
-            ):
+            if not observed_peer_instance_ids or acknowledged_deny_instance_ids != observed_peer_instance_ids:
                 action = "abstain"
                 reason = "claim_peer_suppressions_not_acknowledged"
                 ready = False

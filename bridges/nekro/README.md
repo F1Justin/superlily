@@ -1,5 +1,14 @@
 # Nekro bridge
 
+## 1.2.0 QQ 名称观测
+
+1.2.0 分别上报 Nekro 已有的 `sender_name`（QQ 账号昵称）与
+`sender_nickname`（群内显示名），并给群消息补充已观测群名。启动后立即拉取 OneBot
+群清单，之后默认每 6 小时重查；OneBot 尚未连接时每 30 秒短轮询。清单快照复用 durable
+reporter，不触发模型、matcher 或 QQ 发送。
+
+- `GROUP_INVENTORY_SECONDS=21600`
+
 ## 1.0.0 Core-owned Agent product adapter
 
 1.0.0 does not add another Nekro command catalog or planner. In an exact

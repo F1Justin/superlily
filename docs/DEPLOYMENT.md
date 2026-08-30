@@ -1311,3 +1311,40 @@ post-import 备份位于：
 本次所有比较均完全相等。隔离恢复库作为演练证据保留；容器 `/tmp` 中可重建的 dump 副本
 已删除以释放 2.45 GB，主机 `0600` 备份未删除。任何后续清理旧库或该备份都不属于本
 runbook，必须另行取得明确授权。
+
+## 23. QQ 名称观测历史生产部署
+
+2026-08-31 部署 `0027_name_observation_history`，不修改 H4
+`archive.message_timeline_v2`、conversation mappings、ChatExporter 代码或其权限。Core
+镜像为 `sha256:384f23c1c0dd531ec8a8678ca88372b150fefe707526f207642cb5f6b62076a6`；
+Lily bridge 为 0.7.0，Nekro bridge 为 1.2.0。两个 bridge 都把账号昵称、群内显示名和
+群名称分开上报，并通过原 durable reporter 每 6 小时观测一次群清单。
+
+生产历史回填 batch `production-name-history-20260831` 全部 completed：
+
+| scope | selected | written |
+| --- | ---: | ---: |
+| Core 旧 event observation | 7,251 | 7,251（含 38 条群名） |
+| Nekro H2 archive | 40,101 | 40,101 |
+| Lily archive join snapshot | 3,841 | 3,841 |
+| Nekro post-cutover 精确源 | 345,098 | 7,376 |
+
+同一 snapshot 幂等重跑未增加行。真实 QQ 样本跨两个群返回 account、群内 display 和旧
+effective 三种语义，索引扫描 123 行执行 0.146 ms。Lily 启动时曾在旧 Core 合同上积累
+1,643 条 `extra_forbidden` quarantine；完整 spool 备份后只把这批恢复为 pending，现有
+worker 全部取得 Core receipt，最终 pending=0、quarantine=0。没有通过 `/v1/events`
+伪造 archive 回放。
+
+备份与回滚证据：
+
+- `/home/justin/backups/superlily-name-history-20260831/` 保存旧 Core 镜像 ID、迁移前
+  schema 和重放后的名称表 custom dump；最终名称 dump SHA-256 为
+  `6273f9b78abcd6f6f868d897d326279131d4e550beffa52375fbe651d2aa2df3`；
+- `/home/justin/lily/backups/name-history-20260831/` 保存 0.6.0 Git archive、0.7.0
+  预部署包和重排 quarantine 前的完整 SQLite spool；
+- `/home/justin/nekro/backups/name-history-20260831/` 保存 1.1.1 bridge 包。
+
+优先回滚 bridge，保留 `0027` 新表和已写证据。若必须回滚旧 Core，先停止两个 bridge
+的新字段上报，再备份名称表、执行 Alembic downgrade 到 `0026`，最后恢复旧镜像；旧
+Core 不认识数据库中的 0027 revision，不能只换镜像。查询合同与时间语义见
+[`NAME_HISTORY.md`](NAME_HISTORY.md)。

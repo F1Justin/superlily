@@ -47,9 +47,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
             ("uq_event_claim_enforced_allow_owner",),
         ).fetchone()
-        claim_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(event_claims)").fetchall()
-        }
+        claim_columns = {row[1] for row in connection.execute("PRAGMA table_info(event_claims)").fetchall()}
         tool_tables = {
             row[0]
             for row in connection.execute(
@@ -57,9 +55,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             ).fetchall()
         }
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        observation_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(event_observations)").fetchall()
-        }
+        observation_columns = {row[1] for row in connection.execute("PRAGMA table_info(event_observations)").fetchall()}
         collection_tables = {
             row[0]
             for row in connection.execute(
@@ -68,29 +64,21 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "'ingress_receipts', 'collector_watermarks')"
             ).fetchall()
         }
-        invocation_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_invocations)").fetchall()
-        }
+        invocation_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_invocations)").fetchall()}
         transition_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name = 'tool_invocation_transitions'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'tool_invocation_transitions'"
             ).fetchall()
         }
-        attempt_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_attempts)").fetchall()
-        }
+        attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_attempts)").fetchall()}
         attempt_event_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name = 'tool_attempt_events'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'tool_attempt_events'"
             ).fetchall()
         }
-        descriptor_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()
-        }
+        descriptor_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()}
         descriptor_triggers = {
             row[0]
             for row in connection.execute(
@@ -98,9 +86,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
                 "AND tbl_name IN ('tool_descriptors', 'tool_descriptor_lifecycle_events')"
             ).fetchall()
         }
-        provider_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()
-        }
+        provider_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()}
         provider_triggers = {
             row[0]
             for row in connection.execute(
@@ -111,22 +97,19 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         control_tables = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name LIKE 'control_plane_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'control_plane_%'"
             ).fetchall()
         }
         control_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name LIKE 'control_plane_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name LIKE 'control_plane_%'"
             ).fetchall()
         }
         rollout_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name LIKE 'tool_rollout_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name LIKE 'tool_rollout_%'"
             ).fetchall()
         }
         confirmation_artifact_triggers = {
@@ -147,58 +130,69 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             ).fetchall()
         }
         render_artifact_columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(render_artifacts)").fetchall()
+            row[1] for row in connection.execute("PRAGMA table_info(render_artifacts)").fetchall()
         }
         render_delivery_columns = {
-            row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(render_delivery_attempts)"
-            ).fetchall()
+            row[1] for row in connection.execute("PRAGMA table_info(render_delivery_attempts)").fetchall()
         }
         render_plan_columns = {
-            row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(render_delivery_plans)"
-            ).fetchall()
+            row[1] for row in connection.execute("PRAGMA table_info(render_delivery_plans)").fetchall()
         }
         render_intent_columns = {
-            row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(render_delivery_intents)"
-            ).fetchall()
+            row[1] for row in connection.execute("PRAGMA table_info(render_delivery_intents)").fetchall()
         }
         render_delivery_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name = 'render_delivery_attempts'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'render_delivery_attempts'"
             ).fetchall()
         }
         agent_tables = {
             row[0]
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
-                    "('agent_model_profiles', 'agent_runs', 'agent_run_events', "
-                    "'agent_run_attempts', 'agent_tool_proposals', "
-                    "'agent_tool_loops', 'agent_tool_loop_events', "
-                        "'agent_tool_continuations', 'agent_interactions', "
-                        "'agent_interaction_events', 'agent_text_delivery_intents', "
-                        "'agent_text_delivery_events')"
+                "('agent_model_profiles', 'agent_runs', 'agent_run_events', "
+                "'agent_run_attempts', 'agent_tool_proposals', "
+                "'agent_tool_loops', 'agent_tool_loop_events', "
+                "'agent_tool_continuations', 'agent_interactions', "
+                "'agent_interaction_events', 'agent_text_delivery_intents', "
+                "'agent_text_delivery_events')"
             ).fetchall()
         }
         agent_triggers = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name LIKE 'agent_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name LIKE 'agent_%'"
             ).fetchall()
         }
-        agent_run_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(agent_runs)").fetchall()
+        agent_run_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_runs)").fetchall()}
+        name_history_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+                "('identity_name_observations', 'conversation_name_observations', "
+                "'name_observation_backfill_batches')"
+            ).fetchall()
+        }
+        name_history_views = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'view' AND name IN "
+                "('archive_identity_name_timeline_v1', "
+                "'archive_conversation_name_timeline_v1')"
+            ).fetchall()
         }
 
-    assert version == ("0026_history_timeline_export",)
+    assert version == ("0027_name_observation_history",)
+    assert name_history_tables == {
+        "identity_name_observations",
+        "conversation_name_observations",
+        "name_observation_backfill_batches",
+    }
+    assert name_history_views == {
+        "archive_identity_name_timeline_v1",
+        "archive_conversation_name_timeline_v1",
+    }
     assert index_sql is not None
     assert "acknowledged_at" in claim_columns
     normalized_sql = " ".join(index_sql[0].lower().split())
@@ -456,16 +450,12 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     )
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        provider_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()
-        }
+        provider_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_providers)").fetchall()}
         provider_triggers = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'trigger' "
             "AND tbl_name IN ('tool_providers', 'tool_provider_lifecycle_events')"
         ).fetchall()
-        descriptor_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()
-        }
+        descriptor_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()}
     assert version == ("0015b_descriptor_mutations",)
     assert "resource_version" not in provider_columns
     assert provider_triggers == []
@@ -484,13 +474,10 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
         control_tables = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name LIKE 'control_plane_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'control_plane_%'"
             ).fetchall()
         }
-        descriptor_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()
-        }
+        descriptor_columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_descriptors)").fetchall()}
         descriptor_triggers = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'trigger' "
             "AND tbl_name IN ('tool_descriptors', 'tool_descriptor_lifecycle_events')"
@@ -516,16 +503,17 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         control_tables = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name LIKE 'control_plane_%'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'control_plane_%'"
         ).fetchall()
         attempt_tables = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name IN ('tool_attempts', 'tool_attempt_events')"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tool_attempts', 'tool_attempt_events')"
         ).fetchall()
     assert version == ("0015_tool_attempts",)
     assert control_tables == []
-    assert {row[0] for row in attempt_tables} == {"tool_attempts", "tool_attempt_events"}
+    assert {row[0] for row in attempt_tables} == {
+        "tool_attempts",
+        "tool_attempt_events",
+    }
 
     subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "0014_tool_invocations"],
@@ -585,9 +573,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     )
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        observation_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(event_observations)").fetchall()
-        }
+        observation_columns = {row[1] for row in connection.execute("PRAGMA table_info(event_observations)").fetchall()}
         collection_tables = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
             "('conversation_capture_profiles', 'platform_action_observations', "
@@ -628,7 +614,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        assert version == ("0026_history_timeline_export",)
+        assert version == ("0027_name_observation_history",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -681,9 +667,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         try:
             async with engine.connect() as connection:
                 version_table = await connection.scalar(
-                    text(
-                        "SELECT to_regclass(current_schema() || '.alembic_version') IS NOT NULL"
-                    )
+                    text("SELECT to_regclass(current_schema() || '.alembic_version') IS NOT NULL")
                 )
                 version = None
                 if version_table:
@@ -810,7 +794,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0026_history_timeline_export"
+        assert version == "0027_name_observation_history"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -926,6 +910,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0026_history_timeline_export"
+        assert asyncio.run(snapshot())[0] == "0027_name_observation_history"
     finally:
         alembic("downgrade", "base", check=False)

@@ -8,7 +8,14 @@ observation or idempotency key.
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .sanitization import replace_nul
 
@@ -59,6 +66,8 @@ class ConversationRef(WireModel):
 
 class SenderRef(WireModel):
     id: str = Field(min_length=1, max_length=256)
+    account_name: str | None = Field(default=None, max_length=512)
+    display_name: str | None = Field(default=None, max_length=512)
     name: str | None = Field(default=None, max_length=512)
     roles: list[str] = Field(default_factory=list, max_length=32)
 

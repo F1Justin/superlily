@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Any
 from uuid import uuid4
 
+import httpx
 from nonebot import get_bots, get_driver, get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import Bot as OneBotBot
 from nonebot.adapters.onebot.v11 import Event as OneBotEvent
@@ -38,7 +39,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.6.0"
+BRIDGE_VERSION = "0.7.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -53,6 +54,7 @@ class Config(BaseModel):
     lily_core_bot_id: Annotated[str, BeforeValidator(str)] = ""
     lily_core_role: str = "command"
     lily_core_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
+    lily_core_group_inventory_seconds: int = Field(default=21_600, ge=300, le=86_400)
     lily_core_queue_size: int = Field(default=1000, ge=10, le=10000)
     lily_core_timeout_seconds: float = Field(default=0.5, ge=0.05, le=5)
     lily_core_claim_timeout_seconds: float = Field(default=10.0, ge=0.05, le=30)
@@ -61,16 +63,10 @@ class Config(BaseModel):
     lily_core_report_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=5)
     lily_core_claim_attempts: int = Field(default=2, ge=1, le=5)
     lily_core_claim_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=5)
-    lily_core_spool_path: str = (
-        "/home/justin/lily/data/superlily-core/ingress-spool.sqlite3"
-    )
-    lily_core_spool_quota_bytes: int = Field(
-        default=268_435_456, ge=1_048_576, le=4_294_967_296
-    )
+    lily_core_spool_path: str = "/home/justin/lily/data/superlily-core/ingress-spool.sqlite3"
+    lily_core_spool_quota_bytes: int = Field(default=268_435_456, ge=1_048_576, le=4_294_967_296)
     lily_core_spool_retention_seconds: int = Field(default=86_400, ge=0, le=604_800)
-    lily_core_spool_max_record_bytes: int = Field(
-        default=1_048_576, ge=65_536, le=8_388_608
-    )
+    lily_core_spool_max_record_bytes: int = Field(default=1_048_576, ge=65_536, le=8_388_608)
     lily_core_include_raw: bool = False
     lily_core_claim_enabled: bool = False
     lily_core_phase4_commands_enabled: bool = False
@@ -112,6 +108,8 @@ event_contexts: dict[int, dict[str, Any]] = {}
 api_started: dict[int, float] = {}
 blocked_api_calls: set[int] = set()
 heartbeat_task: asyncio.Task | None = None
+group_inventory_task: asyncio.Task | None = None
+group_names: dict[str, str] = {}
 heartbeat_failures = 0
 last_heartbeat_error: str | None = None
 last_runtime_snapshot_hash: str | None = None
@@ -135,12 +133,98 @@ def instance(bot_id: str | None = None) -> dict[str, Any]:
     }
 
 
+def _group_name(value: Any) -> str | None:
+    item = value if isinstance(value, dict) else model_dict(value)
+    name = item.get("group_name") or item.get("name")
+    return str(name).strip() if name is not None and str(name).strip() else None
+
+
+async def _conversation_with_name(
+    bot: OneBotBot,
+    conversation: dict[str, Any],
+    *,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    if conversation.get("type") != "group":
+        return conversation
+    group_id = str(conversation["id"])
+    name = None if refresh else group_names.get(group_id)
+    if name is None:
+        try:
+            try:
+                info = await bot.get_group_info(group_id=int(group_id), no_cache=False)
+            except TypeError:
+                info = await bot.get_group_info(group_id=int(group_id))
+            name = _group_name(info)
+            if name is not None:
+                group_names[group_id] = name
+        except Exception:
+            logger.opt(exception=True).debug(f"Lily Core could not refresh QQ group name for {group_id}")
+    return {**conversation, "name": name}
+
+
+def _group_name_snapshot(bot: OneBotBot, group_id: str, name: str, observed_at: str) -> ReportItem:
+    event_id = f"qq:{bot.self_id}:meta:conversation-name:{group_id}:{stable_key(name, observed_at)}"
+    payload = {
+        "schema_version": "1.0",
+        "source_event_id": event_id,
+        "instance": instance(bot.self_id),
+        "event_type": "meta.conversation_name_snapshot",
+        "conversation": {"id": group_id, "type": "group", "name": name},
+        "sender": None,
+        "message": None,
+        "references": [],
+        "occurred_at": observed_at,
+        "raw": None,
+        "metadata": {"observation_method": "onebot_get_group_list"},
+    }
+    return ReportItem(
+        "/v1/events",
+        payload,
+        stable_key(plugin_config.lily_core_instance_id, event_id),
+    )
+
+
+async def group_inventory_loop() -> None:
+    while True:
+        try:
+            bots = [bot for bot in get_bots().values() if isinstance(bot, OneBotBot)]
+            if not bots:
+                await asyncio.sleep(min(30, plugin_config.lily_core_group_inventory_seconds))
+                continue
+            for bot in bots:
+                observed_at = utc_iso()
+                try:
+                    groups = await bot.get_group_list(no_cache=False)
+                except TypeError:
+                    groups = await bot.get_group_list()
+                for raw_group in groups:
+                    item = raw_group if isinstance(raw_group, dict) else model_dict(raw_group)
+                    group_id = item.get("group_id") or item.get("id")
+                    name = _group_name(item)
+                    if group_id is None or name is None:
+                        continue
+                    canonical_id = str(group_id)
+                    group_names[canonical_id] = name
+                    reporter.enqueue(_group_name_snapshot(bot, canonical_id, name, observed_at))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning("Lily Core group-name inventory failed; the loop will continue")
+        await asyncio.sleep(plugin_config.lily_core_group_inventory_seconds)
+
+
 async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, Any], str] | None:
     raw = model_dict(event)
     if raw.get("post_type") == "message_sent":
         return None
     conversation = conversation_from_event(event)
     event_name = event.get_event_name() if hasattr(event, "get_event_name") else "event"
+    conversation = await _conversation_with_name(
+        bot,
+        conversation,
+        refresh=event_name == "notice.notify.group_name",
+    )
     action_payload = platform_action_event_payload(
         raw,
         conversation,
@@ -171,6 +255,8 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, 
     if sender_id is not None:
         sender = {
             "id": str(sender_id),
+            "account_name": getattr(sender_obj, "nickname", None),
+            "display_name": (getattr(sender_obj, "card", None) or getattr(sender_obj, "nickname", None)),
             "name": getattr(sender_obj, "card", None) or getattr(sender_obj, "nickname", None),
             "roles": [str(getattr(sender_obj, "role", "member"))],
         }
@@ -279,9 +365,7 @@ async def observe_api_result(
         if segment.get("type") != "reply":
             continue
         segment_data = segment.get("data", {}) or {}
-        reply_to_platform_message_id = str(
-            segment_data.get("id") or segment_data.get("message_id") or ""
-        ) or None
+        reply_to_platform_message_id = str(segment_data.get("id") or segment_data.get("message_id") or "") or None
         break
     conversation = conversation_from_api(data)
     event_context = _active_event_context()
@@ -315,12 +399,8 @@ async def observe_api_result(
         "metadata": {
             "claim_send_suppressed": blocked,
             "claim_reason": event_context.get("claim_reason") if blocked else None,
-            "claim_acknowledged": (
-                event_context.get("claim_acknowledged") if blocked else None
-            ),
-            "trigger_attribution": (
-                "event_context" if event_context.get("source_event_id") else None
-            ),
+            "claim_acknowledged": (event_context.get("claim_acknowledged") if blocked else None),
+            "trigger_attribution": ("event_context" if event_context.get("source_event_id") else None),
             "completion_status": completion_status,
         },
     }
@@ -359,9 +439,7 @@ _PHASE4_HELP_COMMANDS = [
 
 def _phase4_canary_groups() -> frozenset[str]:
     return frozenset(
-        value.strip()
-        for value in plugin_config.lily_core_phase4_command_canary_groups.split(",")
-        if value.strip()
+        value.strip() for value in plugin_config.lily_core_phase4_command_canary_groups.split(",") if value.strip()
     )
 
 
@@ -413,9 +491,7 @@ async def _send_phase4_delivery(
             outcome = "succeeded"
             safe_error_code = None
     except Exception:
-        logger.opt(exception=True).warning(
-            "Phase 4 command delivery has unknown platform completion"
-        )
+        logger.opt(exception=True).warning("Phase 4 command delivery has unknown platform completion")
     try:
         recorded = await phase4_command_client.complete_delivery(
             instance_id=plugin_config.lily_core_instance_id,
@@ -427,9 +503,7 @@ async def _send_phase4_delivery(
         if not recorded:
             logger.warning("Phase 4 command delivery completion was not accepted by Core")
     except Exception:
-        logger.opt(exception=True).warning(
-            "Phase 4 command delivery completion could not be recorded"
-        )
+        logger.opt(exception=True).warning("Phase 4 command delivery completion could not be recorded")
 
 
 async def _prepare_phase4_tool(
@@ -493,11 +567,7 @@ async def handle_phase4_wolfram(
     ):
         return
     expression = msg.extract_plain_text().strip()
-    if (
-        not expression
-        or expression.casefold() in _PHASE4_HELP_FLAGS
-        or any(segment.type == "image" for segment in msg)
-    ):
+    if not expression or expression.casefold() in _PHASE4_HELP_FLAGS or any(segment.type == "image" for segment in msg):
         return
     try:
         prepared = await _prepare_phase4_tool(
@@ -586,11 +656,7 @@ async def heartbeat_loop() -> None:
     while True:
         try:
             bots = list(get_bots().values())
-            bot_id = (
-                str(bots[0].self_id)
-                if bots
-                else str(plugin_config.lily_core_bot_id or "unknown")
-            )
+            bot_id = str(bots[0].self_id) if bots else str(plugin_config.lily_core_bot_id or "unknown")
             payload = {
                 "schema_version": "1.0",
                 "instance": instance(bot_id),
@@ -642,39 +708,40 @@ async def heartbeat_loop() -> None:
                         last_runtime_snapshot_hash = runtime_snapshot["snapshot_hash"]
                         last_runtime_snapshot_sent_at = now
             except Exception:
-                logger.opt(exception=True).warning(
-                    "Lily Core runtime command snapshot failed open"
-                )
+                logger.opt(exception=True).warning("Lily Core runtime command snapshot failed open")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             heartbeat_failures += 1
             last_heartbeat_error = type(exc).__name__
-            logger.opt(exception=True).error(
-                "Lily Core heartbeat iteration failed; the loop will continue"
-            )
+            logger.opt(exception=True).error("Lily Core heartbeat iteration failed; the loop will continue")
         await asyncio.sleep(plugin_config.lily_core_heartbeat_seconds)
 
 
 @driver.on_startup
 async def start_bridge() -> None:
-    global heartbeat_task
+    global heartbeat_task, group_inventory_task
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because LILY_CORE_TOKEN is empty")
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="lily-core-heartbeat")
+    group_inventory_task = asyncio.create_task(group_inventory_loop(), name="lily-core-group-inventory")
     logger.info("Lily Core bridge started with fail-open durable event capture")
 
 
 @driver.on_shutdown
 async def stop_bridge() -> None:
-    global heartbeat_task
-    if heartbeat_task:
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
-        heartbeat_task = None
+    global heartbeat_task, group_inventory_task
+    for task in (heartbeat_task, group_inventory_task):
+        if task:
+            task.cancel()
+    for task in (heartbeat_task, group_inventory_task):
+        if task:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    heartbeat_task = None
+    group_inventory_task = None
     await reporter.stop()

@@ -54,7 +54,7 @@ from .render_retry import (
     unavailable_instruction,
 )
 
-BRIDGE_VERSION = "1.1.1"
+BRIDGE_VERSION = "1.2.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -74,6 +74,12 @@ class BridgeConfig(ConfigBase):
     INSTANCE_ID: str = Field(default="nekro-agent", title="Core instance ID")
     BOT_ID: str = Field(default="", title="QQ bot ID")
     HEARTBEAT_SECONDS: int = Field(default=30, ge=5, le=300, title="Heartbeat interval")
+    GROUP_INVENTORY_SECONDS: int = Field(
+        default=21_600,
+        ge=300,
+        le=86_400,
+        title="QQ group-name inventory interval",
+    )
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
     TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="Legacy HTTP timeout")
     CLAIM_TIMEOUT_SECONDS: float = Field(default=10.0, ge=0.05, le=30, title="Claim HTTP timeout")
@@ -155,7 +161,9 @@ reporter = BackgroundReporter(
     config.SPOOL_MAX_RECORD_BYTES,
 )
 heartbeat_task: asyncio.Task | None = None
+group_inventory_task: asyncio.Task | None = None
 agent_delivery_task: asyncio.Task | None = None
+group_names: dict[str, str] = {}
 heartbeat_failures = 0
 last_heartbeat_error: str | None = None
 _TRIGGER_TRACKER_ATTR = "_superlily_response_trigger_tracker_v2"
@@ -192,6 +200,101 @@ def utc_iso(timestamp: int | float | None = None) -> str:
 
 def stable_key(*parts: Any) -> str:
     return hashlib.sha256("\x1f".join(str(part) for part in parts).encode()).hexdigest()
+
+
+def _group_name(value: Any) -> str | None:
+    if isinstance(value, dict):
+        item = value
+    elif hasattr(value, "model_dump"):
+        item = value.model_dump(mode="json")
+    elif hasattr(value, "dict"):
+        item = value.dict()
+    else:
+        item = {}
+    name = item.get("group_name") or item.get("name")
+    return str(name).strip() if name is not None and str(name).strip() else None
+
+
+async def _conversation_with_name(
+    bot: OneBotBot,
+    conv: dict[str, Any],
+    *,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    if conv.get("type") != "group":
+        return {**conv, "name": conv.get("name")}
+    group_id = str(conv["id"])
+    name = None if refresh else group_names.get(group_id)
+    if name is None:
+        try:
+            try:
+                info = await bot.get_group_info(group_id=int(group_id), no_cache=False)
+            except TypeError:
+                info = await bot.get_group_info(group_id=int(group_id))
+            name = _group_name(info)
+            if name is not None:
+                group_names[group_id] = name
+        except Exception:
+            logger.debug(f"Lily Core could not refresh QQ group name for {group_id}")
+    return {**conv, "name": name}
+
+
+def _group_name_snapshot(bot: OneBotBot, group_id: str, name: str, observed_at: str) -> ReportItem:
+    event_id = f"qq:{bot.self_id}:meta:conversation-name:{group_id}:{stable_key(name, observed_at)}"
+    payload = {
+        "schema_version": "1.0",
+        "source_event_id": event_id,
+        "instance": instance(bot.self_id),
+        "event_type": "meta.conversation_name_snapshot",
+        "conversation": {"id": group_id, "type": "group", "name": name},
+        "sender": None,
+        "message": None,
+        "references": [],
+        "occurred_at": observed_at,
+        "raw": None,
+        "metadata": {"observation_method": "onebot_get_group_list"},
+    }
+    return ReportItem(
+        "/v1/events",
+        payload,
+        stable_key(config.INSTANCE_ID, event_id),
+    )
+
+
+async def group_inventory_loop() -> None:
+    while True:
+        try:
+            bots = [bot for bot in get_bots().values() if isinstance(bot, OneBotBot)]
+            if not bots:
+                await asyncio.sleep(min(30, config.GROUP_INVENTORY_SECONDS))
+                continue
+            for bot in bots:
+                observed_at = utc_iso()
+                try:
+                    groups = await bot.get_group_list(no_cache=False)
+                except TypeError:
+                    groups = await bot.get_group_list()
+                for raw_group in groups:
+                    if isinstance(raw_group, dict):
+                        item = raw_group
+                    elif hasattr(raw_group, "model_dump"):
+                        item = raw_group.model_dump(mode="json")
+                    elif hasattr(raw_group, "dict"):
+                        item = raw_group.dict()
+                    else:
+                        continue
+                    group_id = item.get("group_id") or item.get("id")
+                    name = _group_name(item)
+                    if group_id is None or name is None:
+                        continue
+                    canonical_id = str(group_id)
+                    group_names[canonical_id] = name
+                    reporter.enqueue(_group_name_snapshot(bot, canonical_id, name, observed_at))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Lily Core group-name inventory failed; the loop will continue")
+        await asyncio.sleep(config.GROUP_INVENTORY_SECONDS)
 
 
 def _render_conversation(chat_key: str) -> dict[str, str] | None:
@@ -237,9 +340,7 @@ def _version_render_blocks(blocks: Any) -> list[dict[str, Any]]:
                 if not isinstance(option, dict):
                     raise ValueError("alternative options must be objects")
                 normalized_option = dict(option)
-                normalized_option["blocks"] = [
-                    visit(child) for child in normalized_option.get("blocks", [])
-                ]
+                normalized_option["blocks"] = [visit(child) for child in normalized_option.get("blocks", [])]
                 normalized_options.append(normalized_option)
             normalized["options"] = normalized_options
         return normalized
@@ -248,23 +349,16 @@ def _version_render_blocks(blocks: Any) -> list[dict[str, Any]]:
 
 
 def _render_canary_chat_keys() -> frozenset[str]:
-    return frozenset(
-        item.strip() for item in config.RENDER_CANARY_CHAT_KEYS.split(",") if item.strip()
-    )
+    return frozenset(item.strip() for item in config.RENDER_CANARY_CHAT_KEYS.split(",") if item.strip())
 
 
 def _agent_canary_chat_keys() -> frozenset[str]:
-    return frozenset(
-        item.strip() for item in config.AGENT_CANARY_CHAT_KEYS.split(",") if item.strip()
-    )
+    return frozenset(item.strip() for item in config.AGENT_CANARY_CHAT_KEYS.split(",") if item.strip())
 
 
 def _agent_entry_allowed(message: ChatMessage) -> bool:
     return bool(
-        config.AGENT_ENABLED
-        and config.CORE_TOKEN
-        and message.is_tome
-        and message.chat_key in _agent_canary_chat_keys()
+        config.AGENT_ENABLED and config.CORE_TOKEN and message.is_tome and message.chat_key in _agent_canary_chat_keys()
     )
 
 
@@ -412,6 +506,13 @@ def _current_task_trigger(conv: dict[str, Any]) -> str | None:
 
 async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], str]:
     conv = conversation(message.chat_key, message.chat_type)
+    if conv["type"] == "group":
+        bots = list(get_bots().values())
+        bot = bots[0] if bots else None
+        if isinstance(bot, OneBotBot):
+            conv = await _conversation_with_name(bot, conv)
+        else:
+            conv = {**conv, "name": group_names.get(str(conv["id"]))}
     segments, attachments = content_parts(message.content_data)
     ref_msg_id = ref_msg_id_from_ext_data(message.ext_data)
     native_identity = _take_native_identity(conv, message.message_id)
@@ -455,6 +556,8 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
         "conversation": conv,
         "sender": {
             "id": sender_id,
+            "account_name": message.sender_name,
+            "display_name": message.sender_nickname or message.sender_name,
             "name": message.sender_nickname or message.sender_name,
             "roles": [],
         },
@@ -518,10 +621,7 @@ async def observe_user_message(_: AgentCtx, message: ChatMessage) -> MsgSignal:
                 capture_event=False,
             )
             if interaction is not None and interaction.get("accepted") is True:
-                logger.info(
-                    "Lily Core Agent accepted exact canary interaction "
-                    f"{interaction.get('interaction_id')}"
-                )
+                logger.info(f"Lily Core Agent accepted exact canary interaction {interaction.get('interaction_id')}")
                 return MsgSignal.BLOCK_TRIGGER
     except Exception:
         logger.exception("Lily Core user-message observation failed open")
@@ -552,7 +652,10 @@ def _native_identity_cache() -> NativeIdentityCache:
 def _onebot_conversation(raw: dict[str, Any]) -> dict[str, str]:
     if raw.get("group_id") is not None:
         return {"id": str(raw["group_id"]), "type": "group"}
-    return {"id": str(raw.get("user_id") or raw.get("target_id") or "unknown"), "type": "private"}
+    return {
+        "id": str(raw.get("user_id") or raw.get("target_id") or "unknown"),
+        "type": "private",
+    }
 
 
 def _api_conversation(data: dict[str, Any]) -> dict[str, str]:
@@ -589,10 +692,7 @@ def _install_claim_suppression(
     if raw.get("post_type") != "message":
         return suppression, False
     event_conv = _onebot_conversation(raw)
-    if (
-        event_conv["type"] != str(conv.get("type"))
-        or event_conv["id"] != str(conv.get("id"))
-    ):
+    if event_conv["type"] != str(conv.get("type")) or event_conv["id"] != str(conv.get("id")):
         return suppression, False
     conversation_key = (event_conv["type"], event_conv["id"])
     prior_send_seen = conversation_key in _event_send_attempts().get(id(event), set())
@@ -650,15 +750,21 @@ if not getattr(nonebot_message, _PLATFORM_ACTION_HOOK_ATTR, False):
         try:
             raw = _event_dict(event)
             conv = _onebot_conversation(raw)
+            event_type = (
+                event.get_event_name()
+                if hasattr(event, "get_event_name")
+                else f"notice.{raw.get('notice_type', 'unknown')}"
+            )
+            conv = await _conversation_with_name(
+                bot,
+                conv,
+                refresh=event_type == "notice.notify.group_name",
+            )
             payload = platform_action_event_payload(
                 raw,
                 conv,
                 instance(bot.self_id),
-                event_type=(
-                    event.get_event_name()
-                    if hasattr(event, "get_event_name")
-                    else f"notice.{raw.get('notice_type', 'unknown')}"
-                ),
+                event_type=event_type,
                 fallback_occurred_at=utc_iso(),
                 to_me=bool(getattr(event, "to_me", False)),
             )
@@ -694,7 +800,9 @@ if not getattr(nonebot_message, "_superlily_suppression_cleanup_hook_v1", False)
     nonebot_message._superlily_suppression_cleanup_hook_v1 = True
 
 
-def _onebot_message_parts(message: Any) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
+def _onebot_message_parts(
+    message: Any,
+) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     texts: list[str] = []
     segments: list[dict[str, Any]] = []
     attachments: list[dict[str, Any]] = []
@@ -742,9 +850,18 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
         if raw.get("post_type") != "message_sent":
             return
         if raw.get("group_id") is not None:
-            conv = {"id": str(raw["group_id"]), "type": "group", "name": raw.get("group_name")}
+            group_id = str(raw["group_id"])
+            conv = {
+                "id": group_id,
+                "type": "group",
+                "name": raw.get("group_name") or group_names.get(group_id),
+            }
         else:
-            conv = {"id": str(raw.get("target_id") or raw.get("user_id") or "unknown"), "type": "private", "name": None}
+            conv = {
+                "id": str(raw.get("target_id") or raw.get("user_id") or "unknown"),
+                "type": "private",
+                "name": None,
+            }
         text, segments, attachments = _onebot_message_parts(getattr(event, "message", None))
         message_id = raw.get("message_id")
         source_response = (
@@ -779,7 +896,11 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
             },
         }
         reporter.enqueue(
-            ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
+            ReportItem(
+                "/v1/responses",
+                payload,
+                stable_key(config.INSTANCE_ID, source_response),
+            )
         )
 
     nonebot_message._superlily_message_sent_hook = True
@@ -799,9 +920,7 @@ if not getattr(OneBotBot, "_superlily_claim_send_guard_v1", False):
         conv = _api_conversation(data)
         event = current_event.get(None)
         if event is not None and id(event) in _active_claim_events():
-            _event_send_attempts().setdefault(id(event), set()).add(
-                (conv["type"], conv["id"])
-            )
+            _event_send_attempts().setdefault(id(event), set()).add((conv["type"], conv["id"]))
         suppression = _match_claim_suppression(data)
         if suppression is None:
             return
@@ -871,9 +990,7 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v2", False):
             else f"qq:{bot.self_id}:failed-attempt:{uuid4()}"
         )
         trigger_source_event_id = (
-            suppression.source_event_id
-            if suppression is not None
-            else _current_task_trigger(conv)
+            suppression.source_event_id if suppression is not None else _current_task_trigger(conv)
         )
         text, segments, attachments = _onebot_message_parts(data.get("message"))
         error_text = str(exception).lower()
@@ -903,9 +1020,7 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v2", False):
                 "claim_send_suppressed": suppression is not None,
                 "claim_id": suppression.claim_id if suppression is not None else None,
                 "claim_reason": suppression.reason if suppression is not None else None,
-                "claim_acknowledged": (
-                    suppression.acknowledged if suppression is not None else None
-                ),
+                "claim_acknowledged": (suppression.acknowledged if suppression is not None else None),
                 "trigger_attribution": (
                     "claim_suppression"
                     if suppression is not None
@@ -917,7 +1032,11 @@ if not getattr(OneBotBot, "_superlily_send_result_hook_v2", False):
             },
         }
         reporter.enqueue(
-            ReportItem("/v1/responses", payload, stable_key(config.INSTANCE_ID, source_response))
+            ReportItem(
+                "/v1/responses",
+                payload,
+                stable_key(config.INSTANCE_ID, source_response),
+            )
         )
 
     OneBotBot._superlily_send_result_hook_v2 = True
@@ -960,9 +1079,7 @@ async def heartbeat_loop() -> None:
         except Exception as exc:
             heartbeat_failures += 1
             last_heartbeat_error = type(exc).__name__
-            logger.exception(
-                "Lily Core heartbeat iteration failed; the loop will continue"
-            )
+            logger.exception("Lily Core heartbeat iteration failed; the loop will continue")
         await asyncio.sleep(config.HEARTBEAT_SECONDS)
 
 
@@ -973,11 +1090,7 @@ async def _deliver_agent_text(lease: dict[str, Any]) -> None:
     outcome = "failed"
     platform_message_id: str | None = None
     safe_error_code: str | None = "delivery_payload_invalid"
-    if (
-        not intent_id
-        or not content
-        or hashlib.sha256(content.encode("utf-8")).hexdigest() != expected_hash
-    ):
+    if not intent_id or not content or hashlib.sha256(content.encode("utf-8")).hexdigest() != expected_hash:
         pass
     else:
         bots = list(get_bots().values())
@@ -990,9 +1103,7 @@ async def _deliver_agent_text(lease: dict[str, Any]) -> None:
             if isinstance(reply_id, str) and reply_id:
                 message += OneBotMessageSegment.reply(reply_id)
             message += OneBotMessageSegment.text(content)
-            future: asyncio.Future[dict[str, str | None]] = (
-                asyncio.get_running_loop().create_future()
-            )
+            future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
             receipt_token = _render_send_receipt.set(future)
             try:
                 if lease.get("conversation_type") == "group":
@@ -1138,9 +1249,7 @@ async def _deliver_render_request(
 
             selected_family = delivery_plan.get("selected_family")
             send_receipt: dict[str, str | None]
-            future: asyncio.Future[dict[str, str | None]] = (
-                asyncio.get_running_loop().create_future()
-            )
+            future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
             receipt_token = _render_send_receipt.set(future)
             try:
                 if selected_family == "image":
@@ -1165,16 +1274,10 @@ async def _deliver_render_request(
                             file_name=f"lily-render-{receipt['artifact_id']}.png",
                         )
                         await _ctx.send_image(sandbox_path)
-                        send_receipt = await asyncio.wait_for(
-                            asyncio.shield(future), timeout=2.0
-                        )
-                elif selected_family == "text" and isinstance(
-                    delivery_plan.get("fallback_text"), str
-                ):
+                        send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
+                elif selected_family == "text" and isinstance(delivery_plan.get("fallback_text"), str):
                     await _ctx.send_text(delivery_plan["fallback_text"])
-                    send_receipt = await asyncio.wait_for(
-                        asyncio.shield(future), timeout=2.0
-                    )
+                    send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
                 else:
                     send_receipt = {
                         "outcome": "failed",
@@ -1228,17 +1331,9 @@ async def _deliver_render_request(
             "X-Render-Error-Code",
             "render_request_rejected",
         )
-        logger.warning(
-            f"Lily Core rejected render request with status "
-            f"{exc.response.status_code} code={error_code}"
-        )
-        content_error = (
-            endpoint == "/v1/markdown-documents"
-            and (
-                exc.response.status_code == 422
-                or error_code
-                in {"renderer_content_error", "renderer_execution_failed"}
-            )
+        logger.warning(f"Lily Core rejected render request with status {exc.response.status_code} code={error_code}")
+        content_error = endpoint == "/v1/markdown-documents" and (
+            exc.response.status_code == 422 or error_code in {"renderer_content_error", "renderer_execution_failed"}
         )
         if content_error:
             diagnostic: object = None
@@ -1249,9 +1344,7 @@ async def _deliver_render_request(
                     diagnostic = detail.get("diagnostic")
             except ValueError:
                 pass
-            raise RenderRetryRequired(
-                retry_instruction(error_code, diagnostic)
-            ) from exc
+            raise RenderRetryRequired(retry_instruction(error_code, diagnostic)) from exc
         raise RenderRetryRequired(unavailable_instruction()) from exc
     except RenderRetryRequired:
         raise
@@ -1334,12 +1427,13 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
 
 @plugin.mount_init_method()
 async def init_bridge() -> None:
-    global heartbeat_task, agent_delivery_task
+    global heartbeat_task, group_inventory_task, agent_delivery_task
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="nekro-lily-core-heartbeat")
+    group_inventory_task = asyncio.create_task(group_inventory_loop(), name="nekro-lily-core-group-inventory")
     agent_delivery_task = asyncio.create_task(
         agent_delivery_loop(),
         name="nekro-lily-core-agent-delivery",
@@ -1349,11 +1443,11 @@ async def init_bridge() -> None:
 
 @plugin.mount_cleanup_method()
 async def cleanup_bridge() -> None:
-    global heartbeat_task, agent_delivery_task
-    for task in (heartbeat_task, agent_delivery_task):
+    global heartbeat_task, group_inventory_task, agent_delivery_task
+    for task in (heartbeat_task, group_inventory_task, agent_delivery_task):
         if task:
             task.cancel()
-    for task in (heartbeat_task, agent_delivery_task):
+    for task in (heartbeat_task, group_inventory_task, agent_delivery_task):
         if not task:
             continue
         try:
@@ -1361,7 +1455,9 @@ async def cleanup_bridge() -> None:
         except asyncio.CancelledError:
             pass
     heartbeat_task = None
+    group_inventory_task = None
     agent_delivery_task = None
     await reporter.stop()
+
 
 __all__ = ["plugin"]

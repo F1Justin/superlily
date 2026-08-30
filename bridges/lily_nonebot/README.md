@@ -1,5 +1,16 @@
 # Lily NoneBot bridge
 
+## 0.7.0 QQ 名称观测
+
+0.7.0 将 QQ 账号昵称和群名片作为不同字段上报，并为群消息补充已观测群名。启动后会
+立即拉取一次 OneBot 群清单，之后默认每 6 小时重查；启动时 OneBot 尚未连接则每 30
+秒短轮询，成功后才进入正常间隔。清单快照走现有 durable reporter，不增加发送 QQ
+消息或其他外部副作用。
+
+```dotenv
+LILY_CORE_GROUP_INVENTORY_SECONDS=21600
+```
+
 ## 0.6.0 第四阶段命令兼容
 
 0.6.0 为 `/status`、纯文本 `/wf`、`/tex` 和 `/help` 增加统一 Renderer

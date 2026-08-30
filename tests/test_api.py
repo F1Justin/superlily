@@ -9,11 +9,13 @@ from superlily_core.command_registry import runtime_registry_snapshot_hash
 from superlily_core.models import (
     CollectorWatermark,
     ConversationCaptureProfile,
+    ConversationNameObservation,
     EventClaim,
     EventDecision,
     EventLink,
     EventObservation,
     IngressReceiptRecord,
+    IdentityNameObservation,
     PlatformActionObservation,
     ResponseRecord,
     SourceEvent,
@@ -55,7 +57,10 @@ def event_payload(
         },
         "references": references or [],
         "occurred_at": active_occurred_at.isoformat(),
-        "raw": {"access_token": "must-not-survive", "url": "https://example.test/a?secret=1"},
+        "raw": {
+            "access_token": "must-not-survive",
+            "url": "https://example.test/a?secret=1",
+        },
         "metadata": {
             "native_identity": {
                 "schema": "onebot_v11.qq.native_identity.v1",
@@ -98,7 +103,10 @@ def response_payload(
 
 
 async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
-    headers = {"Authorization": "Bearer lily-secret", "Idempotency-Key": "stable-event-key"}
+    headers = {
+        "Authorization": "Bearer lily-secret",
+        "Idempotency-Key": "stable-event-key",
+    }
     payload = event_payload()
     payload["message"]["segments"].append(
         {
@@ -124,6 +132,90 @@ async def test_event_ingestion_is_idempotent_and_redacted(client, app) -> None:
         assert records[0].segments_json[1]["data"]["jumpUrl"] == "mqqapi://qzoneschema/feed"
 
 
+async def test_name_history_tracks_qq_identity_across_groups_and_time(client, app) -> None:
+    started = datetime(2026, 8, 30, 1, 0, tzinfo=timezone.utc)
+
+    async def ingest(
+        sequence: int,
+        *,
+        conversation_id: str,
+        conversation_name: str,
+        account_name: str,
+        display_name: str,
+    ) -> None:
+        payload = event_payload(
+            source_event_id=f"qq:source:v2:{sequence:064x}",
+            conversation_id=conversation_id,
+            message_id=f"name-history-{sequence}",
+            real_seq=f"name-history-real-{sequence}",
+            occurred_at=started + timedelta(minutes=sequence),
+        )
+        payload["conversation"]["name"] = conversation_name
+        payload["sender"] = {
+            "id": "12345678",
+            "account_name": account_name,
+            "display_name": display_name,
+            "name": display_name,
+            "roles": [],
+        }
+        response = await client.post(
+            "/v1/events",
+            json=payload,
+            headers={
+                "Authorization": "Bearer lily-secret",
+                "Idempotency-Key": f"name-history-{sequence}",
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    await ingest(
+        1,
+        conversation_id="10001",
+        conversation_name="Group One",
+        account_name="Account A",
+        display_name="Card A",
+    )
+    await ingest(
+        2,
+        conversation_id="10002",
+        conversation_name="Group Two",
+        account_name="Account A",
+        display_name="Card B",
+    )
+    await ingest(
+        3,
+        conversation_id="10001",
+        conversation_name="Group One Renamed",
+        account_name="Account B",
+        display_name="Card A Renamed",
+    )
+
+    async with app.state.database.sessions() as session:
+        identity = (
+            await session.scalars(
+                select(IdentityNameObservation)
+                .where(IdentityNameObservation.user_id == "12345678")
+                .order_by(IdentityNameObservation.observed_at)
+            )
+        ).all()
+        conversations = (
+            await session.scalars(select(ConversationNameObservation).order_by(ConversationNameObservation.observed_at))
+        ).all()
+
+    assert [(row.name_kind, row.name_value, row.conversation_id) for row in identity] == [
+        ("account_name", "Account A", "10001"),
+        ("conversation_display_name", "Card A", "10001"),
+        ("conversation_display_name", "Card B", "10002"),
+        ("account_name", "Account B", "10001"),
+        ("conversation_display_name", "Card A Renamed", "10001"),
+    ]
+    assert [(row.conversation_id, row.name_value) for row in conversations] == [
+        ("10001", "Group One"),
+        ("10002", "Group Two"),
+        ("10001", "Group One Renamed"),
+    ]
+
+
 async def test_c0d_action_capture_receipt_and_replay_are_idempotent(client, app) -> None:
     target = event_payload(
         source_event_id="qq:source:v2:" + "1" * 64,
@@ -133,7 +225,10 @@ async def test_c0d_action_capture_receipt_and_replay_are_idempotent(client, app)
     target_response = await client.post(
         "/v1/events",
         json=target,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "c0d-target"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "c0d-target",
+        },
     )
     assert target_response.status_code == 201, target_response.text
 
@@ -238,25 +333,16 @@ async def test_c0d_action_capture_receipt_and_replay_are_idempotent(client, app)
         headers={"Authorization": "Bearer admin-secret"},
     )
     assert recent.status_code == 200
-    reaction_view = next(
-        item
-        for item in recent.json()
-        if item["observation_id"] == first.json()["observation_id"]
-    )
-    assert (
-        datetime.fromisoformat(reaction_view["occurred_at"]).replace(tzinfo=timezone.utc)
-        == occurred_at
-    )
-    assert (
-        datetime.fromisoformat(reaction_view["ingress"]["captured_at"]).replace(
-            tzinfo=timezone.utc
-        )
-        == occurred_at
-    )
+    reaction_view = next(item for item in recent.json() if item["observation_id"] == first.json()["observation_id"])
+    assert datetime.fromisoformat(reaction_view["occurred_at"]).replace(tzinfo=timezone.utc) == occurred_at
+    assert datetime.fromisoformat(reaction_view["ingress"]["captured_at"]).replace(tzinfo=timezone.utc) == occurred_at
     assert reaction_view["ingress"]["committed_at"] is not None
     assert reaction_view["ingress"]["sequence"] == 1
 
-    changed = {**reaction, "actions": [{**reaction["actions"][0], "value": {"emoji_id": "9"}}]}
+    changed = {
+        **reaction,
+        "actions": [{**reaction["actions"][0], "value": {"emoji_id": "9"}}],
+    }
     conflict = await client.post("/v1/events", json=changed, headers=headers)
     assert conflict.status_code == 409
 
@@ -355,8 +441,7 @@ async def test_c0d_user_target_action_persists_without_message_target(client, ap
     async with app.state.database.sessions() as session:
         action = await session.scalar(
             select(PlatformActionObservation).where(
-                PlatformActionObservation.observation_id
-                == response.json()["observation_id"]
+                PlatformActionObservation.observation_id == response.json()["observation_id"]
             )
         )
         assert action is not None
@@ -497,10 +582,7 @@ async def test_c0d_claim_ingest_returns_receipt_and_late_action_target_resolves(
     assert claim_replay.status_code == 200, claim_replay.text
     assert claim_replay.json()["duplicate"] is True
     assert claim_replay.json()["ingest_receipt"]["outcome"] == "duplicate"
-    assert (
-        claim_replay.json()["ingest_receipt"]["receipt_id"]
-        == claim.json()["ingest_receipt"]["receipt_id"]
-    )
+    assert claim_replay.json()["ingest_receipt"]["receipt_id"] == claim.json()["ingest_receipt"]["receipt_id"]
 
     async with app.state.database.sessions() as session:
         action = await session.scalar(select(PlatformActionObservation))
@@ -570,12 +652,18 @@ async def test_reused_short_message_id_with_distinct_v2_identity_creates_two_sou
     first = await client.post(
         "/v1/events",
         json=first_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "short-collision-a"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "short-collision-a",
+        },
     )
     second = await client.post(
         "/v1/events",
         json=second_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "short-collision-b"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "short-collision-b",
+        },
     )
 
     assert first.status_code == second.status_code == 201
@@ -651,7 +739,10 @@ async def test_nul_in_event_and_response_is_stored_safely(client, app) -> None:
     response = await client.post(
         "/v1/responses",
         json=response_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "nul-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "nul-response",
+        },
     )
     assert response.status_code == 201, response.text
 
@@ -684,7 +775,10 @@ async def test_native_identity_is_visible_in_admin_debug_views(client) -> None:
     event = await client.post(
         "/v1/events",
         json=payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "native-identity-event"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "native-identity-event",
+        },
     )
     assert event.status_code == 201
 
@@ -716,12 +810,18 @@ async def test_two_bots_create_two_observations_of_one_source_event(client) -> N
     lily = await client.post(
         "/v1/events",
         json=event_payload("lily-command", occurred_at=occurred_at),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "lily-observation"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "lily-observation",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=event_payload("nekro-agent", occurred_at=occurred_at),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "nekro-observation"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "nekro-observation",
+        },
     )
     assert lily.status_code == nekro.status_code == 201
     assert lily.json()["source_event_id"] == nekro.json()["source_event_id"]
@@ -733,7 +833,10 @@ async def test_correlated_event_gets_one_shadow_decision(client, app) -> None:
     lily = await client.post(
         "/v1/events",
         json=event_payload("lily-command", occurred_at=occurred_at),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
@@ -744,7 +847,10 @@ async def test_correlated_event_gets_one_shadow_decision(client, app) -> None:
             message_id="456",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "decision-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "decision-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -763,12 +869,18 @@ async def test_two_bots_can_ingest_same_source_event_concurrently(client) -> Non
     lily_request = client.post(
         "/v1/events",
         json=event_payload("lily-command", occurred_at=occurred_at),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "concurrent-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "concurrent-lily",
+        },
     )
     nekro_request = client.post(
         "/v1/events",
         json=event_payload("nekro-agent", occurred_at=occurred_at),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "concurrent-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "concurrent-nekro",
+        },
     )
     lily, nekro = await asyncio.gather(lily_request, nekro_request)
     assert lily.status_code == nekro.status_code == 201
@@ -778,8 +890,15 @@ async def test_two_bots_can_ingest_same_source_event_concurrently(client) -> Non
 async def test_command_event_records_shadow_decision_for_lily(client, app) -> None:
     response = await client.post(
         "/v1/events",
-        json=event_payload(text="wf 1+1", message_id="command", source_event_id="qq:group:123:message:command"),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-command"},
+        json=event_payload(
+            text="wf 1+1",
+            message_id="command",
+            source_event_id="qq:group:123:message:command",
+        ),
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-command",
+        },
     )
     assert response.status_code == 201
 
@@ -831,9 +950,7 @@ async def test_non_text_or_other_at_leading_segment_cannot_become_lily_command(
     assert created.status_code == 201
     async with app.state.database.sessions() as session:
         decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == created.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == created.json()["source_event_id"])
         )
         assert decision is not None
         assert decision.decision_type == "observe_only"
@@ -855,15 +972,16 @@ async def test_leading_own_at_with_to_me_remains_command_eligible(client, app) -
     created = await client.post(
         "/v1/events",
         json=payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "eligible-own-at"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "eligible-own-at",
+        },
     )
 
     assert created.status_code == 201
     async with app.state.database.sessions() as session:
         decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == created.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == created.json()["source_event_id"])
         )
         assert decision is not None
         assert decision.decision_type == "command"
@@ -872,7 +990,9 @@ async def test_leading_own_at_with_to_me_remains_command_eligible(client, app) -
         assert decision.features_json["matched_command"]["rule_id"] == "external.today_waifu.public"
 
 
-async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(client) -> None:
+async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(
+    client,
+) -> None:
     payload = event_payload(
         text="莉莉帮我看看",
         message_id="to-me",
@@ -882,7 +1002,10 @@ async def test_to_me_event_records_shadow_decision_for_nekro_and_debug_views(cli
     response = await client.post(
         "/v1/events",
         json=payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-to-me"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-to-me",
+        },
     )
     assert response.status_code == 201
 
@@ -935,7 +1058,10 @@ async def test_canonical_group_mode_key_controls_conversation_routing(client, ap
             message_id="mode-command-only",
             text="莉莉，command-only",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "mode-command-only"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "mode-command-only",
+        },
     )
     assert full.status_code == restricted.status_code == 201
 
@@ -988,14 +1114,10 @@ async def test_conversation_only_group_suppresses_lily_commands_but_routes_nekro
 
     async with app.state.database.sessions() as session:
         command_decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == command.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == command.json()["source_event_id"])
         )
         summon_decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == summon.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == summon.json()["source_event_id"])
         )
         assert command_decision is not None
         assert summon_decision is not None
@@ -1021,7 +1143,9 @@ async def test_command_registry_debug_endpoint_is_admin_only(client) -> None:
     assert any(rule["id"] == "external.updater.control" and rule["sensitive"] for rule in payload["rules"])
 
 
-async def test_runtime_command_registry_snapshot_is_authenticated_and_auditable(client) -> None:
+async def test_runtime_command_registry_snapshot_is_authenticated_and_auditable(
+    client,
+) -> None:
     payload = {
         "schema_version": "1.0",
         "instance": event_payload()["instance"],
@@ -1079,7 +1203,10 @@ async def test_runtime_command_registry_snapshot_is_authenticated_and_auditable(
         json=payload,
         headers={"Authorization": "Bearer lily-secret"},
     )
-    refreshed_payload = {**payload, "observed_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()}
+    refreshed_payload = {
+        **payload,
+        "observed_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    }
     second = await client.post(
         "/v1/command-registry/snapshots",
         json=refreshed_payload,
@@ -1114,7 +1241,10 @@ async def test_runtime_command_registry_snapshot_is_authenticated_and_auditable(
             message_id="runtime-unregistered",
             text="wolfram-extra 1+1",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "runtime-unregistered"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "runtime-unregistered",
+        },
     )
     assert unregistered.status_code == 201
     decisions = await client.get(
@@ -1143,7 +1273,10 @@ async def test_reply_to_lily_response_records_observe_only_decision(client, app)
     bot_response = await client.post(
         "/v1/responses",
         json=response_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-bot-parent"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-bot-parent",
+        },
     )
     assert bot_response.status_code == 201
 
@@ -1162,7 +1295,10 @@ async def test_reply_to_lily_response_records_observe_only_decision(client, app)
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-reply-to-bot"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-reply-to-bot",
+        },
     )
     assert event.status_code == 201
 
@@ -1193,7 +1329,10 @@ async def test_reply_to_nekro_response_records_talk_decision(client, app) -> Non
     bot_response = await client.post(
         "/v1/responses",
         json=response_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "decision-nekro-parent"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "decision-nekro-parent",
+        },
     )
     assert bot_response.status_code == 201
 
@@ -1213,7 +1352,10 @@ async def test_reply_to_nekro_response_records_talk_decision(client, app) -> Non
                 }
             ],
         ),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "decision-reply-to-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "decision-reply-to-nekro",
+        },
     )
     assert event.status_code == 201
 
@@ -1255,7 +1397,10 @@ async def test_canonical_reply_decision_is_independent_of_auto_at_and_arrival_or
             "success": True,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
         },
-        headers={"Authorization": f"Bearer {target_token}", "Idempotency-Key": f"response-{target_message_id}"},
+        headers={
+            "Authorization": f"Bearer {target_token}",
+            "Idempotency-Key": f"response-{target_message_id}",
+        },
     )
     assert response.status_code == 201
 
@@ -1289,7 +1434,10 @@ async def test_canonical_reply_decision_is_independent_of_auto_at_and_arrival_or
             await client.post(
                 "/v1/events",
                 json=payload,
-                headers={"Authorization": f"Bearer {token}", "Idempotency-Key": f"child-{instance_id}-{target_message_id}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": f"child-{instance_id}-{target_message_id}",
+                },
             )
         )
 
@@ -1341,7 +1489,10 @@ async def test_ambiguous_reply_link_cannot_be_upgraded_by_response_fallback(clie
             platform_message_id="ambiguous-short-parent",
             occurred_at=child_time - timedelta(seconds=1),
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "ambiguous-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "ambiguous-response",
+        },
     )
     assert bot_response.status_code == 201
 
@@ -1362,7 +1513,10 @@ async def test_ambiguous_reply_link_cannot_be_upgraded_by_response_fallback(clie
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "ambiguous-child"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "ambiguous-child",
+        },
     )
     assert child.status_code == 201
 
@@ -1371,9 +1525,7 @@ async def test_ambiguous_reply_link_cannot_be_upgraded_by_response_fallback(clie
             select(EventLink).where(EventLink.from_source_event_id == child.json()["source_event_id"])
         )
         decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == child.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == child.json()["source_event_id"])
         )
         assert link is not None and link.resolver_status == "ambiguous"
         assert decision is not None
@@ -1394,7 +1546,10 @@ async def test_resolved_human_reply_and_bot_response_fallback_is_conflict(client
             text="human parent",
             occurred_at=child_time - timedelta(seconds=2),
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "human-parent"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "human-parent",
+        },
     )
     response = await client.post(
         "/v1/responses",
@@ -1403,7 +1558,10 @@ async def test_resolved_human_reply_and_bot_response_fallback_is_conflict(client
             platform_message_id="shared-human-bot-short-id",
             occurred_at=child_time - timedelta(seconds=1),
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "shared-bot-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "shared-bot-response",
+        },
     )
     child = await client.post(
         "/v1/events",
@@ -1431,9 +1589,7 @@ async def test_resolved_human_reply_and_bot_response_fallback_is_conflict(client
 
     async with app.state.database.sessions() as session:
         decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == child.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == child.json()["source_event_id"])
         )
         assert decision is not None
         assert decision.decision_type == "observe_only"
@@ -1461,14 +1617,15 @@ async def test_future_response_cannot_retroactively_upgrade_earlier_reply(client
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "future-response-child"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "future-response-child",
+        },
     )
     assert child.status_code == 201
     async with app.state.database.sessions() as session:
         before = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == child.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == child.json()["source_event_id"])
         )
         assert before is not None
         assert before.reason == "reply_reference_observed"
@@ -1481,15 +1638,16 @@ async def test_future_response_cannot_retroactively_upgrade_earlier_reply(client
             platform_message_id="future-response-short-id",
             occurred_at=child_time + timedelta(seconds=5),
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "future-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "future-response",
+        },
     )
     assert future_response.status_code == 201
 
     async with app.state.database.sessions() as session:
         after = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == child.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == child.json()["source_event_id"])
         )
         assert after is not None
         assert after.revision == before_revision
@@ -1506,7 +1664,10 @@ async def test_non_message_event_records_ignore_shadow_decision(client, app) -> 
             source_event_id="qq:group:123:notice:recall",
             event_type="notice.group_recall",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "decision-notice"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "decision-notice",
+        },
     )
     assert response.status_code == 201
 
@@ -1540,12 +1701,18 @@ async def test_cross_account_different_message_ids_merge_on_real_seq(client, app
     lily = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "local-id-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "local-id-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "local-id-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "local-id-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -1561,7 +1728,10 @@ async def test_cross_account_different_message_ids_merge_on_real_seq(client, app
             lily_payload["source_event_id"],
             nekro_payload["source_event_id"],
         }
-        assert {item.platform_message_id for item in observations} == {"lily-456", "nekro-789"}
+        assert {item.platform_message_id for item in observations} == {
+            "lily-456",
+            "nekro-789",
+        }
 
 
 async def test_same_instance_repeating_text_creates_distinct_source_events(client, app) -> None:
@@ -1574,7 +1744,10 @@ async def test_same_instance_repeating_text_creates_distinct_source_events(clien
                 message_id=suffix,
                 occurred_at=occurred_at + timedelta(seconds=offset),
             ),
-            headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": f"repeat-{suffix}"},
+            headers={
+                "Authorization": "Bearer lily-secret",
+                "Idempotency-Key": f"repeat-{suffix}",
+            },
         )
         assert response.status_code == 201
 
@@ -1593,7 +1766,10 @@ async def test_cross_bot_strong_identity_merges_despite_normalization_delay(clie
             real_seq="same-native-seq",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "outside-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "outside-lily",
+        },
     )
     nekro_payload = event_payload(
         "nekro-agent",
@@ -1610,7 +1786,10 @@ async def test_cross_bot_strong_identity_merges_despite_normalization_delay(clie
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "outside-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "outside-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -1641,12 +1820,18 @@ async def test_native_time_conflict_keeps_strong_identity_events_separate(client
     lily = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "time-conflict-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "time-conflict-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "time-conflict-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "time-conflict-nekro",
+        },
     )
     assert lily.status_code == nekro.status_code == 201
     assert lily.json()["source_event_id"] != nekro.json()["source_event_id"]
@@ -1681,12 +1866,18 @@ async def test_missing_native_time_never_enables_unbounded_cross_account_merge(c
     lily = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "missing-time-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "missing-time-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "missing-time-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "missing-time-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -1716,12 +1907,18 @@ async def test_missing_native_time_uses_bounded_cross_account_fallback(client, a
     lily = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "bounded-time-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "bounded-time-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "bounded-time-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "bounded-time-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -1759,24 +1956,31 @@ async def test_partial_candidate_native_time_cannot_hide_known_conflict(client, 
         real_seq="partial-time-seq",
         occurred_at=occurred_at + timedelta(seconds=1),
     )
-    standby_payload["metadata"]["native_identity"]["time"] = str(
-        int(occurred_at.timestamp()) + 1
-    )
+    standby_payload["metadata"]["native_identity"]["time"] = str(int(occurred_at.timestamp()) + 1)
 
     lily = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "partial-time-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "partial-time-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "partial-time-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "partial-time-nekro",
+        },
     )
     standby = await client.post(
         "/v1/events",
         json=standby_payload,
-        headers={"Authorization": "Bearer standby-secret", "Idempotency-Key": "partial-time-standby"},
+        headers={
+            "Authorization": "Bearer standby-secret",
+            "Idempotency-Key": "partial-time-standby",
+        },
     )
 
     assert lily.status_code == nekro.status_code == standby.status_code == 201
@@ -1812,7 +2016,10 @@ async def test_same_instance_missing_native_time_cannot_alias_reused_identity(cl
 async def test_non_text_messages_merge_on_real_seq(client, app) -> None:
     occurred_at = datetime.now(timezone.utc)
     responses = []
-    for instance_id, suffix in (("lily-command", "image-a"), ("nekro-agent", "image-b")):
+    for instance_id, suffix in (
+        ("lily-command", "image-a"),
+        ("nekro-agent", "image-b"),
+    ):
         responses.append(
             await client.post(
                 "/v1/events",
@@ -1840,7 +2047,10 @@ async def test_non_text_messages_merge_on_real_seq(client, app) -> None:
 async def test_missing_real_seq_never_falls_back_to_text_correlation(client, app) -> None:
     occurred_at = datetime.now(timezone.utc)
     responses = []
-    for instance_id, suffix in (("lily-command", "missing-a"), ("nekro-agent", "missing-b")):
+    for instance_id, suffix in (
+        ("lily-command", "missing-a"),
+        ("nekro-agent", "missing-b"),
+    ):
         payload = event_payload(
             instance_id,
             source_event_id=f"qq:group:123:message:{suffix}",
@@ -1885,12 +2095,18 @@ async def test_private_messages_do_not_use_group_validated_cross_account_identit
     lily = await client.post(
         "/v1/events",
         json=payloads[0],
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "private-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "private-lily",
+        },
     )
     nekro = await client.post(
         "/v1/events",
         json=payloads[1],
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "private-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "private-nekro",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 201
@@ -1911,7 +2127,10 @@ async def test_event_reply_reference_resolves_to_prior_observation(client, app) 
             text="parent message",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-parent"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "reference-parent",
+        },
     )
     child = await client.post(
         "/v1/events",
@@ -1933,7 +2152,10 @@ async def test_event_reply_reference_resolves_to_prior_observation(client, app) 
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-child"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "reference-child",
+        },
     )
 
     assert parent.status_code == child.status_code == 201
@@ -1965,7 +2187,10 @@ async def test_cross_account_reply_reference_resolves_to_canonical_source_event(
             text="shared parent",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-cross-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "reference-cross-lily",
+        },
     )
     nekro_parent = await client.post(
         "/v1/events",
@@ -1978,7 +2203,10 @@ async def test_cross_account_reply_reference_resolves_to_canonical_source_event(
             text="shared parent",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "reference-cross-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "reference-cross-nekro",
+        },
     )
     nekro_child = await client.post(
         "/v1/events",
@@ -1998,7 +2226,10 @@ async def test_cross_account_reply_reference_resolves_to_canonical_source_event(
                 }
             ],
         ),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "reference-cross-child"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "reference-cross-child",
+        },
     )
 
     assert lily_parent.status_code == nekro_parent.status_code == nekro_child.status_code == 201
@@ -2027,7 +2258,10 @@ async def test_unresolved_event_reference_is_retained_and_visible_in_admin_view(
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "reference-unresolved"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "reference-unresolved",
+        },
     )
     assert event.status_code == 201
 
@@ -2056,7 +2290,10 @@ async def test_direct_canonical_reference_cannot_cross_conversation(client, app)
             message_id="parent",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "cross-conversation-parent"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "cross-conversation-parent",
+        },
     )
     child = await client.post(
         "/v1/events",
@@ -2073,7 +2310,10 @@ async def test_direct_canonical_reference_cannot_cross_conversation(client, app)
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "cross-conversation-child"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "cross-conversation-child",
+        },
     )
 
     assert parent.status_code == child.status_code == 201
@@ -2103,7 +2343,10 @@ async def test_late_parent_observation_backfills_unresolved_link(client, app) ->
                 }
             ],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "late-child"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "late-child",
+        },
     )
     assert child.status_code == 201
 
@@ -2114,7 +2357,10 @@ async def test_late_parent_observation_backfills_unresolved_link(client, app) ->
             message_id="late-parent",
             occurred_at=occurred_at,
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "late-parent"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "late-parent",
+        },
     )
     assert parent.status_code == 201
 
@@ -2143,7 +2389,10 @@ async def test_response_trigger_resolves_reported_id_to_canonical_event(client, 
     event = await client.post(
         "/v1/events",
         json=event_payload(source_event_id=reported_source_id, message_id="account-local-trigger"),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "trigger-event"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "trigger-event",
+        },
     )
     assert event.status_code == 201
 
@@ -2164,7 +2413,10 @@ async def test_response_trigger_resolves_reported_id_to_canonical_event(client, 
     response = await client.post(
         "/v1/responses",
         json=payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "trigger-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "trigger-response",
+        },
     )
     assert response.status_code == 201
 
@@ -2174,7 +2426,9 @@ async def test_response_trigger_resolves_reported_id_to_canonical_event(client, 
         assert record.trigger_source_event_id == event.json()["source_event_id"]
 
 
-async def test_response_trigger_cannot_use_source_seen_only_by_another_instance(client) -> None:
+async def test_response_trigger_cannot_use_source_seen_only_by_another_instance(
+    client,
+) -> None:
     event = await client.post(
         "/v1/events",
         json=event_payload(
@@ -2182,7 +2436,10 @@ async def test_response_trigger_cannot_use_source_seen_only_by_another_instance(
             message_id="cross-instance-trigger",
             real_seq="cross-instance-trigger",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "cross-instance-trigger"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "cross-instance-trigger",
+        },
     )
     assert event.status_code == 201
 
@@ -2194,7 +2451,10 @@ async def test_response_trigger_cannot_use_source_seen_only_by_another_instance(
             platform_message_id="cross-instance-response",
             trigger_source_event_id=event.json()["source_event_id"],
         ),
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "cross-instance-response"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "cross-instance-response",
+        },
     )
 
     assert rejected.status_code == 422
@@ -2260,7 +2520,10 @@ async def test_response_dual_trigger_hints_must_identify_the_same_event(client) 
             trigger_observation_id=events[0]["observation_id"],
             trigger_source_event_id=events[1]["source_event_id"],
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "dual-trigger-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "dual-trigger-response",
+        },
     )
 
     assert rejected.status_code == 422
@@ -2286,7 +2549,10 @@ async def test_late_event_backfills_an_early_response_trigger(client, app) -> No
     response = await client.post(
         "/v1/responses",
         json=response_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "early-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "early-response",
+        },
     )
     assert response.status_code == 201
     async with app.state.database.sessions() as session:
@@ -2298,7 +2564,10 @@ async def test_late_event_backfills_an_early_response_trigger(client, app) -> No
     event = await client.post(
         "/v1/events",
         json=event_payload(source_event_id=reported_source_id, message_id="late-trigger-event"),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "late-trigger-event"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "late-trigger-event",
+        },
     )
 
     assert event.status_code == 201
@@ -2317,7 +2586,10 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
             message_id="audit-command",
             text="wf 1+1",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "audit-command"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "audit-command",
+        },
     )
     assert command.status_code == 201
     response = await client.post(
@@ -2336,7 +2608,10 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
             "success": True,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
         },
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "audit-response"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "audit-response",
+        },
     )
     assert response.status_code == 201
     ordinary = await client.post(
@@ -2346,7 +2621,10 @@ async def test_decision_outcome_endpoint_compares_actual_response(client) -> Non
             message_id="audit-ordinary",
             text="普通消息",
         ),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "audit-ordinary"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "audit-ordinary",
+        },
     )
     assert ordinary.status_code == 201
     suppressed = await client.post(
@@ -2437,7 +2715,10 @@ async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, ap
     )
     assert snapshot_response.status_code == 201
 
-    for instance_id, token in (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret")):
+    for instance_id, token in (
+        ("lily-command", "lily-secret"),
+        ("nekro-agent", "nekro-secret"),
+    ):
         heartbeat = await client.post(
             "/v1/heartbeats",
             json={
@@ -2472,12 +2753,18 @@ async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, ap
     lily_event = await client.post(
         "/v1/events",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-event-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "claim-event-lily",
+        },
     )
     nekro_event = await client.post(
         "/v1/events",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "claim-event-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "claim-event-nekro",
+        },
     )
     assert lily_event.status_code == nekro_event.status_code == 201
 
@@ -2486,7 +2773,10 @@ async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, ap
     nekro = await client.post(
         "/v1/claims/evaluate",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "claim-command-nekro"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "claim-command-nekro",
+        },
     )
     nekro_ack = await client.post(
         f"/v1/claims/{nekro.json()['claim_id']}/ack",
@@ -2499,7 +2789,10 @@ async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, ap
     lily = await client.post(
         "/v1/claims/evaluate",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-command-lily"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "claim-command-lily",
+        },
     )
 
     assert lily.status_code == nekro.status_code == 200
@@ -2565,15 +2858,24 @@ async def test_claim_canary_requires_peer_deny_before_enforcing_allow(client, ap
         client.post(
             "/v1/claims/evaluate",
             json=concurrent_lily_payload,
-            headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "concurrent-claim-lily"},
+            headers={
+                "Authorization": "Bearer lily-secret",
+                "Idempotency-Key": "concurrent-claim-lily",
+            },
         ),
         client.post(
             "/v1/claims/evaluate",
             json=concurrent_nekro_payload,
-            headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "concurrent-claim-nekro"},
+            headers={
+                "Authorization": "Bearer nekro-secret",
+                "Idempotency-Key": "concurrent-claim-nekro",
+            },
         ),
     )
-    assert (concurrent_nekro.json()["action"], concurrent_nekro.json()["enforced"]) == ("deny", True)
+    assert (concurrent_nekro.json()["action"], concurrent_nekro.json()["enforced"]) == (
+        "deny",
+        True,
+    )
     assert (
         concurrent_lily.json()["action"],
         concurrent_lily.json()["reason"],
@@ -2615,7 +2917,10 @@ async def test_late_target_cannot_claim_allow_after_peer_already_failed_open(cli
     )
     assert snapshot_response.status_code == 201
 
-    for instance_id, token in (("lily-command", "lily-secret"), ("nekro-agent", "nekro-secret")):
+    for instance_id, token in (
+        ("lily-command", "lily-secret"),
+        ("nekro-agent", "nekro-secret"),
+    ):
         heartbeat = await client.post(
             "/v1/heartbeats",
             json={
@@ -2652,9 +2957,16 @@ async def test_late_target_cannot_claim_allow_after_peer_already_failed_open(cli
     early_peer = await client.post(
         "/v1/claims/evaluate",
         json=lily_payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "late-peer-first"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "late-peer-first",
+        },
     )
-    assert (early_peer.json()["action"], early_peer.json()["reason"], early_peer.json()["enforced"]) == (
+    assert (
+        early_peer.json()["action"],
+        early_peer.json()["reason"],
+        early_peer.json()["enforced"],
+    ) == (
         "abstain",
         "insufficient_observations",
         False,
@@ -2665,9 +2977,16 @@ async def test_late_target_cannot_claim_allow_after_peer_already_failed_open(cli
     late_target = await client.post(
         "/v1/claims/evaluate",
         json=nekro_payload,
-        headers={"Authorization": "Bearer nekro-secret", "Idempotency-Key": "late-target-second"},
+        headers={
+            "Authorization": "Bearer nekro-secret",
+            "Idempotency-Key": "late-target-second",
+        },
     )
-    assert (late_target.json()["action"], late_target.json()["reason"], late_target.json()["enforced"]) == (
+    assert (
+        late_target.json()["action"],
+        late_target.json()["reason"],
+        late_target.json()["enforced"],
+    ) == (
         "abstain",
         "claim_peer_suppressions_not_acknowledged",
         False,
@@ -2699,9 +3018,7 @@ async def test_claim_backfills_a_missing_legacy_decision_before_abstaining(clien
         source = await session.get(SourceEvent, source_event_id)
         assert source is not None
         source.correlation_version = "qq-text-v1"
-        await session.execute(
-            delete(EventDecision).where(EventDecision.source_event_id == source_event_id)
-        )
+        await session.execute(delete(EventDecision).where(EventDecision.source_event_id == source_event_id))
         await session.commit()
 
     claimed = await client.post("/v1/claims/evaluate", json=payload, headers=headers)
@@ -2709,9 +3026,7 @@ async def test_claim_backfills_a_missing_legacy_decision_before_abstaining(clien
     assert claimed.status_code == 200
     assert claimed.json()["reason"] == "strong_correlation_required"
     async with app.state.database.sessions() as session:
-        decision = await session.scalar(
-            select(EventDecision).where(EventDecision.source_event_id == source_event_id)
-        )
+        decision = await session.scalar(select(EventDecision).where(EventDecision.source_event_id == source_event_id))
         assert decision is not None
 
 
@@ -2752,9 +3067,7 @@ async def test_known_bot_sender_is_observed_without_retriggering(client, app) ->
 
     async with app.state.database.sessions() as session:
         decision = await session.scalar(
-            select(EventDecision).where(
-                EventDecision.source_event_id == observed.json()["source_event_id"]
-            )
+            select(EventDecision).where(EventDecision.source_event_id == observed.json()["source_event_id"])
         )
         assert decision is not None
         assert decision.policy_version == "qq-v3-policy-v6"
@@ -2767,7 +3080,10 @@ async def test_instance_token_cannot_impersonate_other_instance(client) -> None:
     response = await client.post(
         "/v1/events",
         json=event_payload("nekro-agent"),
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "wrong-identity"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "wrong-identity",
+        },
     )
     assert response.status_code == 403
 
@@ -2789,7 +3105,10 @@ async def test_response_may_have_no_trigger_event(client, app) -> None:
     response = await client.post(
         "/v1/responses",
         json=payload,
-        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "response-without-trigger"},
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "response-without-trigger",
+        },
     )
     assert response.status_code == 201, response.text
     async with app.state.database.sessions() as session:

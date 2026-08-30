@@ -6,11 +6,13 @@ Phase 编号自动产生下一项工作。
 
 ## 当前结论
 
-截至 2026-08-30：
+截至 2026-08-31：
 
 - P1–P4 是已经生产验收的 stable foundation；
 - P5 Core Agent v1 已接受并冻结为安全参考实现，不是当前产品大脑的替换计划；
 - H0–H4 已完成；
+- C0 名称观测补全已生产验收：账号昵称、群内显示名和群名称拥有独立、可追溯的变化
+  历史；旧数据按其真实时间语义回填，ChatExporter 保持不变；
 - 当前生产 Cognitive Runtime 是
   [SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)；精确 tag、commit
   与镜像身份唯一以 [`deploy/nekro-runtime.lock.yml`](../deploy/nekro-runtime.lock.yml) 为准；

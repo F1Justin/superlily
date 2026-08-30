@@ -68,7 +68,11 @@ class SourceEvent(Base):
 
     __table_args__ = (
         Index("ix_source_events_occurred_at", "occurred_at"),
-        Index("ix_source_events_correlation_time", "correlation_fingerprint", "occurred_at"),
+        Index(
+            "ix_source_events_correlation_time",
+            "correlation_fingerprint",
+            "occurred_at",
+        ),
     )
 
 
@@ -78,9 +82,7 @@ class RenderDocumentRecord(Base):
     __tablename__ = "render_documents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
     source_event_id: Mapped[str | None] = mapped_column(String(512))
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -118,9 +120,7 @@ class RenderAttemptRecord(Base):
     __tablename__ = "render_attempts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    render_id: Mapped[str] = mapped_column(
-        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False
-    )
+    render_id: Mapped[str] = mapped_column(ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -159,11 +159,11 @@ class RenderArtifactRecord(Base):
     __tablename__ = "render_artifacts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    render_id: Mapped[str] = mapped_column(
-        ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False
-    )
+    render_id: Mapped[str] = mapped_column(ForeignKey("render_documents.id", ondelete="RESTRICT"), nullable=False)
     attempt_id: Mapped[str] = mapped_column(
-        ForeignKey("render_attempts.id", ondelete="RESTRICT"), nullable=False, unique=True
+        ForeignKey("render_attempts.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
     )
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -171,20 +171,12 @@ class RenderArtifactRecord(Base):
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     width_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
     height_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
-    producer_kind: Mapped[str] = mapped_column(
-        String(32), default="document_renderer", nullable=False
-    )
-    producer_id: Mapped[str] = mapped_column(
-        String(128), default="xelatex-document-v1", nullable=False
-    )
+    producer_kind: Mapped[str] = mapped_column(String(32), default="document_renderer", nullable=False)
+    producer_id: Mapped[str] = mapped_column(String(128), default="xelatex-document-v1", nullable=False)
     source_invocation_id: Mapped[str | None] = mapped_column(String(36))
-    data_classification: Mapped[str] = mapped_column(
-        String(32), default="conversation", nullable=False
-    )
+    data_classification: Mapped[str] = mapped_column(String(32), default="conversation", nullable=False)
     canonical_scope: Mapped[str] = mapped_column(String(512), nullable=False)
-    safe_filename: Mapped[str] = mapped_column(
-        String(255), default="rendered-document.png", nullable=False
-    )
+    safe_filename: Mapped[str] = mapped_column(String(255), default="rendered-document.png", nullable=False)
     accessibility_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -200,9 +192,7 @@ class RenderArtifactRecord(Base):
             name="ck_render_artifact_dimensions",
         ),
         CheckConstraint("expires_at > created_at", name="ck_render_artifact_expiry"),
-        CheckConstraint(
-            "retention_until >= expires_at", name="ck_render_artifact_retention"
-        ),
+        CheckConstraint("retention_until >= expires_at", name="ck_render_artifact_retention"),
         CheckConstraint(
             "data_classification IN ('public', 'conversation', 'sensitive', 'administrative')",
             name="ck_render_artifact_classification",
@@ -228,12 +218,8 @@ class RenderDeliveryPlan(Base):
     __tablename__ = "render_delivery_plans"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False
-    )
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
     capability_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -242,22 +228,14 @@ class RenderDeliveryPlan(Base):
     degradation_reasons_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     decision_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     resolved_document_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    selected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False
-    )
-    rejected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False
-    )
-    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False
-    )
+    selected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    rejected_alternatives_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "artifact_id", "capability_hash", name="uq_render_delivery_plan_capability"
-        ),
+        UniqueConstraint("artifact_id", "capability_hash", name="uq_render_delivery_plan_capability"),
         CheckConstraint(
             "selected_family IN ('image', 'text')",
             name="ck_render_delivery_plan_family",
@@ -273,17 +251,11 @@ class RenderDeliveryIntent(Base):
     __tablename__ = "render_delivery_intents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    plan_id: Mapped[str] = mapped_column(
-        ForeignKey("render_delivery_plans.id", ondelete="RESTRICT"), nullable=False
-    )
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
+    plan_id: Mapped[str] = mapped_column(ForeignKey("render_delivery_plans.id", ondelete="RESTRICT"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(320), nullable=False)
     capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False
-    )
+    ordered_payloads_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     reply_to_platform_message_id: Mapped[str | None] = mapped_column(String(512))
     mention_ids_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -319,15 +291,9 @@ class RenderDeliveryAttempt(Base):
     __tablename__ = "render_delivery_attempts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False
-    )
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
-    plan_id: Mapped[str | None] = mapped_column(
-        ForeignKey("render_delivery_plans.id", ondelete="RESTRICT")
-    )
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("render_artifacts.id", ondelete="RESTRICT"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
+    plan_id: Mapped[str | None] = mapped_column(ForeignKey("render_delivery_plans.id", ondelete="RESTRICT"))
     intent_id: Mapped[str | None] = mapped_column(
         ForeignKey("render_delivery_intents.id", ondelete="RESTRICT"), unique=True
     )
@@ -371,9 +337,7 @@ class EventObservation(Base):
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     capture_profile: Mapped[str] = mapped_column(String(32), default="operational", nullable=False)
-    capture_policy_version: Mapped[str] = mapped_column(
-        String(64), default="default-operational-v1", nullable=False
-    )
+    capture_policy_version: Mapped[str] = mapped_column(String(64), default="default-operational-v1", nullable=False)
     capture_status: Mapped[str] = mapped_column(String(32), default="unassessed", nullable=False)
     sanitizer_version: Mapped[str] = mapped_column(String(64), nullable=False)
     collector_sanitizer_version: Mapped[str | None] = mapped_column(String(64))
@@ -413,6 +377,161 @@ class EventObservation(Base):
     )
 
 
+class IdentityNameObservation(Base):
+    __tablename__ = "identity_name_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    conversation_type: Mapped[str | None] = mapped_column(String(32))
+    conversation_id: Mapped[str | None] = mapped_column(String(256))
+    name_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    instance_id: Mapped[str | None] = mapped_column(String(128))
+    source_system: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_record_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    observation_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "name_kind IN ('account_name', 'conversation_display_name', 'effective_display_name')",
+            name="ck_identity_name_observation_kind",
+        ),
+        CheckConstraint(
+            "conversation_type IS NULL OR conversation_type IN ('group', 'private', 'channel', 'system', 'unknown')",
+            name="ck_identity_name_observation_conversation_type",
+        ),
+        CheckConstraint(
+            "(conversation_type IS NULL) = (conversation_id IS NULL)",
+            name="ck_identity_name_observation_conversation_scope",
+        ),
+        UniqueConstraint(
+            "source_system",
+            "source_record_type",
+            "source_record_id",
+            "name_kind",
+            name="uq_identity_name_observation_source_kind",
+        ),
+        Index(
+            "ix_identity_name_observations_user_time",
+            "platform",
+            "user_id",
+            "observed_at",
+            "id",
+        ),
+        Index(
+            "ix_identity_name_observations_user_conversation_time",
+            "platform",
+            "user_id",
+            "conversation_type",
+            "conversation_id",
+            "observed_at",
+            "id",
+        ),
+        Index(
+            "ix_identity_name_observations_latest",
+            "platform",
+            "user_id",
+            "name_kind",
+            "instance_id",
+            "conversation_type",
+            "conversation_id",
+            "observed_at",
+        ),
+    )
+
+
+class ConversationNameObservation(Base):
+    __tablename__ = "conversation_name_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    name_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    instance_id: Mapped[str | None] = mapped_column(String(128))
+    source_system: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_record_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    observation_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "conversation_type IN ('group', 'private', 'channel', 'system', 'unknown')",
+            name="ck_conversation_name_observation_type",
+        ),
+        UniqueConstraint(
+            "source_system",
+            "source_record_type",
+            "source_record_id",
+            name="uq_conversation_name_observation_source",
+        ),
+        Index(
+            "ix_conversation_name_observations_conversation_time",
+            "platform",
+            "conversation_type",
+            "conversation_id",
+            "observed_at",
+            "id",
+        ),
+        Index(
+            "ix_conversation_name_observations_latest",
+            "platform",
+            "conversation_type",
+            "conversation_id",
+            "instance_id",
+            "observed_at",
+        ),
+    )
+
+
+class NameObservationBackfillBatch(Base):
+    __tablename__ = "name_observation_backfill_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_system: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_snapshot_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    cursor_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    selected_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    written_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    existing_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_name_observation_backfill_batch_status",
+        ),
+        CheckConstraint(
+            "selected_count >= 0 AND written_count >= 0 AND existing_count >= 0",
+            name="ck_name_observation_backfill_batch_counts",
+        ),
+        UniqueConstraint(
+            "source_system",
+            "source_scope",
+            "source_snapshot_id",
+            name="uq_name_observation_backfill_batch_source",
+        ),
+        Index(
+            "ix_name_observation_backfill_batches_status",
+            "status",
+            "updated_at",
+        ),
+    )
+
+
 class ConversationCaptureProfile(Base):
     __tablename__ = "conversation_capture_profiles"
 
@@ -428,10 +547,14 @@ class ConversationCaptureProfile(Base):
     source_commit: Mapped[str | None] = mapped_column(String(64))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -461,9 +584,7 @@ class PlatformActionObservation(Base):
     __tablename__ = "platform_action_observations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    observation_id: Mapped[str] = mapped_column(
-        ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False
-    )
+    observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False)
     observer_instance_id: Mapped[str] = mapped_column(
         ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
     )
@@ -476,21 +597,23 @@ class PlatformActionObservation(Base):
     target_platform_message_id: Mapped[str | None] = mapped_column(String(512))
     target_conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
     target_conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    target_source_event_id: Mapped[str | None] = mapped_column(
-        ForeignKey("source_events.id", ondelete="SET NULL")
-    )
+    target_source_event_id: Mapped[str | None] = mapped_column(ForeignKey("source_events.id", ondelete="SET NULL"))
     resolver_status: Mapped[str] = mapped_column(String(32), default="unresolved", nullable=False)
     value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     capture_status: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "observation_id", "action_index", name="uq_platform_action_observation_index"
+            "observation_id",
+            "action_index",
+            name="uq_platform_action_observation_index",
         ),
         CheckConstraint(
             "operation IN ('add', 'remove', 'update', 'observed_state', 'unknown')",
@@ -526,18 +649,16 @@ class IngressReceiptRecord(Base):
     __tablename__ = "ingress_receipts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    observation_id: Mapped[str] = mapped_column(
-        ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False
-    )
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
+    observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     spool_id: Mapped[str | None] = mapped_column(String(128))
     collector_sequence: Mapped[int | None] = mapped_column(BigInteger)
     record_sha256: Mapped[str | None] = mapped_column(String(64))
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     committed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -565,21 +686,20 @@ class IngressReceiptRecord(Base):
 class CollectorWatermark(Base):
     __tablename__ = "collector_watermarks"
 
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="CASCADE"), primary_key=True
-    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), primary_key=True)
     spool_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     highest_contiguous_sequence: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     highest_seen_sequence: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     last_receipt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
         CheckConstraint(
-            "highest_contiguous_sequence >= 0 "
-            "AND highest_seen_sequence >= highest_contiguous_sequence",
+            "highest_contiguous_sequence >= 0 AND highest_seen_sequence >= highest_contiguous_sequence",
             name="ck_collector_watermark_order",
         ),
         Index("ix_collector_watermarks_updated", "updated_at"),
@@ -590,8 +710,12 @@ class EventLink(Base):
     __tablename__ = "event_links"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    from_source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False)
-    from_observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False)
+    from_source_event_id: Mapped[str] = mapped_column(
+        ForeignKey("source_events.id", ondelete="CASCADE"), nullable=False
+    )
+    from_observation_id: Mapped[str] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False
+    )
     to_source_event_id: Mapped[str | None] = mapped_column(ForeignKey("source_events.id", ondelete="SET NULL"))
     relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
     target_source_event_id: Mapped[str | None] = mapped_column(String(512))
@@ -714,7 +838,11 @@ class CommandRegistrySnapshot(Base):
 
     __table_args__ = (
         UniqueConstraint("instance_id", "snapshot_hash", name="uq_command_registry_snapshot_hash"),
-        Index("ix_command_registry_snapshots_instance_received", "instance_id", "received_at"),
+        Index(
+            "ix_command_registry_snapshots_instance_received",
+            "instance_id",
+            "received_at",
+        ),
     )
 
 
@@ -771,7 +899,9 @@ class ToolDescriptorRecord(Base):
     descriptor_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     import_outcome: Mapped[str] = mapped_column(String(32), default="accepted", nullable=False)
     imported_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -792,16 +922,16 @@ class ToolDescriptorLifecycleEvent(Base):
     __tablename__ = "tool_descriptor_lifecycle_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    descriptor_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_descriptors.id", ondelete="CASCADE"), nullable=False
-    )
+    descriptor_id: Mapped[str] = mapped_column(ForeignKey("tool_descriptors.id", ondelete="CASCADE"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
     lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -829,10 +959,14 @@ class ToolProvider(Base):
     allowed_protocols_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     tool_selectors_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -848,13 +982,13 @@ class ToolProviderCredential(Base):
     __tablename__ = "tool_provider_credentials"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False
-    )
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     lifecycle: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     last_authenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -862,7 +996,8 @@ class ToolProviderCredential(Base):
     __table_args__ = (
         CheckConstraint("source IN ('environment')", name="ck_tool_provider_credential_source"),
         CheckConstraint(
-            "lifecycle IN ('active', 'revoked')", name="ck_tool_provider_credential_lifecycle"
+            "lifecycle IN ('active', 'revoked')",
+            name="ck_tool_provider_credential_lifecycle",
         ),
         Index("ix_tool_provider_credentials_provider", "provider_id"),
     )
@@ -872,16 +1007,16 @@ class ToolProviderLifecycleEvent(Base):
     __tablename__ = "tool_provider_lifecycle_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False
-    )
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="CASCADE"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
     lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -899,15 +1034,15 @@ class ToolProviderInventorySnapshot(Base):
 
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id: Mapped[str] = mapped_column(String(36), default=new_id, unique=True, nullable=False)
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
-    )
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     protocol_version: Mapped[str] = mapped_column(String(64), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -922,7 +1057,8 @@ class ToolProviderInventoryEntry(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     snapshot_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_provider_inventory_snapshots.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("tool_provider_inventory_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
     )
     tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
     descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -942,9 +1078,7 @@ class ToolProviderHeartbeat(Base):
 
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id: Mapped[str] = mapped_column(String(36), default=new_id, unique=True, nullable=False)
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
-    )
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False)
     inventory_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     health: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -953,7 +1087,9 @@ class ToolProviderHeartbeat(Base):
     oldest_work_age_ms: Mapped[int | None] = mapped_column(Integer)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -994,10 +1130,14 @@ class ToolRolloutPlanRecord(Base):
     plan_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     import_outcome: Mapped[str] = mapped_column(String(32), default="accepted", nullable=False)
     imported_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1036,9 +1176,7 @@ class ToolRolloutPlanItemRecord(Base):
     __tablename__ = "tool_rollout_plan_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    plan_record_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False
-    )
+    plan_record_id: Mapped[str] = mapped_column(ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False)
     item_id: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
     descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1081,22 +1219,20 @@ class ToolRolloutPlanLifecycleEvent(Base):
     __tablename__ = "tool_rollout_plan_lifecycle_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    plan_record_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False
-    )
+    plan_record_id: Mapped[str] = mapped_column(ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_lifecycle: Mapped[str | None] = mapped_column(String(32))
     lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "plan_record_id", "sequence", name="uq_tool_rollout_plan_lifecycle_sequence"
-        ),
+        UniqueConstraint("plan_record_id", "sequence", name="uq_tool_rollout_plan_lifecycle_sequence"),
         CheckConstraint(
             "lifecycle IN ('reviewed', 'active', 'paused')",
             name="ck_tool_rollout_plan_event_lifecycle",
@@ -1111,9 +1247,7 @@ class ToolRolloutPlanCounter(Base):
     plan_record_id: Mapped[str] = mapped_column(
         ForeignKey("tool_rollout_plans.id", ondelete="CASCADE"), primary_key=True
     )
-    consumed_invocations: Mapped[int] = mapped_column(
-        Integer, default=0, server_default="0", nullable=False
-    )
+    consumed_invocations: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     last_consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -1132,9 +1266,7 @@ class ToolInvocation(Base):
     creator_id: Mapped[str] = mapped_column(String(128), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    descriptor_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_descriptors.id", ondelete="RESTRICT"), nullable=False
-    )
+    descriptor_id: Mapped[str] = mapped_column(ForeignKey("tool_descriptors.id", ondelete="RESTRICT"), nullable=False)
     tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
     descriptor_version: Mapped[str] = mapped_column(String(64), nullable=False)
     descriptor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1147,9 +1279,7 @@ class ToolInvocation(Base):
     capability_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    rollout_plan_id: Mapped[str | None] = mapped_column(
-        ForeignKey("tool_rollout_plans.id", ondelete="RESTRICT")
-    )
+    rollout_plan_id: Mapped[str | None] = mapped_column(ForeignKey("tool_rollout_plans.id", ondelete="RESTRICT"))
     rollout_plan_item_id: Mapped[str | None] = mapped_column(
         ForeignKey("tool_rollout_plan_items.id", ondelete="RESTRICT")
     )
@@ -1161,10 +1291,14 @@ class ToolInvocation(Base):
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1214,9 +1348,7 @@ class ToolInvocationTransition(Base):
     __tablename__ = "tool_invocation_transitions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    invocation_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
-    )
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     previous_state: Mapped[str | None] = mapped_column(String(32))
@@ -1227,7 +1359,9 @@ class ToolInvocationTransition(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1272,9 +1406,7 @@ class ToolConfirmation(Base):
     __tablename__ = "tool_confirmations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    invocation_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
-    )
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False)
     policy: Mapped[str] = mapped_column(String(32), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1290,10 +1422,14 @@ class ToolConfirmation(Base):
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1310,9 +1446,7 @@ class ToolConfirmation(Base):
             "state IN ('pending', 'consumed', 'rejected', 'expired')",
             name="ck_tool_confirmation_state",
         ),
-        CheckConstraint(
-            "resource_version >= 1", name="ck_tool_confirmation_resource_version"
-        ),
+        CheckConstraint("resource_version >= 1", name="ck_tool_confirmation_resource_version"),
         CheckConstraint(
             "required_approvals >= 1 AND required_approvals <= 2",
             name="ck_tool_confirmation_required_approvals",
@@ -1353,13 +1487,13 @@ class ToolConfirmationEvent(Base):
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "confirmation_id", "sequence", name="uq_tool_confirmation_event_sequence"
-        ),
+        UniqueConstraint("confirmation_id", "sequence", name="uq_tool_confirmation_event_sequence"),
         UniqueConstraint(
             "confirmation_id",
             "actor_type",
@@ -1386,9 +1520,7 @@ class ToolConfirmationEvent(Base):
             "(event <> 'create' AND sequence > 1 AND previous_state = 'pending'))",
             name="ck_tool_confirmation_event_initial",
         ),
-        Index(
-            "ix_tool_confirmation_events_created", "confirmation_id", "created_at"
-        ),
+        Index("ix_tool_confirmation_events_created", "confirmation_id", "created_at"),
     )
 
 
@@ -1396,13 +1528,9 @@ class ToolAttempt(Base):
     __tablename__ = "tool_attempts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    invocation_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
-    )
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
-    )
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False)
     inventory_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     implementation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -1426,10 +1554,14 @@ class ToolAttempt(Base):
     safe_error_detail: Mapped[str | None] = mapped_column(String(512))
     event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1450,8 +1582,7 @@ class ToolAttempt(Base):
             name="ck_tool_attempt_current_event_sequence",
         ),
         CheckConstraint(
-            "state IN ('leased', 'running', 'succeeded', 'failed', 'cancelled', "
-            "'lease_expired', 'unknown_completion')",
+            "state IN ('leased', 'running', 'succeeded', 'failed', 'cancelled', 'lease_expired', 'unknown_completion')",
             name="ck_tool_attempt_state",
         ),
         CheckConstraint(
@@ -1476,9 +1607,7 @@ class ToolAttemptEvent(Base):
     __tablename__ = "tool_attempt_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    attempt_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False
-    )
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -1488,7 +1617,9 @@ class ToolAttemptEvent(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1496,8 +1627,7 @@ class ToolAttemptEvent(Base):
         CheckConstraint("sequence >= 1", name="ck_tool_attempt_event_sequence"),
         CheckConstraint("fencing_token >= 1", name="ck_tool_attempt_event_fencing_token"),
         CheckConstraint(
-            "event IN ('lease', 'start', 'heartbeat', 'complete', 'fail', 'cancel', "
-            "'lease_expire', 'reject')",
+            "event IN ('lease', 'start', 'heartbeat', 'complete', 'fail', 'cancel', 'lease_expire', 'reject')",
             name="ck_tool_attempt_event_type",
         ),
         CheckConstraint(
@@ -1512,15 +1642,9 @@ class ToolArtifact(Base):
     __tablename__ = "tool_artifacts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    invocation_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
-    )
-    attempt_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False
-    )
-    provider_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False
-    )
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("tool_attempts.id", ondelete="RESTRICT"), nullable=False)
+    provider_id: Mapped[str] = mapped_column(ForeignKey("tool_providers.id", ondelete="RESTRICT"), nullable=False)
     fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     reservation_request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1553,16 +1677,18 @@ class ToolArtifact(Base):
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "provider_id", "idempotency_key", name="uq_tool_artifact_idempotency"
-        ),
+        UniqueConstraint("provider_id", "idempotency_key", name="uq_tool_artifact_idempotency"),
         CheckConstraint("fencing_token >= 1", name="ck_tool_artifact_fencing_token"),
         CheckConstraint(
             "data_classification IN ('public', 'conversation', 'sensitive', 'administrative')",
@@ -1572,9 +1698,7 @@ class ToolArtifact(Base):
             "state IN ('reserved', 'uploading', 'finalized', 'rejected', 'expired')",
             name="ck_tool_artifact_state",
         ),
-        CheckConstraint(
-            "resource_version >= 1", name="ck_tool_artifact_resource_version"
-        ),
+        CheckConstraint("resource_version >= 1", name="ck_tool_artifact_resource_version"),
         CheckConstraint(
             "max_bytes >= 1 AND max_width_pixels >= 1 AND max_height_pixels >= 1",
             name="ck_tool_artifact_bounds",
@@ -1619,9 +1743,7 @@ class ToolArtifactEvent(Base):
     __tablename__ = "tool_artifact_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_artifacts.id", ondelete="RESTRICT"), nullable=False
-    )
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("tool_artifacts.id", ondelete="RESTRICT"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     previous_state: Mapped[str | None] = mapped_column(String(32))
@@ -1635,13 +1757,13 @@ class ToolArtifactEvent(Base):
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "artifact_id", "sequence", name="uq_tool_artifact_event_sequence"
-        ),
+        UniqueConstraint("artifact_id", "sequence", name="uq_tool_artifact_event_sequence"),
         CheckConstraint("sequence >= 1", name="ck_tool_artifact_event_sequence"),
         CheckConstraint("fencing_token >= 1", name="ck_tool_artifact_event_fencing_token"),
         CheckConstraint(
@@ -1681,15 +1803,17 @@ class ControlPlaneSession(Base):
     resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_reauthenticated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    last_reauthenticated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1709,7 +1833,9 @@ class ControlPlaneLoginAttempt(Base):
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1746,7 +1872,9 @@ class ControlPlaneMutation(Base):
     result_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     result_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1770,9 +1898,7 @@ class ControlPlaneAuditEvent(Base):
     __tablename__ = "control_plane_audit_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str | None] = mapped_column(
-        ForeignKey("control_plane_sessions.id", ondelete="RESTRICT")
-    )
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("control_plane_sessions.id", ondelete="RESTRICT"))
     operator_id: Mapped[str | None] = mapped_column(String(64))
     role: Mapped[str | None] = mapped_column(String(32))
     event: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1781,7 +1907,9 @@ class ControlPlaneAuditEvent(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -1816,13 +1944,20 @@ class ControlPlanePreview(Base):
     preview_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
         CheckConstraint(f"role IN ({_CONTROL_ROLES_SQL})", name="ck_control_preview_role"),
         CheckConstraint("expected_version >= 1", name="ck_control_preview_version"),
-        Index("ix_control_previews_target_created", "target_type", "target_id", "created_at"),
+        Index(
+            "ix_control_previews_target_created",
+            "target_type",
+            "target_id",
+            "created_at",
+        ),
         Index("ix_control_previews_session_expiry", "session_id", "expires_at"),
     )
 
@@ -2018,9 +2153,7 @@ class AgentRunAttempt(Base):
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     model_request_id: Mapped[str | None] = mapped_column(String(256))
     raw_output_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    proposal_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    proposal_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     proposal_hash: Mapped[str | None] = mapped_column(String(64))
     usage_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     usage_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -2046,8 +2179,7 @@ class AgentRunAttempt(Base):
         ),
         CheckConstraint("attempt_number >= 1", name="ck_agent_run_attempt_number"),
         CheckConstraint(
-            "outcome IN ('succeeded', 'provider_error', 'invalid_output', "
-            "'timed_out', 'cancelled')",
+            "outcome IN ('succeeded', 'provider_error', 'invalid_output', 'timed_out', 'cancelled')",
             name="ck_agent_run_attempt_outcome",
         ),
         CheckConstraint(
@@ -2101,8 +2233,7 @@ class AgentToolProposalRecord(Base):
         ),
         CheckConstraint("ordinal >= 0", name="ck_agent_tool_proposal_ordinal"),
         CheckConstraint(
-            "validation IN ('valid', 'invalid_arguments', "
-            "'forbidden_tool', 'duplicate_loop')",
+            "validation IN ('valid', 'invalid_arguments', 'forbidden_tool', 'duplicate_loop')",
             name="ck_agent_tool_proposal_validation",
         ),
         Index("ix_agent_tool_proposals_run_created", "run_id", "created_at"),
@@ -2116,15 +2247,9 @@ class AgentToolLoop(Base):
     __tablename__ = "agent_tool_loops"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    run_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_runs.id", ondelete="RESTRICT"), nullable=False
-    )
-    proposal_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_tool_proposals.id", ondelete="RESTRICT"), nullable=False
-    )
-    invocation_id: Mapped[str] = mapped_column(
-        ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False
-    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="RESTRICT"), nullable=False)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("agent_tool_proposals.id", ondelete="RESTRICT"), nullable=False)
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("tool_invocations.id", ondelete="RESTRICT"), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
     reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -2148,8 +2273,7 @@ class AgentToolLoop(Base):
         UniqueConstraint("proposal_id", name="uq_agent_tool_loop_proposal"),
         UniqueConstraint("invocation_id", name="uq_agent_tool_loop_invocation"),
         CheckConstraint(
-            "state IN ('tool_pending', 'result_ready', 'complete', 'failed', "
-            "'budget_exhausted')",
+            "state IN ('tool_pending', 'result_ready', 'complete', 'failed', 'budget_exhausted')",
             name="ck_agent_tool_loop_state",
         ),
         CheckConstraint("resource_version >= 1", name="ck_agent_tool_loop_version"),
@@ -2171,9 +2295,7 @@ class AgentToolLoopEvent(Base):
     __tablename__ = "agent_tool_loop_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    loop_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False
-    )
+    loop_id: Mapped[str] = mapped_column(ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     previous_state: Mapped[str | None] = mapped_column(String(32))
@@ -2197,9 +2319,7 @@ class AgentToolContinuation(Base):
     __tablename__ = "agent_tool_continuations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    loop_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False
-    )
+    loop_id: Mapped[str] = mapped_column(ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"), nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     provider_id: Mapped[str] = mapped_column(String(128), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -2235,18 +2355,10 @@ class AgentInteraction(Base):
     __tablename__ = "agent_interactions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
-    source_event_id: Mapped[str] = mapped_column(
-        ForeignKey("source_events.id", ondelete="RESTRICT"), nullable=False
-    )
-    run_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_runs.id", ondelete="RESTRICT")
-    )
-    loop_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_tool_loops.id", ondelete="RESTRICT")
-    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
+    source_event_id: Mapped[str] = mapped_column(ForeignKey("source_events.id", ondelete="RESTRICT"), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="RESTRICT"))
+    loop_id: Mapped[str | None] = mapped_column(ForeignKey("agent_tool_loops.id", ondelete="RESTRICT"))
     conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
     conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
     conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -2258,10 +2370,14 @@ class AgentInteraction(Base):
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -2290,7 +2406,11 @@ class AgentInteraction(Base):
             name="ck_agent_interaction_terminal",
         ),
         Index("ix_agent_interactions_state_updated", "state", "updated_at"),
-        Index("ix_agent_interactions_conversation_created", "conversation_key", "created_at"),
+        Index(
+            "ix_agent_interactions_conversation_created",
+            "conversation_key",
+            "created_at",
+        ),
     )
 
 
@@ -2309,13 +2429,13 @@ class AgentInteractionEvent(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "interaction_id", "sequence", name="uq_agent_interaction_event_sequence"
-        ),
+        UniqueConstraint("interaction_id", "sequence", name="uq_agent_interaction_event_sequence"),
         CheckConstraint("sequence >= 1", name="ck_agent_interaction_event_sequence"),
         Index("ix_agent_interaction_events_created", "interaction_id", "created_at"),
     )
@@ -2330,9 +2450,7 @@ class AgentTextDeliveryIntent(Base):
     interaction_id: Mapped[str] = mapped_column(
         ForeignKey("agent_interactions.id", ondelete="RESTRICT"), nullable=False
     )
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False
-    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
     conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
     conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -2348,10 +2466,14 @@ class AgentTextDeliveryIntent(Base):
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -2383,7 +2505,8 @@ class AgentTextDeliveryEvent(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     intent_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_text_delivery_intents.id", ondelete="RESTRICT"), nullable=False
+        ForeignKey("agent_text_delivery_intents.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -2393,7 +2516,9 @@ class AgentTextDeliveryEvent(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False
+        DateTime(timezone=True),
+        server_default=sql_text("CURRENT_TIMESTAMP"),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -2525,9 +2650,9 @@ _CONFIRMATION_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_tool_confirmation_mutation()
     """
 ).execute_if(dialect="postgresql")
-_CONFIRMATION_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_tool_confirmation_mutation()"
-).execute_if(dialect="postgresql")
+_CONFIRMATION_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_tool_confirmation_mutation()").execute_if(
+    dialect="postgresql"
+)
 
 for _confirmation_guard in (
     _CONFIRMATION_SQLITE_AUTHORITY_UPDATE,
@@ -2842,9 +2967,7 @@ _ARTIFACT_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_tool_artifact_mutation()
     """
 ).execute_if(dialect="postgresql")
-_ARTIFACT_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_tool_artifact_mutation()"
-).execute_if(dialect="postgresql")
+_ARTIFACT_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_tool_artifact_mutation()").execute_if(dialect="postgresql")
 
 for _artifact_guard in (
     _ARTIFACT_SQLITE_AUTHORITY_UPDATE,
@@ -3031,9 +3154,9 @@ _ATTEMPT_EVENT_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION reject_tool_attempt_event_mutation()
     """
 ).execute_if(dialect="postgresql")
-_ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP = DDL(
-    "DROP FUNCTION IF EXISTS reject_tool_attempt_event_mutation()"
-).execute_if(dialect="postgresql")
+_ATTEMPT_EVENT_POSTGRES_FUNCTION_DROP = DDL("DROP FUNCTION IF EXISTS reject_tool_attempt_event_mutation()").execute_if(
+    dialect="postgresql"
+)
 
 event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_SQLITE_UPDATE_TRIGGER)
 event.listen(ToolAttemptEvent.__table__, "after_create", _ATTEMPT_EVENT_SQLITE_DELETE_TRIGGER)
@@ -3519,9 +3642,9 @@ _ROLLOUT_EVIDENCE_POSTGRES_FUNCTION = DDL(
     $$ LANGUAGE plpgsql
     """
 ).execute_if(dialect="postgresql")
-_ROLLOUT_EVIDENCE_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS reject_rollout_plan_evidence_mutation()"
-).execute_if(dialect="postgresql")
+_ROLLOUT_EVIDENCE_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS reject_rollout_plan_evidence_mutation()").execute_if(
+    dialect="postgresql"
+)
 
 
 def _install_rollout_append_only_triggers(table) -> None:
@@ -3634,9 +3757,9 @@ _ROLLOUT_COUNTER_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_tool_rollout_plan_counter_mutation()
     """
 ).execute_if(dialect="postgresql")
-_ROLLOUT_COUNTER_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_tool_rollout_plan_counter_mutation()"
-).execute_if(dialect="postgresql")
+_ROLLOUT_COUNTER_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_tool_rollout_plan_counter_mutation()").execute_if(
+    dialect="postgresql"
+)
 
 for _rollout_counter_guard in (
     _ROLLOUT_COUNTER_SQLITE_UPDATE,
@@ -3737,9 +3860,9 @@ _RENDER_DELIVERY_POSTGRES_FUNCTION = DDL(
     $$ LANGUAGE plpgsql
     """
 ).execute_if(dialect="postgresql")
-_RENDER_DELIVERY_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS reject_render_delivery_attempt_mutation()"
-).execute_if(dialect="postgresql")
+_RENDER_DELIVERY_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS reject_render_delivery_attempt_mutation()").execute_if(
+    dialect="postgresql"
+)
 event.listen(
     RenderDeliveryAttempt.__table__,
     "after_create",
@@ -3787,9 +3910,9 @@ _AGENT_EVIDENCE_POSTGRES_FUNCTION = DDL(
     $$ LANGUAGE plpgsql
     """
 ).execute_if(dialect="postgresql")
-_AGENT_EVIDENCE_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS reject_agent_evidence_mutation()"
-).execute_if(dialect="postgresql")
+_AGENT_EVIDENCE_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS reject_agent_evidence_mutation()").execute_if(
+    dialect="postgresql"
+)
 
 
 def _install_agent_append_only_triggers(table) -> None:
@@ -3993,9 +4116,7 @@ _AGENT_RUN_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_agent_run_mutation()
     """
 ).execute_if(dialect="postgresql")
-_AGENT_RUN_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_agent_run_mutation()"
-).execute_if(dialect="postgresql")
+_AGENT_RUN_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_agent_run_mutation()").execute_if(dialect="postgresql")
 
 for _agent_run_guard in (
     _AGENT_RUN_SQLITE_AUTHORITY_UPDATE,
@@ -4119,9 +4240,9 @@ _AGENT_INTERACTION_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_agent_interaction_mutation()
     """
 ).execute_if(dialect="postgresql")
-_AGENT_INTERACTION_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_agent_interaction_mutation()"
-).execute_if(dialect="postgresql")
+_AGENT_INTERACTION_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_agent_interaction_mutation()").execute_if(
+    dialect="postgresql"
+)
 for _guard in (
     _AGENT_INTERACTION_SQLITE_AUTHORITY,
     _AGENT_INTERACTION_SQLITE_DELETE,
@@ -4234,9 +4355,9 @@ _AGENT_TEXT_DELIVERY_POSTGRES_TRIGGER = DDL(
     FOR EACH ROW EXECUTE FUNCTION guard_agent_text_delivery_mutation()
     """
 ).execute_if(dialect="postgresql")
-_AGENT_TEXT_DELIVERY_POSTGRES_DROP = DDL(
-    "DROP FUNCTION IF EXISTS guard_agent_text_delivery_mutation()"
-).execute_if(dialect="postgresql")
+_AGENT_TEXT_DELIVERY_POSTGRES_DROP = DDL("DROP FUNCTION IF EXISTS guard_agent_text_delivery_mutation()").execute_if(
+    dialect="postgresql"
+)
 for _guard in (
     _AGENT_TEXT_DELIVERY_SQLITE_AUTHORITY,
     _AGENT_TEXT_DELIVERY_SQLITE_DELETE,

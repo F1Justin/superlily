@@ -2,9 +2,14 @@
 
 状态：stable foundation 接入说明
 
-最后核对：2026-08-29
+最后核对：2026-08-31
 
-适用版本：Alembic `0026_history_timeline_export`
+适用版本：Alembic `0027_name_observation_history`
+
+QQ 名称历史使用 `archive.identity_name_timeline_v1` 与
+`archive.conversation_name_timeline_v1`；字段语义和按 QQ 号查询见
+[`NAME_HISTORY.md`](NAME_HISTORY.md)。这两个视图不是 ChatExporter 接口，未授予
+`chat_exporter` 角色。
 
 本文面向需要读取 Superlily 数据，或把服务、Provider、机器人桥接器和脚本接入 Core 的开发者。它说明当前数据库的部署方式、数据边界和安全接入路径，但不替代协议与迁移本身：
 
@@ -24,7 +29,7 @@
 | --- | --- |
 | 数据库 | PostgreSQL 17.10 |
 | 数据库名 / Schema | `superlily` / `public`、`archive` |
-| Alembic head | `0026_history_timeline_export` |
+| Alembic head | `0027_name_observation_history` |
 | 业务表 | 86 张（所有非系统 schema） |
 | 索引 / trigger | 352 / 62（`public` 与 `archive`） |
 | 数据库大小 | 约 23 GB |
