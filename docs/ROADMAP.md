@@ -39,7 +39,7 @@ R0 不改变运行行为。它完成三件事：
 2. 删除会继续指挥施工的旧路线、未来阶段预案和已被正式签署覆盖的中间文档；
 3. 建立本路线图、R0 基线和 ADR 0019 作为新的权威入口。
 
-## R1：Renderer 的认知反馈回路
+## R1：Renderer 的认知反馈回路（已完成）
 
 第一项行为改动只处理已经发生的 Renderer 失败，不扩成通用治理工程：
 
@@ -71,8 +71,38 @@ R0 不改变运行行为。它完成三件事：
 - 这一实施复用已有 RenderDocument、artifact、delivery intent 和唯一发送边界，不新增
   第二套 preview/publish API，也不扩成通用 Agent 治理层。
 
-代码候选已通过真实 `\oiint` 编译、未知命令定位及 Worker→Core→bridge 契约测试；只有
-生产镜像、身份、bridge 和无外部发送探针全部钉住后，R1 才标记完成。
+### R1 生产签署（2026-08-30）
+
+- Core/renderer 实现来自 commit `4380154`；移除 bridge 自建重试计数、改由 Nekro
+  既有有界 Agent loop 自然迭代的最终 bridge 来自 commit `da8cb17`；
+- 44 项聚焦契约测试通过；最终 worker 镜像内的真实隔离探针把 `\oiint` 渲染为
+  76,288 字节 PNG，并把未知命令归约为
+  `undefined_control_sequence + \\notARealCommand + broken-integral`；
+- 生产镜像为 Core
+  `sha256:03ced7b1cf94b40f41f409c31674f450f9b5d2f71350e9ed739d78fbeb63e250`、
+  document renderer
+  `sha256:312915be6a72566414e88bebf6625c43f4488bb1e0c93b14618a12fec0b7560e`、
+  LaTeX provider
+  `sha256:3c9c5444914664a9c5a0ded10dd6e6138dc5a8166948cc284ccddf329b50bdc1`、
+  worker `sha256:78c816bfbb580645d5dcd9beda0cc4d48f5bfefd2446c379c8a51a85375c6af9`；
+- worker identity 与 Core render implementation 均为
+  `495b98f5a8c5ce034020982a3facc2c27378fb1f6be0b4dfeaf61f7e84248d16`；Provider
+  implementation 为 `fd9f2200c1c5ea26c8ebfbc27be20e5ae7671539c998950c513ba848c2f83e62`，
+  最新 inventory `8c904098cf812e28f59ac17bd04f2d0f5f4d165c0dc77399125b8ba50478f4e1`
+  为 healthy/self-test ok；
+- 生产 Core 无发送探针中，未知命令返回 HTTP 422 / `renderer_content_error` 及
+  `command=\\notARealCommand,node_id=md001`；`\oiint` 返回 201 和有效 artifact/plan，
+  对应 delivery intent 数量严格为 0，因此没有产生平台测试消息；
+- Nekro Runtime 仍是 `v2.3.3-superlily.4`，加载 bridge `1.1.1` 后 heartbeat 为
+  online，spool 只有 committed、pending=0；Nekro、Core、document renderer、worker、
+  Provider 均 running 且 restart count=0；
+- 回滚保留旧 Compose 镜像以及
+  `/home/justin/nekro/backups/r1-renderer-20260829/` 下 bridge 1.0.0/1.1.0 源码包。
+  本次部署同时消除了 R0 记录的旧 Core 镜像无法解析数据库 `0026` 的漂移：生产 Core
+  现在为 `0026_history_timeline_export (head)` 且 `alembic check` 无 drift。
+
+至此 R1 完成。它只建立真实、短、有界的 Renderer 认知反馈和成功后唯一发送边界；
+没有引入第二套 Runtime、通用工作流或新的平台副作用通道。
 
 ## R2：Cognitive Workspace / World Effect Boundary
 
