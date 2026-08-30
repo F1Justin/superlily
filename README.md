@@ -72,3 +72,9 @@ Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 
 这些文件约束已经存在的基础，不会因 Phase 编号自动授权继续施工。被 R0 删除的旧路线
 和中间文档仍保存在 Git 历史中，不再出现在当前工作树。
+
+## 许可证
+
+SuperLily 主仓库采用 [Apache License 2.0](LICENSE)，版权及归属信息见
+[`NOTICE`](NOTICE)。独立的 SuperLily Nekro Runtime 是 Nekro Agent 的派生仓库，继续
+遵循其根目录中的 Nekro Agent 自定义许可证，不因主仓采用 Apache-2.0 而重新许可。
