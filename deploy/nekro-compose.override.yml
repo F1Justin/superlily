@@ -2,7 +2,7 @@
 # Runtime source and release identity are pinned in nekro-runtime.lock.yml.
 services:
   nekro_agent:
-    image: superlily/nekro-agent:2.3.3-superlily.7
+    image: superlily/nekro-agent:2.3.3-superlily.8
     build:
       context: /home/justin/SuperLily-Nekro-Runtime
       dockerfile: dockerfile
