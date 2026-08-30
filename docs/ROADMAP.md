@@ -6,14 +6,14 @@ Phase 编号自动产生下一项工作。
 
 ## 当前结论
 
-截至 2026-08-29：
+截至 2026-08-30：
 
 - P1–P4 是已经生产验收的 stable foundation；
 - P5 Core Agent v1 已接受并冻结为安全参考实现，不是当前产品大脑的替换计划；
 - H0–H4 已完成；
 - 当前生产 Cognitive Runtime 是
   [SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)
-  `v2.3.3-superlily.4`，commit `b56e465`；
+  `v2.3.3-superlily.5`，commit `3b6fb25`；
 - 详细可复核身份、数据库和成本数据见 [`R0_BASELINE.md`](R0_BASELINE.md)。
 
 旧 P6–P11、三账号 HA、通用 Web Admin、Memory/RAG、活动系统、具身入口和“替换
@@ -103,6 +103,29 @@ R0 不改变运行行为。它完成三件事：
 
 至此 R1 完成。它只建立真实、短、有界的 Renderer 认知反馈和成功后唯一发送边界；
 没有引入第二套 Runtime、通用工作流或新的平台副作用通道。
+
+## R1.1：引用焦点与引用图片连续性（已完成）
+
+R1.1 修复真实群聊中“引用后召唤莉莉”时引用关系容易被普通历史窗口稀释的问题，不改变
+外部副作用边界：
+
+- `run_agent()` 按本次触发消息的精确 message ID 绑定引用，不再把数据库中最新的人类
+  消息猜作触发消息；
+- 被引用消息与当前请求相邻组成独立 Reply Focus，不占普通 16 条历史和 3200 字符预算，
+  因而引用 16 条以前的消息也不会被窗口裁掉；
+- 被引用消息拥有独立的 4 张视觉图片预算；普通历史仍保持 1 张，更新的无关图片不能
+  挤掉引用图片；
+- 引用目标不在本地数据库时，OneBot 适配器在收消息时保存有界快照；若平台也没有提供
+  可用内容，则明确输出 unavailable 标记，不再悄悄丢失引用语义；
+- Runtime `v2.3.3-superlily.5` / `3b6fb25` 的 lint、typecheck 和 16 项聚焦回归测试通过，
+  镜像 `sha256:dd054b342e1d544c1ab74329155665bce31d3a60f39dd5156f48edda06a7877e`
+  的 OCI revision/version 与该 commit/tag 一致。
+- 生产数据库只读回放确认：一条含 4 张图片的真实引用全部进入 `reply_focus`，普通历史
+  图片仍单独保留 1 张；另一条相隔 18 条记录的真实引用中，目标与触发消息均出现在相邻
+  Reply Focus。探针只组装上下文，没有调用模型或向 QQ 发送消息。
+
+本项是对当前 Nekro 认知输入连续性的窄修复，不引入通用 router、第二 Runtime 或新的
+发送通道。
 
 ## R2：Cognitive Workspace / World Effect Boundary
 

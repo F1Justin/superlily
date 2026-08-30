@@ -16,8 +16,8 @@ Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 - P5 Core Agent v1：accepted / frozen reference；
 - H0–H4：completed；
 - Cognitive Runtime：
-  [`v2.3.3-superlily.4`](https://github.com/F1Justin/superlily-nekro-runtime/tree/v2.3.3-superlily.4)
-  / `b56e465`；
+  [`v2.3.3-superlily.5`](https://github.com/F1Justin/superlily-nekro-runtime/tree/v2.3.3-superlily.5)
+  / `3b6fb25`；
 - 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
 
 ## 目录

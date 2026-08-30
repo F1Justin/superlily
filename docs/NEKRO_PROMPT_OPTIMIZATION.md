@@ -2,7 +2,7 @@
 
 Date: 2026-08-28 CST
 
-R0 current production: `v2.3.3-superlily.4` / `b56e465` / image
+R0 frozen production baseline: `v2.3.3-superlily.4` / `b56e465` / image
 `superlily/nekro-agent:2.3.3-superlily.4`. The current 100-call production
 baseline is frozen in [`R0_BASELINE.md`](R0_BASELINE.md); the table below is the
 one-variable rollout evidence that led to it.
@@ -66,7 +66,8 @@ make the nonce stable or expose the raw chat key as routing metadata.
 ## Rollback
 
 Rollback must select a previously reviewed and pinned SuperLily Runtime tag,
-never the moving `kromiose/nekro-agent:latest`. The immediate predecessor is
-`v2.3.3-superlily.3` / `92f8231`; recreate only `nekro_agent` after verifying
-the selected source commit and image identity. PostgreSQL, Qdrant, NapCat,
-Lily Core, data mounts, and sandbox images do not need to be changed.
+never the moving `kromiose/nekro-agent:latest`. The current production identity
+and immediate predecessor are recorded in `deploy/nekro-runtime.lock.yml` and
+Git history; recreate only `nekro_agent` after verifying the selected source
+commit and image identity. PostgreSQL, Qdrant, NapCat, Lily Core, data mounts,
+and sandbox images do not need to be changed.

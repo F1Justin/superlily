@@ -2,13 +2,13 @@ schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
 branch: superlily/runtime-v2.3.3
-commit: b56e4655205c0e896b9e18a71da0b8580a3e2a12
-tag: v2.3.3-superlily.4
+commit: 3b6fb2534a3e1de09adec000305482e71f486abf
+tag: v2.3.3-superlily.5
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.4
-  id: sha256:70b4b3c8e2a60ca048b61ae798678418a53f9620ae77df39bebb3eaae09c1b3e
+  tag: superlily/nekro-agent:2.3.3-superlily.5
+  id: sha256:dd054b342e1d544c1ab74329155665bce31d3a60f39dd5156f48edda06a7877e
 legacy_overlay_release: nekro-startup-permissions-production-20260828
