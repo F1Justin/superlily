@@ -10,15 +10,23 @@ PostgreSQL archive read model。
 现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop，不会把
 Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 
+这是一个由个人维护、长期运行于真实社交环境中的生产研究项目，不是承诺稳定 API、
+托管服务或商业支持的通用 Bot 发行版。项目大量使用 AI-assisted / vibe-coded 开发，
+但生产变更以 Git 身份、合同测试、迁移证据、成本数据和可回滚验收为准。
+
 当前权威状态：
 
 - P1–P4：stable foundation；
 - P5 Core Agent v1：accepted / frozen reference；
 - H0–H4：completed；
-- Cognitive Runtime：
-  [`v2.3.3-superlily.5`](https://github.com/F1Justin/superlily-nekro-runtime/tree/v2.3.3-superlily.5)
-  / `3b6fb25`；
+- Cognitive Runtime：[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)；
+- 当前生产 Runtime 的 tag、commit 与镜像唯一以
+  [`deploy/nekro-runtime.lock.yml`](deploy/nekro-runtime.lock.yml) 为准，README 不重复手写版本；
 - 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
+
+问题与 PR 可以作为外部反馈提交，但维护者不承诺响应时间、兼容性周期或为第三方部署
+提供免费支持；范围见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按
+[`Security Policy`](.github/SECURITY.md) 私下报告，不要公开附带凭据或私人聊天数据。
 
 ## 目录
 
