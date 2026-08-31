@@ -5,14 +5,13 @@ Superlily 是 [`MANIFESTO.md`](MANIFESTO.md) 约束的 Lily Core 与长期社交
 artifact/Renderer、平台投递和冻结的 Core Agent v1 参考实现；旧群聊历史也已统一进入
 PostgreSQL archive read model。
 
-当前生产认知运行时不是 Core Agent v1，而是独立维护的
-[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)。项目将在
-现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop，不会把
-Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
+当前生产认知运行时由独立维护的
+[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime) 承担。项目将在
+现有 Runtime 内逐步改善真实执行反馈、可逆认知工作空间和自然 Agent loop。
 
-这是一个由个人维护、长期运行于真实社交环境中的生产研究项目，不是承诺稳定 API、
-托管服务或商业支持的通用 Bot 发行版。项目大量使用 AI-assisted / vibe-coded 开发，
-但生产变更以 Git 身份、合同测试、迁移证据、成本数据和可回滚验收为准。
+这是一个由个人维护、长期运行于真实社交环境中的生产研究项目。项目大量使用
+AI-assisted / vibe-coded 开发，生产变更以 Git 身份、合同测试、迁移证据、成本数据和
+可回滚验收为准。
 
 当前权威状态：
 
@@ -20,13 +19,12 @@ Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
 - P5 Core Agent v1：accepted / frozen reference；
 - H0–H4：completed；
 - Cognitive Runtime：[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)；
-- 当前生产 Runtime 的 tag、commit 与镜像唯一以
-  [`deploy/nekro-runtime.lock.yml`](deploy/nekro-runtime.lock.yml) 为准，README 不重复手写版本；
+- 当前生产 Runtime 的 tag、commit 与镜像由
+  [`deploy/nekro-runtime.lock.yml`](deploy/nekro-runtime.lock.yml) 统一记录；
 - 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
 
-问题与 PR 可以作为外部反馈提交，但维护者不承诺响应时间、兼容性周期或为第三方部署
-提供免费支持；范围见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按
-[`Security Policy`](.github/SECURITY.md) 私下报告，不要公开附带凭据或私人聊天数据。
+问题与 PR 可以作为外部反馈提交，维护范围见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+安全问题、凭据和私人聊天数据请按 [`Security Policy`](.github/SECURITY.md) 私下报告。
 
 ## 目录
 
@@ -70,11 +68,11 @@ Pi、Codex、DSH 等参考工程当成候选 backend 或集成目标。
   [`docs/adr/0018-legacy-history-read-model.md`](docs/adr/0018-legacy-history-read-model.md)
 - Nekro prompt/cache：[`docs/NEKRO_PROMPT_OPTIMIZATION.md`](docs/NEKRO_PROMPT_OPTIMIZATION.md)
 
-这些文件约束已经存在的基础，不会因 Phase 编号自动授权继续施工。被 R0 删除的旧路线
-和中间文档仍保存在 Git 历史中，不再出现在当前工作树。
+这些文件约束已经存在的基础，后续施工 authority 由当前路线和正式验收决定。R0 已将
+旧路线和中间文档归档到 Git 历史。
 
 ## 许可证
 
 SuperLily 主仓库采用 [Apache License 2.0](LICENSE)，版权及归属信息见
 [`NOTICE`](NOTICE)。独立的 SuperLily Nekro Runtime 是 Nekro Agent 的派生仓库，继续
-遵循其根目录中的 Nekro Agent 自定义许可证，不因主仓采用 Apache-2.0 而重新许可。
+遵循其根目录中的 Nekro Agent 自定义许可证。
