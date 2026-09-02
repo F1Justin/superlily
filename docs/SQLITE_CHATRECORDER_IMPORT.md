@@ -61,3 +61,26 @@ SQLite `time` 是无时区列，按 UTC 解释。依据是插件的 UTC 时间�
    checkpoint、hash、来源/月计数和代表性导出结果。
 
 原始 SQLite 和导出 manifest 是恢复证据；没有独立数据处置决定不得删除。
+
+## 生产验收（2026-09-02）
+
+- 实现提交 `952608730aa8aaaa5988259ddd48879c7f81b515` 已推送到
+  `F1Justin/superlily` 的 `master`。生产 Core 使用该源码构建并迁移到
+  `0028_sqlite_chatrecorder_archive`，PostgreSQL 和桥接未重启。
+- 三个来源均完成 `sample -> month -> full -> full rerun`。最终导入分别为
+  228,166、171,944、341,854；`data2`/`data3` 分别以
+  `missing_private_peer_id` 拒绝 215/6 条。三个 full rerun 都是 `writes=0`。
+- 生产 archive 最终为 10,039,221 条，其中新来源 timeline 741,743 条；110 个历史
+  会话，复合 FK 缺失 0，default 分区 0，导入结束时锁等待 0，Core healthy。
+- Nitori 的 ChatExporter 保持未修改的
+  `6aca5b345b755a9d33a1c67609865bf1479d84e9`，从群 `1080353942` 成功导出
+  2022-12-04 的 84 条记录（14,468 bytes）。
+- 恢复证据位于
+  `/data/backups/superlily/20260902-sqlite-chatrecorder/`。生产前 custom dump 的
+  SHA-256 为
+  `b8eda7601cdd26e4c281e8c945ac74505b94480569c57e39f465374487b8ca4e`；生产后
+  custom dump 为
+  `fc78afadd7fef4939bc18e6f95f212ff9f8190bc1e7766ed655b626dcd368568`。
+- 生产后 dump 已用 `pg_restore --exit-on-error --no-owner --no-privileges` 恢复到全新
+  PostgreSQL 17 数据库。恢复库的 revision、三个 batch、imported/rejected、timeline、
+  broken FK、default 分区和 archive 总数均与生产一致。
