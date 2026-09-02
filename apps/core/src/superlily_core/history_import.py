@@ -12,22 +12,21 @@ candidate lint.  It is not an archive importer.
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 import hashlib
 import json
 import sqlite3
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-
 from superlily_contracts import EventIn
-
 
 LILY_SOURCE_SYSTEM = "lily.nonebot.chatrecorder.v2"
 LILY_SOURCE_TABLE = "nonebot_plugin_chatrecorder_messagerecord_v2"
@@ -36,14 +35,85 @@ NEKRO_SOURCE_SYSTEM = "nekro.chat_message"
 NEKRO_SOURCE_TABLE = "chat_message"
 NEKRO_CUTOVER_BOUNDARY = datetime(2026, 6, 19, 11, 49, 44, 696404, tzinfo=timezone.utc)
 NEKRO_SOURCE_CUTOVER_BOUNDARY = datetime(2026, 6, 19, 11, 49, 44, tzinfo=timezone.utc)
+SQLITE_CHATRECORDER_SOURCE_TABLE = "nonebot_plugin_chatrecorder_messagerecord"
+SQLITE_CHATRECORDER_CUTOVER_BOUNDARY = datetime(2024, 8, 28, 13, 25, 30, tzinfo=timezone.utc)
+SQLITE_DATA_SOURCE_SYSTEM = "lily.nonebot.chatrecorder.sqlite.data1"
+SQLITE_DATA2_SOURCE_SYSTEM = "lily.nonebot.chatrecorder.sqlite.data2"
+SQLITE_DATA3_SOURCE_SYSTEM = "lily.nonebot.chatrecorder.sqlite.data3"
 MANIFEST_SCHEMA_VERSION = "history-dry-run-v1"
 
+
+@dataclass(frozen=True, slots=True)
+class LegacySourceProfile:
+    source_system: str
+    source_table: str
+    source_schema_version: str
+    cutover_boundary: datetime
+    source_cutover_boundary: datetime
+    normalizer: str
+
+
+_SOURCE_PROFILES = {
+    LILY_SOURCE_SYSTEM: LegacySourceProfile(
+        LILY_SOURCE_SYSTEM,
+        LILY_SOURCE_TABLE,
+        "chatrecorder-v2",
+        LILY_CUTOVER_BOUNDARY,
+        LILY_CUTOVER_BOUNDARY,
+        "lily",
+    ),
+    NEKRO_SOURCE_SYSTEM: LegacySourceProfile(
+        NEKRO_SOURCE_SYSTEM,
+        NEKRO_SOURCE_TABLE,
+        "nekro-chat-message-v1",
+        NEKRO_CUTOVER_BOUNDARY,
+        NEKRO_SOURCE_CUTOVER_BOUNDARY,
+        "nekro",
+    ),
+    SQLITE_DATA_SOURCE_SYSTEM: LegacySourceProfile(
+        SQLITE_DATA_SOURCE_SYSTEM,
+        SQLITE_CHATRECORDER_SOURCE_TABLE,
+        "chatrecorder-sqlite-2cad88d938f1",
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        "sqlite_chatrecorder",
+    ),
+    SQLITE_DATA2_SOURCE_SYSTEM: LegacySourceProfile(
+        SQLITE_DATA2_SOURCE_SYSTEM,
+        SQLITE_CHATRECORDER_SOURCE_TABLE,
+        "chatrecorder-sqlite-9bca28bcb998",
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        "sqlite_chatrecorder",
+    ),
+    SQLITE_DATA3_SOURCE_SYSTEM: LegacySourceProfile(
+        SQLITE_DATA3_SOURCE_SYSTEM,
+        SQLITE_CHATRECORDER_SOURCE_TABLE,
+        "chatrecorder-sqlite-9bca28bcb998",
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        SQLITE_CHATRECORDER_CUTOVER_BOUNDARY,
+        "sqlite_chatrecorder",
+    ),
+}
 _SOURCE_ALIASES = {
     "lily": LILY_SOURCE_SYSTEM,
     LILY_SOURCE_SYSTEM: LILY_SOURCE_SYSTEM,
     "nekro": NEKRO_SOURCE_SYSTEM,
     NEKRO_SOURCE_SYSTEM: NEKRO_SOURCE_SYSTEM,
+    "sqlite-data": SQLITE_DATA_SOURCE_SYSTEM,
+    SQLITE_DATA_SOURCE_SYSTEM: SQLITE_DATA_SOURCE_SYSTEM,
+    "sqlite-data2": SQLITE_DATA2_SOURCE_SYSTEM,
+    SQLITE_DATA2_SOURCE_SYSTEM: SQLITE_DATA2_SOURCE_SYSTEM,
+    "sqlite-data3": SQLITE_DATA3_SOURCE_SYSTEM,
+    SQLITE_DATA3_SOURCE_SYSTEM: SQLITE_DATA3_SOURCE_SYSTEM,
 }
+LEGACY_SOURCE_CHOICES = (
+    "lily",
+    "nekro",
+    "sqlite-data",
+    "sqlite-data2",
+    "sqlite-data3",
+)
 _LIMITED_REJECTION_CODES = {
     "duplicate_source_identity",
     "invalid_create_time",
@@ -53,7 +123,9 @@ _LIMITED_REJECTION_CODES = {
     "invalid_sender_identity",
     "missing_chat_key",
     "missing_bot_id",
+    "missing_conversation_id",
     "missing_id",
+    "missing_private_peer_id",
     "missing_scene_type",
     "missing_send_timestamp",
     "missing_sender_id",
@@ -136,6 +208,10 @@ def _canonical_source(source: str) -> str:
         return _SOURCE_ALIASES[source]
     except KeyError as exc:
         raise ValueError(f"unsupported legacy source: {source}") from exc
+
+
+def source_profile(source: str) -> LegacySourceProfile:
+    return _SOURCE_PROFILES[_canonical_source(source)]
 
 
 def _parse_aware_datetime(value: Any, *, field: str) -> datetime:
@@ -299,6 +375,68 @@ def _normalize_nekro(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_sqlite_chatrecorder(row: Mapping[str, Any]) -> dict[str, Any]:
+    source_record_id = _source_record_id(row)
+    message_type = str(row.get("type") or "").strip()
+    directions = {"message": "inbound", "message_sent": "outbound"}
+    if message_type not in directions:
+        raise _RejectedRow("unknown_message_type", f"unsupported message type: {message_type!r}")
+    direction = directions[message_type]
+    conversation_type = _conversation_type(row.get("detail_type"))
+    bot_id_value = row.get("bot_id")
+    bot_id = str(bot_id_value).strip() if bot_id_value is not None else ""
+    user_id_value = row.get("user_id")
+    user_id = str(user_id_value).strip() if user_id_value is not None else ""
+    if direction == "outbound" and not bot_id:
+        raise _RejectedRow("missing_bot_id", "outbound SQLite row requires bot_id")
+    if conversation_type == "group":
+        conversation_value = row.get("group_id")
+        conversation_id = str(conversation_value).strip() if conversation_value is not None else ""
+        if not conversation_id:
+            raise _RejectedRow("missing_conversation_id", "group SQLite row requires group_id")
+    elif direction == "inbound":
+        conversation_id = user_id
+        if not conversation_id:
+            raise _RejectedRow("missing_sender_id", "private inbound SQLite row requires user_id")
+    else:
+        peer_value = row.get("private_peer_id")
+        conversation_id = str(peer_value).strip() if peer_value is not None else ""
+        if not conversation_id:
+            raise _RejectedRow(
+                "missing_private_peer_id",
+                "private outbound SQLite row does not identify its peer",
+            )
+    sender_id = bot_id if direction == "outbound" else user_id
+    if not sender_id:
+        raise _RejectedRow("missing_sender_id", "SQLite row requires a provable sender_id")
+    bot_scope = bot_id or "unknown-bot"
+    source_conversation_key = (
+        f"onebot_v11:{bot_scope}:{conversation_type}:{conversation_id}"
+    )
+    return {
+        "source_record_id": source_record_id,
+        "occurred_at": _parse_lily_time(row.get("time")),
+        "source_persisted_at": None,
+        "direction": direction,
+        "source_conversation_key": source_conversation_key,
+        "source_conversation_type": str(row.get("detail_type") or ""),
+        "conversation_type": conversation_type,
+        "conversation_id": conversation_id,
+        "bot_id": bot_id or None,
+        "sender_id": sender_id,
+        "text_is_empty": str(row.get("plain_text") or "").strip() == "",
+    }
+
+
+def normalize_legacy_row(source: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    profile = source_profile(source)
+    if profile.normalizer == "lily":
+        return _normalize_lily(row)
+    if profile.normalizer == "nekro":
+        return _normalize_nekro(row)
+    return _normalize_sqlite_chatrecorder(row)
+
+
 def _manifest_item(source_system: str, source_table: str, item: Mapping[str, Any]) -> dict[str, Any]:
     persisted = item.get("source_persisted_at")
     return {
@@ -397,22 +535,19 @@ def dry_run_legacy_rows(
 ) -> dict[str, Any]:
     """Validate exported legacy rows and return a deterministic, write-free manifest."""
 
-    canonical_source = _canonical_source(source_system)
-    source_table = LILY_SOURCE_TABLE if canonical_source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_TABLE
+    profile = source_profile(source_system)
+    canonical_source = profile.source_system
+    source_table = profile.source_table
     boundary = _parse_cutover_boundary(cutover_boundary)
-    expected_boundary = (
-        LILY_CUTOVER_BOUNDARY
-        if canonical_source == LILY_SOURCE_SYSTEM
-        else NEKRO_CUTOVER_BOUNDARY
-    )
+    expected_boundary = profile.cutover_boundary
     if boundary != expected_boundary:
         raise ValueError(
             f"cutover boundary for {canonical_source} must be {expected_boundary.isoformat()}"
         )
-    normalize = _normalize_lily if canonical_source == LILY_SOURCE_SYSTEM else _normalize_nekro
-    source_boundary = (
-        boundary if canonical_source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_CUTOVER_BOUNDARY
-    )
+    def normalize(row: Mapping[str, Any]) -> dict[str, Any]:
+        return normalize_legacy_row(canonical_source, row)
+
+    source_boundary = profile.source_cutover_boundary
 
     total = 0
     excluded = 0
@@ -712,7 +847,7 @@ def _build_parser() -> argparse.ArgumentParser:
     event_parser = subparsers.add_parser("eventin", help="lint legacy EventIn-shaped candidates")
     event_parser.add_argument("jsonl", type=Path)
     legacy_parser = subparsers.add_parser("legacy", help="build an H2 legacy-row dry-run manifest")
-    legacy_parser.add_argument("--source", required=True, choices=("lily", "nekro"))
+    legacy_parser.add_argument("--source", required=True, choices=LEGACY_SOURCE_CHOICES)
     legacy_parser.add_argument("--cutover", required=True)
     legacy_parser.add_argument("--jsonl", required=True, type=Path)
     legacy_parser.add_argument("--snapshot-id", required=True)

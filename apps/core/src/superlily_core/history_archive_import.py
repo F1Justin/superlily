@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
@@ -18,27 +18,16 @@ import asyncpg
 from sqlalchemy.engine import make_url
 
 from .history_import import (
-    LILY_CUTOVER_BOUNDARY,
-    LILY_SOURCE_SYSTEM,
-    LILY_SOURCE_TABLE,
-    NEKRO_CUTOVER_BOUNDARY,
-    NEKRO_SOURCE_CUTOVER_BOUNDARY,
-    NEKRO_SOURCE_SYSTEM,
-    NEKRO_SOURCE_TABLE,
-    _RejectedRow,
+    LEGACY_SOURCE_CHOICES,
     _canonical_source,
-    _normalize_lily,
-    _normalize_nekro,
+    _RejectedRow,
     dry_run_legacy_rows,
     iter_jsonl,
+    normalize_legacy_row,
+    source_profile,
 )
 
-
 _MAPPING_VERSION = "history-map-v1"
-_SOURCE_SCHEMA_VERSIONS = {
-    LILY_SOURCE_SYSTEM: "chatrecorder-v2",
-    NEKRO_SOURCE_SYSTEM: "nekro-chat-message-v1",
-}
 _STAGE_COLUMNS = (
     "source_system",
     "source_table",
@@ -216,17 +205,27 @@ def _deterministic_id(kind: str, *parts: str) -> str:
     return str(uuid5(NAMESPACE_URL, "superlily:archive:" + kind + ":" + "|".join(parts)))
 
 
-def _conversation_target(source_system: str, row: Mapping[str, Any]) -> tuple[str, str]:
-    if source_system == LILY_SOURCE_SYSTEM:
+def _conversation_target(
+    source_system: str,
+    row: Mapping[str, Any],
+    normalized: Mapping[str, Any],
+) -> tuple[str, str]:
+    profile = source_profile(source_system)
+    if profile.normalizer == "lily":
         value = row.get("conversation_id", row.get("scene_id"))
         if value is None or not str(value).strip():
             raise _RejectedRow("invalid_row", "scene_id/conversation_id is required")
         return str(value).strip(), "session_scene_join"
-    chat_key = str(row.get("chat_key") or "").strip()
-    match = _NEKRO_CHAT_KEY.fullmatch(chat_key)
-    if not match:
-        raise _RejectedRow("invalid_row", "chat_key does not match onebot_v11 conversation grammar")
-    return match.group(2), "chat_key_grammar"
+    if profile.normalizer == "nekro":
+        chat_key = str(row.get("chat_key") or "").strip()
+        match = _NEKRO_CHAT_KEY.fullmatch(chat_key)
+        if not match:
+            raise _RejectedRow(
+                "invalid_row",
+                "chat_key does not match onebot_v11 conversation grammar",
+            )
+        return match.group(2), "chat_key_grammar"
+    return str(normalized["conversation_id"]), "sqlite_direct_ids"
 
 
 def build_archive_record(
@@ -237,12 +236,13 @@ def build_archive_record(
     mapping_version: str = _MAPPING_VERSION,
 ) -> ArchiveRecord:
     source = _canonical_source(source_system)
-    normalized = _normalize_lily(row) if source == LILY_SOURCE_SYSTEM else _normalize_nekro(row)
+    profile = source_profile(source)
+    normalized = normalize_legacy_row(source, row)
     warnings: list[str] = []
-    conversation_id, mapping_reason = _conversation_target(source, row)
-    source_table = LILY_SOURCE_TABLE if source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_TABLE
+    conversation_id, mapping_reason = _conversation_target(source, row, normalized)
+    source_table = profile.source_table
 
-    if source == LILY_SOURCE_SYSTEM:
+    if profile.normalizer == "lily":
         segments = _parse_json_field(row.get("message"), expected=list, field="message", warnings=warnings)
         reply_hint = _reply_hint_lily(segments)
         content_text = _clean_scalar(row.get("plain_text"), warnings, "plain_text") or ""
@@ -256,7 +256,7 @@ def build_archive_record(
             "bot_id": normalized.get("bot_id"),
             "reason": mapping_reason,
         }
-    else:
+    elif profile.normalizer == "nekro":
         segments = _parse_json_field(
             row.get("content_data"),
             expected=list,
@@ -278,6 +278,28 @@ def build_archive_record(
         mapping_metadata = {
             "adapter_key": normalized.get("adapter_key"),
             "reason": mapping_reason,
+        }
+    else:
+        segments = _parse_json_field(
+            row.get("message"),
+            expected=list,
+            field="message",
+            warnings=warnings,
+        )
+        reply_hint = _reply_hint_lily(segments)
+        content_text = _clean_scalar(row.get("plain_text"), warnings, "plain_text") or ""
+        raw_fields = {
+            "type": row.get("type"),
+            "detail_type": row.get("detail_type"),
+            "group_id": row.get("group_id"),
+            "bot_type": row.get("bot_type"),
+            "guild_id": row.get("guild_id"),
+            "channel_id": row.get("channel_id"),
+        }
+        mapping_metadata = {
+            "bot_id": normalized.get("bot_id"),
+            "reason": mapping_reason,
+            "source_schema_version": profile.source_schema_version,
         }
 
     source_record_id = normalized["source_record_id"]
@@ -344,18 +366,18 @@ def build_archive_record(
 
 def verify_manifest(source: str, jsonl_path: Path, manifest: Mapping[str, Any]) -> dict[str, Any]:
     canonical_source = _canonical_source(source)
-    expected_schema = _SOURCE_SCHEMA_VERSIONS[canonical_source]
+    profile = source_profile(canonical_source)
+    expected_schema = profile.source_schema_version
     if manifest.get("source_system") != canonical_source:
         raise ValueError("manifest source_system does not match --source")
     if manifest.get("source_schema_version") != expected_schema:
         raise ValueError(f"manifest source_schema_version must be {expected_schema}")
     if manifest.get("mapping_version") != _MAPPING_VERSION:
         raise ValueError(f"manifest mapping_version must be {_MAPPING_VERSION}")
-    cutover = LILY_CUTOVER_BOUNDARY if canonical_source == LILY_SOURCE_SYSTEM else NEKRO_CUTOVER_BOUNDARY
     computed = dry_run_legacy_rows(
         canonical_source,
         iter_jsonl(jsonl_path),
-        cutover,
+        profile.cutover_boundary,
         source_snapshot_id=str(manifest.get("source_snapshot_id") or ""),
         source_schema_version=expected_schema,
         mapping_version=_MAPPING_VERSION,
@@ -397,9 +419,11 @@ async def _ensure_target(conn: asyncpg.Connection) -> None:
     if revision not in {
         "0026_history_timeline_export",
         "0027_name_observation_history",
+        "0028_sqlite_chatrecorder_archive",
     }:
         raise RuntimeError(
-            f"archive target must be at 0026_history_timeline_export or 0027_name_observation_history, got {revision}"
+            "archive target must be at a supported history revision, "
+            f"got {revision}"
         )
     required = await conn.fetchval(
         """
@@ -698,7 +722,7 @@ async def apply_archive_import(
         raise ValueError("archive apply requires a manifest with zero duplicate source identities")
     canonical_source = str(verified["source_system"])
     source_table = str(verified["source_table"])
-    source_boundary = LILY_CUTOVER_BOUNDARY if canonical_source == LILY_SOURCE_SYSTEM else NEKRO_SOURCE_CUTOVER_BOUNDARY
+    source_boundary = source_profile(canonical_source).source_cutover_boundary
     conn = await asyncpg.connect(_asyncpg_dsn(database_url), command_timeout=120)
     batch_id: str | None = None
     try:
@@ -746,7 +770,7 @@ async def apply_archive_import(
                 break
             chunk_last_line = line_number
             try:
-                normalized = _normalize_lily(row) if canonical_source == LILY_SOURCE_SYSTEM else _normalize_nekro(row)
+                normalized = normalize_legacy_row(canonical_source, row)
                 if normalized["occurred_at"] >= source_boundary:
                     continue
                 if not selection.includes(normalized, selected_count):
@@ -930,7 +954,7 @@ def _selection_from_args(args: argparse.Namespace) -> ImportSelection:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Checkpointed H2 archive writer.")
-    parser.add_argument("--source", required=True, choices=("lily", "nekro"))
+    parser.add_argument("--source", required=True, choices=LEGACY_SOURCE_CHOICES)
     parser.add_argument("--jsonl", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--scope", required=True, choices=("sample", "month", "full"))

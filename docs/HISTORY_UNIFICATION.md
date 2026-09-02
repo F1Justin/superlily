@@ -164,6 +164,11 @@ H1 迁移只创建结构，不连接或读取外部数据库。目标对象位�
 - `lily.nonebot.chatrecorder.v2`
 - `nekro.chat_message`
 
+2026-09-02 接受的三份更早 SQLite chatrecorder 快照使用独立来源系统标识，并继续遵守
+相同 provenance、幂等、分块和恢复要求。其冻结 hash、schema、UTC 时间解释、221 条
+无法证明私聊对端的拒绝策略及 741,964 条可导入基线见
+`docs/SQLITE_CHATRECORDER_IMPORT.md`。这些来源不改变 ChatExporter 的 timeline v2 合同。
+
 来源三元组 `(source_system, source_table, source_record_id)` 必须在 archive 内精确唯一，
 由 `archive.source_message_identities` ledger 强制；`legacy_messages` 分区父表的唯一
 约束同时包含 `occurred_at` 以满足 PostgreSQL DDL 限制。同一来源的确切重复仍保留为

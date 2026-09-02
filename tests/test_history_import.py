@@ -5,7 +5,6 @@ import re
 from datetime import datetime, timezone
 
 import pytest
-
 import superlily_core.history_import as history_import
 from superlily_core.history_import import dry_run_legacy_rows, dry_run_payloads, main
 
@@ -28,7 +27,9 @@ KNOWN_REJECTION_CODES = {
     "invalid_time",
     "missing_chat_key",
     "missing_bot_id",
+    "missing_conversation_id",
     "missing_id",
+    "missing_private_peer_id",
     "missing_scene_type",
     "missing_send_timestamp",
     "missing_sender_id",
@@ -131,6 +132,31 @@ def _nekro_row(
     return row
 
 
+def _sqlite_row(
+    record_id: str,
+    *,
+    type_: str = "message",
+    detail_type: str = "group",
+    bot_id: str | None = "985393579",
+) -> dict:
+    return {
+        "id": record_id,
+        "platform": "qq",
+        "time": "2023-07-17 10:04:36.326594",
+        "type": type_,
+        "detail_type": detail_type,
+        "message_id": f"sqlite-message-{record_id}",
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "plain_text": "hello",
+        "user_id": bot_id if type_ == "message_sent" else f"sender-{record_id}",
+        "group_id": "1080353942" if detail_type == "group" else None,
+        "bot_type": "OneBot V11" if bot_id else None,
+        "bot_id": bot_id,
+        "guild_id": None,
+        "channel_id": None,
+    }
+
+
 def _eligible_by_id(report: dict) -> dict[str, dict]:
     return {sample["source_record_id"]: sample for sample in report["sample_eligible"]}
 
@@ -178,6 +204,8 @@ def test_history_import_legacy_lily_naive_time_is_utc_and_cutover_is_strict() ->
     assert report["by_direction"] == {"inbound": 1, "outbound": 1}
     assert report["by_bot_id"] == {"985393579": 2}
     assert report["by_conversation_type"] == {"group": 1, "private": 1}
+
+
     assert report["by_source_conversation_key"] == {"session-1": 2}
     assert report["eligible_empty_text"] == 0
     assert _utc(report["eligible_occurred_at_min"]) == _utc("2026-06-19T11:00:00+00:00")
@@ -215,6 +243,41 @@ def test_history_import_legacy_lily_naive_time_is_utc_and_cutover_is_strict() ->
     assert samples["lily-4"]["direction"] == "outbound"
     assert str(samples["lily-4"]["source_conversation_type"]) == "0"
     assert samples["lily-4"]["conversation_type"] == "private"
+
+
+def test_history_import_sqlite_maps_group_rows_and_allows_unknown_inbound_bot() -> None:
+    rows = [
+        _sqlite_row("1"),
+        _sqlite_row("2", type_="message_sent"),
+        _sqlite_row("3", bot_id=None),
+    ]
+    report = dry_run_legacy_rows(
+        "sqlite-data2",
+        rows,
+        "2024-08-28T13:25:30+00:00",
+        source_snapshot_id="sqlite-data2-fixture",
+        source_schema_version="chatrecorder-sqlite-9bca28bcb998",
+        mapping_version="history-map-v1",
+    )
+
+    assert report["eligible"] == 3
+    assert report["rejected"] == 0
+    assert report["by_month"] == {"2023-07": 3}
+    assert report["by_direction"] == {"inbound": 2, "outbound": 1}
+    assert report["by_bot_id"] == {"985393579": 2}
+    assert report["source_system"] == "lily.nonebot.chatrecorder.sqlite.data2"
+
+
+def test_history_import_sqlite_rejects_unattributable_private_outbound() -> None:
+    report = dry_run_legacy_rows(
+        "sqlite-data3",
+        [_sqlite_row("1", type_="message_sent", detail_type="private")],
+        "2024-08-28T13:25:30+00:00",
+    )
+
+    assert report["eligible"] == 0
+    assert report["rejected"] == 1
+    assert report["by_rejection_code"] == {"missing_private_peer_id": 1}
 
 
 def test_history_import_legacy_lily_rejects_unknown_type_and_duplicate_identity() -> None:

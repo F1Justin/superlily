@@ -4,7 +4,7 @@
 
 最后核对：2026-08-31
 
-适用版本：Alembic `0027_name_observation_history`
+适用版本：Alembic `0028_sqlite_chatrecorder_archive`
 
 QQ 名称历史使用 `archive.identity_name_timeline_v1` 与
 `archive.conversation_name_timeline_v1`；字段语义和按 QQ 号查询见
@@ -29,7 +29,7 @@ QQ 名称历史使用 `archive.identity_name_timeline_v1` 与
 | --- | --- |
 | 数据库 | PostgreSQL 17.10 |
 | 数据库名 / Schema | `superlily` / `public`、`archive` |
-| Alembic head | `0027_name_observation_history` |
+| Alembic head | `0028_sqlite_chatrecorder_archive` |
 | 业务表 | 86 张（所有非系统 schema） |
 | 索引 / trigger | 352 / 62（`public` 与 `archive`） |
 | 数据库大小 | 约 23 GB |

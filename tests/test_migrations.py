@@ -183,7 +183,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
             ).fetchall()
         }
 
-    assert version == ("0027_name_observation_history",)
+    assert version == ("0028_sqlite_chatrecorder_archive",)
     assert name_history_tables == {
         "identity_name_observations",
         "conversation_name_observations",
@@ -614,7 +614,7 @@ def test_sqlite_alembic_upgrade_reaches_control_plane_head_and_round_trips(
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         descriptor_count = connection.execute("SELECT COUNT(*) FROM tool_descriptors").fetchone()
-        assert version == ("0027_name_observation_history",)
+        assert version == ("0028_sqlite_chatrecorder_archive",)
     assert descriptor_count == (0,)
 
     subprocess.run(
@@ -794,7 +794,7 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
             provider_columns,
             functions,
         ) = asyncio.run(snapshot())
-        assert version == "0027_name_observation_history"
+        assert version == "0028_sqlite_chatrecorder_archive"
         assert tables == {
             "control_plane_sessions",
             "control_plane_login_attempts",
@@ -910,6 +910,6 @@ def test_postgres_alembic_control_plane_round_trip_and_drift() -> None:
         assert functions == set()
 
         alembic("upgrade", "head")
-        assert asyncio.run(snapshot())[0] == "0027_name_observation_history"
+        assert asyncio.run(snapshot())[0] == "0028_sqlite_chatrecorder_archive"
     finally:
         alembic("downgrade", "base", check=False)

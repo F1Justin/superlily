@@ -1,28 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-
 REPOSITORY_ROOT = Path(__file__).parents[1]
 PARENT_REVISION = "0024_agent_product_flow"
 ARCHIVE_REVISION = "0025_legacy_history_archive"
-HEAD_REVISION = "0027_name_observation_history"
+HEAD_REVISION = "0028_sqlite_chatrecorder_archive"
 SQLITE_ARCHIVE_PREFIX = "archive_"
 
 BEHAVIOR_BATCH_ID = "batch-history-behavior-001"
@@ -1508,6 +1505,9 @@ def test_postgres_legacy_history_archive_contract_and_round_trip() -> None:
         )
         assert "lily.nonebot.chatrecorder.v2" in constraint_definitions
         assert "nekro.chat_message" in constraint_definitions
+        assert "lily.nonebot.chatrecorder.sqlite.data1" in constraint_definitions
+        assert "lily.nonebot.chatrecorder.sqlite.data2" in constraint_definitions
+        assert "lily.nonebot.chatrecorder.sqlite.data3" in constraint_definitions
 
         partitioning = snapshot["partitioning"]
         assert partitioning is not None

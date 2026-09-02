@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from .settings import DEFAULT_DATABASE_URL
 
 
-HEAD_REVISION = "0027_name_observation_history"
+HEAD_REVISION = "0028_sqlite_chatrecorder_archive"
 
 
 def _uuid(*parts: object) -> str:

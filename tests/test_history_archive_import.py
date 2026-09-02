@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
 import pytest
-
 import superlily_core.history_archive_import as archive_import
 from superlily_core.history_archive_import import (
     ImportSelection,
@@ -17,7 +16,6 @@ from superlily_core.history_archive_import import (
     build_archive_record,
 )
 from superlily_core.history_import import dry_run_legacy_rows
-
 
 LILY_CUTOVER = "2026-06-19T11:45:17.171050+00:00"
 NEKRO_CUTOVER = "2026-06-19T11:49:44.696404+00:00"
@@ -67,6 +65,28 @@ def _nekro_row(record_id: str) -> dict:
     }
 
 
+def _sqlite_row(record_id: str) -> dict:
+    return {
+        "id": record_id,
+        "platform": "qq",
+        "time": "2023-07-17 10:04:36.326594",
+        "type": "message",
+        "detail_type": "group",
+        "message_id": f"sqlite-message-{record_id}",
+        "message": [
+            {"type": "reply", "data": {"id": "sqlite-quoted-1"}},
+            {"type": "text", "data": {"text": "hello"}},
+        ],
+        "plain_text": "hello",
+        "user_id": "123456",
+        "group_id": "1080353942",
+        "bot_type": "OneBot V11",
+        "bot_id": "985393579",
+        "guild_id": None,
+        "channel_id": None,
+    }
+
+
 def _write_snapshot(path: Path, rows: list[dict]) -> None:
     path.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
@@ -84,12 +104,21 @@ def _manifest(source: str, rows: list[dict], snapshot_id: str) -> dict:
             source_schema_version="chatrecorder-v2",
             mapping_version="history-map-v1",
         )
+    if source == "nekro":
+        return dry_run_legacy_rows(
+            source,
+            rows,
+            NEKRO_CUTOVER,
+            source_snapshot_id=snapshot_id,
+            source_schema_version="nekro-chat-message-v1",
+            mapping_version="history-map-v1",
+        )
     return dry_run_legacy_rows(
         source,
         rows,
-        NEKRO_CUTOVER,
+        "2024-08-28T13:25:30+00:00",
         source_snapshot_id=snapshot_id,
-        source_schema_version="nekro-chat-message-v1",
+        source_schema_version="chatrecorder-sqlite-9bca28bcb998",
         mapping_version="history-map-v1",
     )
 
@@ -124,6 +153,29 @@ def test_build_nekro_archive_record_uses_platform_time_and_sanitizes_nul() -> No
     assert "\x00" not in record.content_text
     assert "nul_replaced" in str(record.parse_warning)
     assert json.loads(record.reply_hint_json)["target_platform_message_id"] == "quoted-2"
+
+
+def test_build_sqlite_archive_record_preserves_direct_conversation_and_reply() -> None:
+    record = build_archive_record(
+        "sqlite-data2",
+        _sqlite_row("2"),
+        source_snapshot_id="sqlite-data2-fixture",
+    )
+
+    assert record.source_system == "lily.nonebot.chatrecorder.sqlite.data2"
+    assert record.source_table == "nonebot_plugin_chatrecorder_messagerecord"
+    assert record.conversation_type == "group"
+    assert record.conversation_id == "1080353942"
+    assert record.source_conversation_key == (
+        "onebot_v11:985393579:group:1080353942"
+    )
+    assert record.occurred_at == datetime.fromisoformat(
+        "2023-07-17T10:04:36.326594+00:00"
+    )
+    assert json.loads(record.reply_hint_json) == {
+        "scope": "source_conversation_and_bot",
+        "target_platform_message_id": "sqlite-quoted-1",
+    }
 
 
 def test_import_selection_contract() -> None:
@@ -203,6 +255,81 @@ def test_postgres_archive_writer_is_checkpointed_and_idempotent(tmp_path: Path) 
             await conn.close()
 
     assert asyncio.run(verify()) == (2, 2, "completed")
+
+
+def test_postgres_archive_writer_accepts_sqlite_source_and_old_partition(
+    tmp_path: Path,
+) -> None:
+    database_url = os.getenv("SUPERLILY_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("SUPERLILY_TEST_DATABASE_URL is not configured")
+    fixture_id = str(uuid4())
+    row = _sqlite_row(f"sqlite-writer-{fixture_id}")
+    row["group_id"] = f"fixture-group-{fixture_id}"
+    snapshot_id = f"sqlite-writer-fixture-{fixture_id}"
+    manifest = _manifest("sqlite-data2", [row], snapshot_id)
+    jsonl_path = tmp_path / "sqlite-data2.jsonl"
+    _write_snapshot(jsonl_path, [row])
+
+    report = asyncio.run(
+        apply_archive_import(
+            database_url=database_url,
+            source="sqlite-data2",
+            jsonl_path=jsonl_path,
+            manifest=manifest,
+            selection=ImportSelection("full"),
+            chunk_size=1,
+        )
+    )
+
+    async def verify() -> tuple[str, str]:
+        conn = await asyncpg.connect(archive_import._asyncpg_dsn(database_url))
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT source_system, tableoid::regclass::text AS partition
+                FROM archive.legacy_messages
+                WHERE import_batch_id=$1
+                """,
+                report["batch_id"],
+            )
+            return str(row["source_system"]), str(row["partition"])
+        finally:
+            await conn.close()
+
+    async def cleanup() -> None:
+        conn = await asyncpg.connect(archive_import._asyncpg_dsn(database_url))
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    "DELETE FROM archive.source_message_identities WHERE import_batch_id=$1",
+                    report["batch_id"],
+                )
+                await conn.execute(
+                    "DELETE FROM archive.legacy_messages WHERE import_batch_id=$1",
+                    report["batch_id"],
+                )
+                await conn.execute(
+                    "DELETE FROM archive.conversation_mappings "
+                    "WHERE source_system=$1 AND source_conversation_key=$2",
+                    "lily.nonebot.chatrecorder.sqlite.data2",
+                    f"onebot_v11:985393579:group:fixture-group-{fixture_id}",
+                )
+                await conn.execute(
+                    "DELETE FROM archive.import_batches WHERE id=$1",
+                    report["batch_id"],
+                )
+        finally:
+            await conn.close()
+
+    try:
+        assert report["inserted"] == 1
+        assert asyncio.run(verify()) == (
+            "lily.nonebot.chatrecorder.sqlite.data2",
+            "archive.legacy_messages_2023_07",
+        )
+    finally:
+        asyncio.run(cleanup())
 
 
 def test_postgres_archive_writer_progresses_sample_month_full(tmp_path: Path) -> None:
