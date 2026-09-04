@@ -37,7 +37,11 @@ from .identity import (
     conversation,
     native_identity_cache_key,
 )
-from .directory_snapshots import friend_directory_snapshot, group_directory_snapshot
+from .directory_snapshots import (
+    await_qq_api,
+    friend_directory_snapshot,
+    group_directory_snapshot,
+)
 from .platform_actions import platform_action_event_payload
 from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
@@ -88,6 +92,12 @@ class BridgeConfig(ConfigBase):
         ge=3_600,
         le=604_800,
         title="QQ directory snapshot interval",
+    )
+    DIRECTORY_API_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=120.0,
+        title="Per-call QQ directory API timeout",
     )
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
     TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="Legacy HTTP timeout")
@@ -325,7 +335,10 @@ async def directory_snapshot_loop() -> None:
             for bot in bots:
                 observed_at = utc_iso()
                 try:
-                    categories = await bot.call_api("get_friends_with_category")
+                    categories = await await_qq_api(
+                        bot.call_api("get_friends_with_category"),
+                        timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                    )
                     payload, key = friend_directory_snapshot(
                         instance=instance(bot.self_id),
                         raw_categories=categories if isinstance(categories, list) else [],
@@ -334,7 +347,10 @@ async def directory_snapshot_loop() -> None:
                     )
                 except Exception as category_error:
                     try:
-                        friends = await bot.get_friend_list()
+                        friends = await await_qq_api(
+                            bot.get_friend_list(),
+                            timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                        )
                         payload, key = friend_directory_snapshot(
                             instance=instance(bot.self_id),
                             raw_categories=[{"buddyList": friends}],
@@ -352,9 +368,15 @@ async def directory_snapshot_loop() -> None:
 
                 try:
                     try:
-                        groups = await bot.get_group_list(no_cache=False)
+                        groups = await await_qq_api(
+                            bot.get_group_list(no_cache=False),
+                            timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                        )
                     except TypeError:
-                        groups = await bot.get_group_list()
+                        groups = await await_qq_api(
+                            bot.get_group_list(),
+                            timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                        )
                 except Exception:
                     logger.exception("Lily Core group directory inventory failed")
                     continue
@@ -366,16 +388,25 @@ async def directory_snapshot_loop() -> None:
                     source_apis = ["get_group_list", "get_group_info_ex", "get_group_member_list"]
                     reasons: list[str] = []
                     try:
-                        extended = await bot.call_api("get_group_info_ex", group_id=int(group_id))
+                        extended = await await_qq_api(
+                            bot.call_api("get_group_info_ex", group_id=int(group_id)),
+                            timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                        )
                         if isinstance(extended, dict):
                             group = {**group, **extended}
                     except Exception as exc:
                         reasons.append(f"get_group_info_ex:{type(exc).__name__}")
                     try:
-                        members = await bot.get_group_member_list(group_id=int(group_id), no_cache=True)
+                        members = await await_qq_api(
+                            bot.get_group_member_list(group_id=int(group_id), no_cache=True),
+                            timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                        )
                     except TypeError:
                         try:
-                            members = await bot.get_group_member_list(group_id=int(group_id))
+                            members = await await_qq_api(
+                                bot.get_group_member_list(group_id=int(group_id)),
+                                timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
+                            )
                         except Exception as exc:
                             members = []
                             reasons.append(f"get_group_member_list:{type(exc).__name__}")

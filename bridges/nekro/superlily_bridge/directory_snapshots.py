@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any
+
+
+async def await_qq_api(awaitable: Any, *, timeout_seconds: float) -> Any:
+    return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
