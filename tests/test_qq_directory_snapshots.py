@@ -99,16 +99,23 @@ def test_bridge_directory_implementations_are_identical() -> None:
 async def test_directory_api_timeout_cancels_a_stuck_request(path: Path) -> None:
     module = load_module(path)
     cancelled = asyncio.Event()
+    release = asyncio.Event()
 
     async def stuck_request():
         try:
-            await asyncio.Event().wait()
-        finally:
+            await release.wait()
+        except asyncio.CancelledError:
             cancelled.set()
+            await release.wait()
 
     with pytest.raises(TimeoutError):
-        await module.await_qq_api(stuck_request(), timeout_seconds=0.01)
-    assert cancelled.is_set()
+        await asyncio.wait_for(
+            module.await_qq_api(stuck_request(), timeout_seconds=0.01),
+            timeout=0.1,
+        )
+    await asyncio.wait_for(cancelled.wait(), timeout=0.1)
+    release.set()
+    await asyncio.sleep(0)
 
 
 @pytest.mark.parametrize("path", DIRECTORY_PATHS)

@@ -7,8 +7,23 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    if task.cancelled():
+        return
+    try:
+        task.exception()
+    except Exception:
+        pass
+
+
 async def await_qq_api(awaitable: Any, *, timeout_seconds: float) -> Any:
-    return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+    task = asyncio.ensure_future(awaitable)
+    done, _ = await asyncio.wait({task}, timeout=timeout_seconds)
+    if task not in done:
+        task.add_done_callback(_consume_task_result)
+        task.cancel()
+        raise TimeoutError(f"QQ directory API exceeded {timeout_seconds:g} seconds")
+    return task.result()
 
 
 def _mapping(value: Any) -> dict[str, Any]:
