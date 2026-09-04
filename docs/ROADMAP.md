@@ -230,6 +230,13 @@ Runtime 的小改进。不得把研究对象写成集成路线。任何把它们
 验收门和回滚见 [`C0E_QQ_PLATFORM_FACTS.md`](C0E_QQ_PLATFORM_FACTS.md)。
 本项是当前唯一已授权的实施切片；完成代码不等于完成生产发布或签署。
 
+### R5.2（C0-F）：QQ 通讯录与群成员快照（实现完成，待生产验收）
+
+本项继续落实“应记尽记”，通过默认关闭的周期任务读取好友分类、群扩展信息和群成员列表，
+让未发言成员也进入可按 QQ 号检索的关系与名称历史。只保存业务必要字段，主动排除手机号、
+邮箱和生日等联系人隐私；范围、失败边界、验收门和回滚见
+[`C0F_QQ_DIRECTORY_SNAPSHOTS.md`](C0F_QQ_DIRECTORY_SNAPSHOTS.md)。
+
 ## 接手与提交规则
 
 新任务先读 `MANIFESTO.md`、本文、`R0_BASELINE.md`、当前 `git status` 和相关 accepted

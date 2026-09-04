@@ -200,6 +200,62 @@ class HeartbeatIn(WireModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class QQGroupProfileSnapshot(WireModel):
+    group_id: str = Field(min_length=1, max_length=256)
+    group_name: str | None = Field(default=None, max_length=512)
+    group_remark: str | None = Field(default=None, max_length=512)
+    member_count: int | None = Field(default=None, ge=0)
+    max_member_count: int | None = Field(default=None, ge=0)
+    whole_group_ban: bool | None = None
+
+
+class QQGroupMemberSnapshot(WireModel):
+    user_id: str = Field(min_length=1, max_length=256)
+    nickname: str | None = Field(default=None, max_length=512)
+    card: str | None = Field(default=None, max_length=512)
+    role: Literal["owner", "admin", "member", "unknown"] = "unknown"
+    title: str | None = Field(default=None, max_length=512)
+    member_level: str | None = Field(default=None, max_length=512)
+    qq_level: int | None = Field(default=None, ge=0)
+    joined_at: AwareDatetime | None = None
+    last_sent_at: AwareDatetime | None = None
+    muted_until: AwareDatetime | None = None
+    is_robot: bool | None = None
+
+
+class QQFriendSnapshot(WireModel):
+    user_id: str = Field(min_length=1, max_length=256)
+    nickname: str | None = Field(default=None, max_length=512)
+    remark: str | None = Field(default=None, max_length=512)
+    category_id: str | None = Field(default=None, max_length=256)
+    category_name: str | None = Field(default=None, max_length=512)
+
+
+class QQDirectorySnapshotIn(WireModel):
+    schema_version: Literal["1.0"] = API_SCHEMA_VERSION
+    snapshot_id: str = Field(min_length=1, max_length=128)
+    snapshot_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    instance: BotInstanceRef
+    snapshot_kind: Literal["group", "friends"]
+    observed_at: AwareDatetime
+    source_apis: list[str] = Field(min_length=1, max_length=8)
+    capture_status: Literal["complete", "partial"]
+    reason: str | None = Field(default=None, max_length=4096)
+    group: QQGroupProfileSnapshot | None = None
+    members: list[QQGroupMemberSnapshot] = Field(default_factory=list, max_length=10_000)
+    friends: list[QQFriendSnapshot] = Field(default_factory=list, max_length=100_000)
+
+    @model_validator(mode="after")
+    def require_kind_payload(self) -> "QQDirectorySnapshotIn":
+        if self.snapshot_kind == "group":
+            if self.group is None or self.friends:
+                raise ValueError("group snapshot requires group and must not contain friends")
+            return self
+        if self.group is not None or self.members:
+            raise ValueError("friends snapshot must not contain group or members")
+        return self
+
+
 class RuntimePlugin(WireModel):
     plugin_id: str = Field(min_length=1, max_length=256)
     module_name: str = Field(min_length=1, max_length=512)

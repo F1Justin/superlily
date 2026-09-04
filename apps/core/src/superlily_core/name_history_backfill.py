@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from .settings import DEFAULT_DATABASE_URL
 
 
-HEAD_REVISION = "0029_qq_platform_facts"
+HEAD_REVISION = "0030_qq_directory_snapshots"
 
 
 def _uuid(*parts: object) -> str:

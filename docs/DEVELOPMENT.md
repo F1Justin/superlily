@@ -171,7 +171,7 @@ SUPERLILY_DATABASE_URL='postgresql+asyncpg://archive-writer@target/superlily' \
 
 Nekro 使用同样三步并把 `--source` 改为 `nekro`。每次 apply 都先重算并核对完整
 manifest；目标必须是 PostgreSQL 且位于当前 Alembic head（本阶段为
-`0029_qq_platform_facts`；旧 H2 工具也兼容已冻结的 `0026_history_timeline_export`）。writer 通过临时
+`0030_qq_directory_snapshots`；旧 H2 工具也兼容已冻结的 `0026_history_timeline_export`）。writer 通过临时
 staging + `COPY` 分块提交，batch checkpoint 记录输入行号和分范围计数，来源身份 ledger
 使同一 scope 重跑为零新增；full 完成后更新 archive bulk-load 统计，避免版本化 timeline
 沿用导入前的空表计划。不得跳过 sample/month 直接全量，也不得把生产 DSN 留在 shell

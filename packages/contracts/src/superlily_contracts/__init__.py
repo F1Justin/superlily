@@ -12,12 +12,17 @@ from .models import (
     MessageRef,
     PlatformCapabilityName,
     PlatformCapabilities,
+    QQDirectorySnapshotIn,
+    QQFriendSnapshot,
+    QQGroupMemberSnapshot,
+    QQGroupProfileSnapshot,
     ResponseIn,
     RuntimeCommandCandidate,
     RuntimePlugin,
     SenderRef,
 )
 from .sanitization import SANITIZER_VERSION, SanitizationPolicy, replace_nul, sanitize_payload
+from .qq_directory import qq_directory_snapshot_hash
 from .collection import (
     COLLECTION_SCHEMA_VERSION,
     ActionOperation,
@@ -268,6 +273,11 @@ __all__ = [
     "PlatformCapabilityName",
     "PlatformCapabilities",
     "PlatformActionDetail",
+    "QQDirectorySnapshotIn",
+    "QQFriendSnapshot",
+    "QQGroupMemberSnapshot",
+    "QQGroupProfileSnapshot",
+    "qq_directory_snapshot_hash",
     "PROVIDER_PROTOCOL_V1",
     "ProviderHeartbeatIn",
     "ProviderInventorySnapshotIn",

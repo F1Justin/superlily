@@ -37,6 +37,7 @@ from .identity import (
     conversation,
     native_identity_cache_key,
 )
+from .directory_snapshots import friend_directory_snapshot, group_directory_snapshot
 from .platform_actions import platform_action_event_payload
 from .payloads import (
     content_parts,
@@ -79,6 +80,13 @@ class BridgeConfig(ConfigBase):
         ge=300,
         le=86_400,
         title="QQ group-name inventory interval",
+    )
+    DIRECTORY_SNAPSHOT_ENABLED: bool = Field(default=False, title="Enable QQ directory snapshots")
+    DIRECTORY_SNAPSHOT_SECONDS: int = Field(
+        default=86_400,
+        ge=3_600,
+        le=604_800,
+        title="QQ directory snapshot interval",
     )
     QUEUE_SIZE: int = Field(default=1000, ge=10, le=10000, title="In-memory queue size")
     TIMEOUT_SECONDS: float = Field(default=0.5, ge=0.05, le=5, title="Legacy HTTP timeout")
@@ -162,6 +170,7 @@ reporter = BackgroundReporter(
 )
 heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
+directory_snapshot_task: asyncio.Task | None = None
 agent_delivery_task: asyncio.Task | None = None
 group_names: dict[str, str] = {}
 heartbeat_failures = 0
@@ -302,6 +311,94 @@ async def group_inventory_loop() -> None:
         except Exception:
             logger.exception("Lily Core group-name inventory failed; the loop will continue")
         await asyncio.sleep(config.GROUP_INVENTORY_SECONDS)
+
+
+async def directory_snapshot_loop() -> None:
+    while True:
+        try:
+            bots = [bot for bot in get_bots().values() if isinstance(bot, OneBotBot)]
+            if not bots:
+                await asyncio.sleep(min(30, config.DIRECTORY_SNAPSHOT_SECONDS))
+                continue
+            for bot in bots:
+                observed_at = utc_iso()
+                try:
+                    categories = await bot.call_api("get_friends_with_category")
+                    payload, key = friend_directory_snapshot(
+                        instance=instance(bot.self_id),
+                        raw_categories=categories if isinstance(categories, list) else [],
+                        observed_at=observed_at,
+                        source_apis=["get_friends_with_category"],
+                    )
+                except Exception as category_error:
+                    try:
+                        friends = await bot.get_friend_list()
+                        payload, key = friend_directory_snapshot(
+                            instance=instance(bot.self_id),
+                            raw_categories=[{"buddyList": friends}],
+                            observed_at=observed_at,
+                            source_apis=["get_friends_with_category", "get_friend_list"],
+                            capture_status="partial",
+                            reason=f"get_friends_with_category:{type(category_error).__name__}",
+                        )
+                    except Exception:
+                        logger.exception("Lily Core friend directory snapshot failed")
+                    else:
+                        reporter.enqueue(ReportItem("/v1/qq-directory/snapshots", payload, key))
+                else:
+                    reporter.enqueue(ReportItem("/v1/qq-directory/snapshots", payload, key))
+
+                try:
+                    try:
+                        groups = await bot.get_group_list(no_cache=False)
+                    except TypeError:
+                        groups = await bot.get_group_list()
+                except Exception:
+                    logger.exception("Lily Core group directory inventory failed")
+                    continue
+                for raw_group in groups:
+                    group = _event_dict(raw_group)
+                    group_id = group.get("group_id") or group.get("id")
+                    if group_id is None:
+                        continue
+                    source_apis = ["get_group_list", "get_group_info_ex", "get_group_member_list"]
+                    reasons: list[str] = []
+                    try:
+                        extended = await bot.call_api("get_group_info_ex", group_id=int(group_id))
+                        if isinstance(extended, dict):
+                            group = {**group, **extended}
+                    except Exception as exc:
+                        reasons.append(f"get_group_info_ex:{type(exc).__name__}")
+                    try:
+                        members = await bot.get_group_member_list(group_id=int(group_id), no_cache=True)
+                    except TypeError:
+                        try:
+                            members = await bot.get_group_member_list(group_id=int(group_id))
+                        except Exception as exc:
+                            members = []
+                            reasons.append(f"get_group_member_list:{type(exc).__name__}")
+                    except Exception as exc:
+                        members = []
+                        reasons.append(f"get_group_member_list:{type(exc).__name__}")
+                    try:
+                        payload, key = group_directory_snapshot(
+                            instance=instance(bot.self_id),
+                            raw_group=group,
+                            raw_members=members if isinstance(members, list) else [],
+                            observed_at=observed_at,
+                            source_apis=source_apis,
+                            capture_status="partial" if reasons else "complete",
+                            reason="; ".join(reasons) or None,
+                        )
+                    except Exception:
+                        logger.exception(f"Lily Core group directory snapshot normalization failed for {group_id}")
+                        continue
+                    reporter.enqueue(ReportItem("/v1/qq-directory/snapshots", payload, key))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Lily Core directory snapshot failed; the loop will continue")
+        await asyncio.sleep(config.DIRECTORY_SNAPSHOT_SECONDS)
 
 
 def _render_conversation(chat_key: str) -> dict[str, str] | None:
@@ -1441,13 +1538,17 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
 
 @plugin.mount_init_method()
 async def init_bridge() -> None:
-    global heartbeat_task, group_inventory_task, agent_delivery_task
+    global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="nekro-lily-core-heartbeat")
     group_inventory_task = asyncio.create_task(group_inventory_loop(), name="nekro-lily-core-group-inventory")
+    if config.DIRECTORY_SNAPSHOT_ENABLED:
+        directory_snapshot_task = asyncio.create_task(
+            directory_snapshot_loop(), name="nekro-lily-core-directory-snapshot"
+        )
     agent_delivery_task = asyncio.create_task(
         agent_delivery_loop(),
         name="nekro-lily-core-agent-delivery",
@@ -1457,11 +1558,11 @@ async def init_bridge() -> None:
 
 @plugin.mount_cleanup_method()
 async def cleanup_bridge() -> None:
-    global heartbeat_task, group_inventory_task, agent_delivery_task
-    for task in (heartbeat_task, group_inventory_task, agent_delivery_task):
+    global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
+    for task in (heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task):
         if task:
             task.cancel()
-    for task in (heartbeat_task, group_inventory_task, agent_delivery_task):
+    for task in (heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task):
         if not task:
             continue
         try:
@@ -1470,6 +1571,7 @@ async def cleanup_bridge() -> None:
             pass
     heartbeat_task = None
     group_inventory_task = None
+    directory_snapshot_task = None
     agent_delivery_task = None
     await reporter.stop()
 

@@ -22,6 +22,7 @@ from superlily_contracts import (
     MarkdownDocumentIn,
     ProviderHeartbeatIn,
     ProviderInventorySnapshotIn,
+    QQDirectorySnapshotIn,
     ResponseIn,
     DeliveryAttemptIn,
     RenderArtifactDeletionIn,
@@ -139,6 +140,7 @@ from .agent_product_service import (
     interaction_view,
     lease_agent_delivery,
 )
+from .qq_directory_service import ingest_qq_directory_snapshot
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -559,6 +561,27 @@ async def post_command_registry_snapshot(
     if duplicate:
         response.status_code = status.HTTP_200_OK
     return {"snapshot_id": record.id, "snapshot_hash": record.snapshot_hash, "duplicate": duplicate}
+
+
+@router.post("/v1/qq-directory/snapshots", status_code=status.HTTP_201_CREATED)
+async def post_qq_directory_snapshot(
+    payload: QQDirectorySnapshotIn,
+    response: Response,
+    session: Session,
+    authenticated_instance: Identity,
+    idempotency_key: IdempotencyKey,
+) -> dict[str, str | bool | int]:
+    del idempotency_key
+    _verify_identity(authenticated_instance, payload.instance.instance_id)
+    record, duplicate = await ingest_qq_directory_snapshot(session, payload, session.info["settings"])
+    if duplicate:
+        response.status_code = status.HTTP_200_OK
+    return {
+        "snapshot_id": record.snapshot_id,
+        "snapshot_hash": record.snapshot_hash,
+        "entry_count": record.entry_count,
+        "duplicate": duplicate,
+    }
 
 
 @router.post("/v1/provider-inventory/snapshots", status_code=status.HTTP_201_CREATED)

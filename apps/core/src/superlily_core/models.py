@@ -848,6 +848,82 @@ class CommandRegistrySnapshot(Base):
     )
 
 
+class QQDirectorySnapshot(Base):
+    __tablename__ = "qq_directory_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    group_id: Mapped[str | None] = mapped_column(String(256))
+    group_name: Mapped[str | None] = mapped_column(String(512))
+    group_remark: Mapped[str | None] = mapped_column(String(512))
+    member_count: Mapped[int | None] = mapped_column(Integer)
+    max_member_count: Mapped[int | None] = mapped_column(Integer)
+    whole_group_ban: Mapped[bool | None] = mapped_column(Boolean)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_apis_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    capture_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "snapshot_id", name="uq_qq_directory_snapshot_identity"),
+        CheckConstraint("snapshot_kind IN ('group', 'friends')", name="ck_qq_directory_snapshot_kind"),
+        CheckConstraint("capture_status IN ('complete', 'partial')", name="ck_qq_directory_capture_status"),
+        CheckConstraint("entry_count >= 0", name="ck_qq_directory_entry_count"),
+        CheckConstraint(
+            "(snapshot_kind = 'group' AND group_id IS NOT NULL) OR "
+            "(snapshot_kind = 'friends' AND group_id IS NULL)",
+            name="ck_qq_directory_group_scope",
+        ),
+        Index("ix_qq_directory_group_time", "group_id", "observed_at", "id"),
+        Index("ix_qq_directory_instance_time", "instance_id", "observed_at", "id"),
+    )
+
+
+class QQGroupMemberSnapshot(Base):
+    __tablename__ = "qq_group_member_snapshots"
+
+    snapshot_record_id: Mapped[str] = mapped_column(
+        ForeignKey("qq_directory_snapshots.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    nickname: Mapped[str | None] = mapped_column(String(512))
+    card: Mapped[str | None] = mapped_column(String(512))
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(512))
+    member_level: Mapped[str | None] = mapped_column(String(512))
+    qq_level: Mapped[int | None] = mapped_column(Integer)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_robot: Mapped[bool | None] = mapped_column(Boolean)
+
+    __table_args__ = (
+        CheckConstraint("role IN ('owner', 'admin', 'member', 'unknown')", name="ck_qq_group_member_role"),
+        CheckConstraint("qq_level IS NULL OR qq_level >= 0", name="ck_qq_group_member_qq_level"),
+        Index("ix_qq_group_member_user_snapshot", "user_id", "snapshot_record_id"),
+    )
+
+
+class QQFriendSnapshot(Base):
+    __tablename__ = "qq_friend_snapshots"
+
+    snapshot_record_id: Mapped[str] = mapped_column(
+        ForeignKey("qq_directory_snapshots.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    nickname: Mapped[str | None] = mapped_column(String(512))
+    remark: Mapped[str | None] = mapped_column(String(512))
+    category_id: Mapped[str | None] = mapped_column(String(256))
+    category_name: Mapped[str | None] = mapped_column(String(512))
+
+    __table_args__ = (Index("ix_qq_friend_user_snapshot", "user_id", "snapshot_record_id"),)
+
+
 class EventClaim(Base):
     __tablename__ = "event_claims"
 
