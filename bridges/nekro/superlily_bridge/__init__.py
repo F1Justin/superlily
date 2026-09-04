@@ -39,6 +39,7 @@ from .identity import (
 )
 from .directory_snapshots import (
     await_qq_api,
+    directory_entry,
     friend_directory_snapshot,
     group_directory_snapshot,
 )
@@ -387,7 +388,7 @@ async def directory_snapshot_loop() -> None:
                     logger.warning("Lily Core group directory inventory was empty; retrying shortly")
                     continue
                 for raw_group in groups:
-                    group = _event_dict(raw_group)
+                    group = directory_entry(raw_group)
                     group_id = group.get("group_id") or group.get("id")
                     if group_id is None:
                         continue

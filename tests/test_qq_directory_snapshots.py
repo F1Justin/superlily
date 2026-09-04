@@ -121,6 +121,10 @@ async def test_directory_api_timeout_cancels_a_stuck_request(path: Path) -> None
 @pytest.mark.parametrize("path", DIRECTORY_PATHS)
 def test_napcat_directory_normalization_keeps_useful_fields_without_contact_secrets(path: Path) -> None:
     module = load_module(path)
+    assert module.directory_entry({"group_id": 10001, "group_name": "Group A"}) == {
+        "group_id": 10001,
+        "group_name": "Group A",
+    }
     observed_at = datetime(2026, 9, 4, 1, 0, tzinfo=timezone.utc).isoformat()
     friend_payload, _ = module.friend_directory_snapshot(
         instance=instance(),

@@ -36,6 +36,10 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
+def directory_entry(value: Any) -> dict[str, Any]:
+    return _mapping(value)
+
+
 def _text(value: Any, limit: int = 512) -> str | None:
     if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
         return None
