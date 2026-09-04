@@ -327,6 +327,7 @@ async def group_inventory_loop() -> None:
 
 async def directory_snapshot_loop() -> None:
     while True:
+        retry_seconds = config.DIRECTORY_SNAPSHOT_SECONDS
         try:
             bots = [bot for bot in get_bots().values() if isinstance(bot, OneBotBot)]
             if not bots:
@@ -378,7 +379,12 @@ async def directory_snapshot_loop() -> None:
                             timeout_seconds=config.DIRECTORY_API_TIMEOUT_SECONDS,
                         )
                 except Exception:
+                    retry_seconds = min(60, retry_seconds)
                     logger.exception("Lily Core group directory inventory failed")
+                    continue
+                if not groups:
+                    retry_seconds = min(60, retry_seconds)
+                    logger.warning("Lily Core group directory inventory was empty; retrying shortly")
                     continue
                 for raw_group in groups:
                     group = _event_dict(raw_group)
@@ -431,7 +437,7 @@ async def directory_snapshot_loop() -> None:
             raise
         except Exception:
             logger.exception("Lily Core directory snapshot failed; the loop will continue")
-        await asyncio.sleep(config.DIRECTORY_SNAPSHOT_SECONDS)
+        await asyncio.sleep(retry_seconds)
 
 
 def _render_conversation(chat_key: str) -> dict[str, str] | None:

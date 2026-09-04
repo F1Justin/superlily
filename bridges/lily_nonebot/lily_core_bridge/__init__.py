@@ -234,6 +234,7 @@ async def group_inventory_loop() -> None:
 
 async def directory_snapshot_loop() -> None:
     while True:
+        retry_seconds = plugin_config.lily_core_directory_snapshot_seconds
         try:
             bots = [bot for bot in get_bots().values() if isinstance(bot, OneBotBot)]
             if not bots:
@@ -285,7 +286,12 @@ async def directory_snapshot_loop() -> None:
                             timeout_seconds=plugin_config.lily_core_directory_api_timeout_seconds,
                         )
                 except Exception:
+                    retry_seconds = min(60, retry_seconds)
                     logger.opt(exception=True).warning("Lily Core group directory inventory failed")
+                    continue
+                if not groups:
+                    retry_seconds = min(60, retry_seconds)
+                    logger.warning("Lily Core group directory inventory was empty; retrying shortly")
                     continue
                 for raw_group in groups:
                     group = raw_group if isinstance(raw_group, dict) else model_dict(raw_group)
@@ -340,7 +346,7 @@ async def directory_snapshot_loop() -> None:
             raise
         except Exception:
             logger.opt(exception=True).warning("Lily Core directory snapshot failed; the loop will continue")
-        await asyncio.sleep(plugin_config.lily_core_directory_snapshot_seconds)
+        await asyncio.sleep(retry_seconds)
 
 
 async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, Any], str] | None:
