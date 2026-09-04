@@ -54,7 +54,7 @@ from .render_retry import (
     unavailable_instruction,
 )
 
-BRIDGE_VERSION = "1.2.0"
+BRIDGE_VERSION = "1.3.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -213,6 +213,13 @@ def _group_name(value: Any) -> str | None:
         item = {}
     name = item.get("group_name") or item.get("name")
     return str(name).strip() if name is not None and str(name).strip() else None
+
+
+def _sender_profile_text(value: Any) -> str | None:
+    if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
+        return None
+    normalized = str(value).strip()
+    return normalized[:512] if normalized else None
 
 
 async def _conversation_with_name(
@@ -535,6 +542,11 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
         metadata["native_identity"] = native_identity
     occurred_at = utc_iso(message.send_timestamp)
     sender_id = str(message.platform_userid or message.sender_id)
+    current_raw = _event_dict(current_event.get(None))
+    current_sender = current_raw.get("sender")
+    if not isinstance(current_sender, dict):
+        current_sender = {}
+    sender_role = current_sender.get("role")
     source_id = message_source_event_id(
         conv,
         message.message_id,
@@ -559,7 +571,9 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
             "account_name": message.sender_name,
             "display_name": message.sender_nickname or message.sender_name,
             "name": message.sender_nickname or message.sender_name,
-            "roles": [],
+            "title": _sender_profile_text(current_sender.get("title")),
+            "level": _sender_profile_text(current_sender.get("level")),
+            "roles": [str(sender_role)] if sender_role else [],
         },
         "message": {
             "id": str(message.message_id),

@@ -9,11 +9,26 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-ACTION_SANITIZER_VERSION = "onebot-v11-actions-v1"
+ACTION_SANITIZER_VERSION = "onebot-v11-actions-v2"
 ACTION_SOURCE_EVENT_ID_SCHEMA = "qq.action.source.v1"
 _SUPPORTED_NOTICE_TYPES = frozenset(
-    {"group_msg_emoji_like", "group_recall", "friend_recall"}
+    {
+        "bot_offline",
+        "essence",
+        "friend_add",
+        "friend_recall",
+        "group_admin",
+        "group_ban",
+        "group_card",
+        "group_decrease",
+        "group_increase",
+        "group_msg_emoji_like",
+        "group_recall",
+        "group_upload",
+    }
 )
+_SUPPORTED_NOTIFY_SUBTYPES = frozenset({"group_name", "poke", "title"})
+_SUPPORTED_REQUEST_TYPES = frozenset({"friend", "group"})
 _COMMON_FIELDS = frozenset(
     {
         "time",
@@ -28,6 +43,18 @@ _COMMON_FIELDS = frozenset(
         "message_id",
         "likes",
         "raw_info",
+        "card_new",
+        "card_old",
+        "name_new",
+        "title",
+        "duration",
+        "sender_id",
+        "file",
+        "comment",
+        "flag",
+        "request_type",
+        "tag",
+        "message",
     }
 )
 
@@ -45,6 +72,12 @@ def _principal(value: Any) -> str | None:
 
 def _platform_message_id(value: Any) -> str | None:
     return _text(value, max_length=512)
+
+
+def _state_text(value: Any, *, max_length: int) -> str | None:
+    if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
+        return None
+    return str(value)[:max_length]
 
 
 def _occurred_at(value: Any) -> str | None:
@@ -173,11 +206,13 @@ def _poke_value(raw_info: Any) -> tuple[dict[str, Any], list[str], list[str]]:
 
 
 def is_supported_action_event(raw: dict[str, Any]) -> bool:
+    if raw.get("post_type") == "request":
+        return raw.get("request_type") in _SUPPORTED_REQUEST_TYPES
     if raw.get("post_type") != "notice":
         return False
     notice_type = raw.get("notice_type")
     return notice_type in _SUPPORTED_NOTICE_TYPES or (
-        notice_type == "notify" and raw.get("sub_type") == "poke"
+        notice_type == "notify" and raw.get("sub_type") in _SUPPORTED_NOTIFY_SUBTYPES
     )
 
 
@@ -190,6 +225,7 @@ def normalize_platform_action_event(
     if not is_supported_action_event(raw):
         return None
 
+    post_type = str(raw.get("post_type"))
     notice_type = str(raw.get("notice_type"))
     target_conversation = _conversation(conversation)
     occurred_at = _occurred_at(raw.get("time"))
@@ -199,7 +235,55 @@ def normalize_platform_action_event(
     if occurred_at is None:
         event_reasons.append("platform event time missing; bridge capture time used")
 
-    if notice_type == "group_msg_emoji_like":
+    if post_type == "request":
+        request_type = str(raw.get("request_type"))
+        subject = _principal(raw.get("user_id"))
+        missing: list[str] = []
+        value: dict[str, Any] = {"request_type": request_type}
+        if request_type == "group":
+            subtype = _text(raw.get("sub_type"), max_length=64)
+            if subtype is None:
+                missing.append("group request sub_type missing")
+            else:
+                value["sub_type"] = subtype
+        comment = _state_text(raw.get("comment"), max_length=4_096)
+        flag = _state_text(raw.get("flag"), max_length=1_024)
+        if comment is not None:
+            value["comment"] = comment
+        if flag is None:
+            missing.append("request flag missing")
+        else:
+            value["flag"] = flag
+        if subject is None:
+            missing.append("request subject user_id missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("request has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": f"{request_type}_request",
+                "operation": "observed_state",
+                "actor_principal_id": None,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "group_msg_emoji_like":
         actor = _principal(raw.get("user_id"))
         target_message = _platform_message_id(raw.get("message_id"))
         if target_message is None:
@@ -279,6 +363,418 @@ def normalize_platform_action_event(
             if len(likes) > 128:
                 event_reasons.append("reaction likes truncated to 128 items")
                 omitted_fields.append("raw.likes[128:]")
+
+    elif notice_type == "group_card":
+        subject = _principal(raw.get("user_id"))
+        card_new = _state_text(raw.get("card_new"), max_length=512)
+        card_old = _state_text(raw.get("card_old"), max_length=512)
+        missing = []
+        if subject is None:
+            missing.append("group-card subject user_id missing")
+        if card_new is None:
+            missing.append("group-card card_new missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-card change has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        value = {}
+        if card_old is not None:
+            value["card_old"] = card_old
+        if card_new is not None:
+            value["card_new"] = card_new
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_card",
+                "operation": "update",
+                "actor_principal_id": subject,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "notify" and raw.get("sub_type") == "group_name":
+        actor = _principal(raw.get("user_id"))
+        group_id = _principal(raw.get("group_id"))
+        group_subject = f"qq:group:{group_id}" if group_id is not None else None
+        name_new = _state_text(raw.get("name_new"), max_length=512)
+        missing = []
+        if group_subject is None:
+            missing.append("group-name group_id missing")
+        if name_new is None or not name_new.strip():
+            missing.append("group-name name_new missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if group_subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-name change has no group subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_name",
+                "operation": "update",
+                "actor_principal_id": actor,
+                "subject_principal_id": group_subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": {"name_new": name_new} if name_new is not None else {},
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type in {"group_increase", "group_decrease"}:
+        subject = _principal(raw.get("user_id"))
+        actor = _principal(raw.get("operator_id"))
+        subtype = _text(raw.get("sub_type"), max_length=64)
+        missing = []
+        if subject is None:
+            missing.append("membership subject user_id missing")
+        if subtype is None:
+            missing.append("membership sub_type missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("membership change has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_membership",
+                "operation": "add" if notice_type == "group_increase" else "remove",
+                "actor_principal_id": actor,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": {"sub_type": subtype} if subtype is not None else {},
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "group_admin":
+        subject = _principal(raw.get("user_id"))
+        subtype = _text(raw.get("sub_type"), max_length=64)
+        missing = []
+        if subject is None:
+            missing.append("group-admin subject user_id missing")
+        if subtype not in {"set", "unset"}:
+            missing.append("group-admin sub_type missing or invalid")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-admin change has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        value = {"role": "admin"}
+        if subtype in {"set", "unset"}:
+            value["active"] = subtype == "set"
+            value["sub_type"] = subtype
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_role",
+                "operation": "update",
+                "actor_principal_id": None,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "group_ban":
+        actor = _principal(raw.get("operator_id"))
+        subject = _principal(raw.get("user_id"))
+        subtype = _text(raw.get("sub_type"), max_length=64)
+        duration = _bounded_count(raw.get("duration"))
+        missing = []
+        if actor is None:
+            missing.append("group-ban operator_id missing")
+        if subject is None:
+            missing.append("group-ban subject user_id missing")
+        if subtype is None:
+            missing.append("group-ban sub_type missing")
+        if duration is None:
+            missing.append("group-ban duration missing or invalid")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-ban change has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        value = {}
+        if subtype is not None:
+            value["sub_type"] = subtype
+        if duration is not None:
+            value["duration_seconds"] = duration
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_ban",
+                "operation": "update",
+                "actor_principal_id": actor,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "notify" and raw.get("sub_type") == "title":
+        subject = _principal(raw.get("user_id"))
+        title = _state_text(raw.get("title"), max_length=512)
+        missing = []
+        if subject is None:
+            missing.append("group-title subject user_id missing")
+        if title is None:
+            missing.append("group-title value missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-title change has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_title",
+                "operation": "update",
+                "actor_principal_id": None,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": {"title": title} if title is not None else {},
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "essence":
+        actor = _principal(raw.get("operator_id"))
+        subject = _principal(raw.get("sender_id"))
+        target_message = _platform_message_id(raw.get("message_id"))
+        subtype = _text(raw.get("sub_type"), max_length=64)
+        missing = []
+        if actor is None:
+            missing.append("essence operator_id missing")
+        if subject is None:
+            missing.append("essence sender_id missing")
+        if target_message is None:
+            missing.append("essence message_id missing")
+        if subtype is None:
+            missing.append("essence sub_type missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None and target_message is None:
+            event_reasons.extend(missing)
+            event_reasons.append("essence change has no target hint; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "essence",
+                "operation": "remove" if subtype in {"delete", "remove"} else "add",
+                "actor_principal_id": actor,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": target_message,
+                "target_conversation": target_conversation,
+                "value": {"sub_type": subtype} if subtype is not None else {},
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "group_upload":
+        actor = _principal(raw.get("user_id"))
+        file_info = raw.get("file")
+        missing = []
+        value: dict[str, Any] = {}
+        if not isinstance(file_info, dict):
+            missing.append("group-upload file object missing")
+        else:
+            aliases = {
+                "file_id": ("id", "file_id"),
+                "name": ("name", "file_name"),
+                "size_bytes": ("size", "file_size"),
+                "busid": ("busid",),
+            }
+            for output, inputs in aliases.items():
+                candidate = next(
+                    (
+                        file_info.get(key)
+                        for key in inputs
+                        if file_info.get(key) is not None
+                    ),
+                    None,
+                )
+                if output == "size_bytes":
+                    normalized_value = _bounded_count(candidate)
+                else:
+                    normalized_value = _state_text(candidate, max_length=512)
+                if normalized_value is None and output in {"file_id", "name", "size_bytes"}:
+                    missing.append(f"group-upload {output} missing")
+                elif normalized_value is not None:
+                    value[output] = normalized_value
+            known_file_fields = {field for fields in aliases.values() for field in fields}
+            omitted_fields.extend(
+                f"raw.file.{str(key)[:128]}"
+                for key in file_info
+                if key not in known_file_fields
+            )
+        if actor is None:
+            missing.append("group-upload uploader user_id missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if actor is None:
+            event_reasons.extend(missing)
+            event_reasons.append("group-upload has no uploader subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons, omitted_fields),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "group_file",
+                "operation": "add",
+                "actor_principal_id": actor,
+                "subject_principal_id": actor,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "friend_add":
+        subject = _principal(raw.get("user_id"))
+        missing = []
+        if subject is None:
+            missing.append("friend-add user_id missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("friend-add has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "friendship",
+                "operation": "add",
+                "actor_principal_id": subject,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": {},
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
+
+    elif notice_type == "bot_offline":
+        subject = _principal(raw.get("user_id"))
+        tag = _state_text(raw.get("tag"), max_length=256)
+        message = _state_text(raw.get("message"), max_length=4_096)
+        missing = []
+        if subject is None:
+            missing.append("bot-offline user_id missing")
+        if occurred_at is None:
+            missing.append("platform event time missing")
+        if subject is None:
+            event_reasons.extend(missing)
+            event_reasons.append("bot-offline has no subject; action omitted")
+            return {
+                "actions": [],
+                "capture": _capture(raw, "unavailable", event_reasons),
+            }
+        value = {"online": False}
+        if tag is not None:
+            value["tag"] = tag
+        if message is not None:
+            value["message"] = message
+        actions.append(
+            {
+                "schema_version": "1.0",
+                "action_kind": "bot_status",
+                "operation": "observed_state",
+                "actor_principal_id": None,
+                "subject_principal_id": subject,
+                "target_source_event_id": None,
+                "target_platform_message_id": None,
+                "target_conversation": target_conversation,
+                "value": value,
+                "capture_status": "partial" if missing else "complete",
+                "occurred_at": occurred_at,
+                "reason": _reason(missing),
+            }
+        )
+        event_reasons.extend(missing)
 
     elif notice_type in {"group_recall", "friend_recall"}:
         subject = _principal(raw.get("user_id"))
@@ -418,17 +914,27 @@ def platform_action_event_payload(
     if normalized is None:
         return None
     sender_id = _principal(raw.get("user_id"))
+    action_conversation = _conversation(conversation)
+    sender: dict[str, Any] | None = None
+    if sender_id is not None:
+        sender = {"id": sender_id, "name": None, "roles": []}
+        if raw.get("notice_type") == "group_card":
+            card_new = _state_text(raw.get("card_new"), max_length=512)
+            sender.update(
+                {
+                    "display_name": card_new,
+                    "name": card_new,
+                }
+            )
+    if raw.get("notice_type") == "notify" and raw.get("sub_type") == "group_name":
+        action_conversation["name"] = _state_text(raw.get("name_new"), max_length=512)
     return {
         "schema_version": "1.0",
         "source_event_id": action_source_event_id(raw, conversation),
         "instance": instance,
         "event_type": event_type,
-        "conversation": _conversation(conversation),
-        "sender": (
-            {"id": sender_id, "name": None, "roles": []}
-            if sender_id is not None
-            else None
-        ),
+        "conversation": action_conversation,
+        "sender": sender,
         "message": None,
         "references": [],
         "capture": normalized["capture"],

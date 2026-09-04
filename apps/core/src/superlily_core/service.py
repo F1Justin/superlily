@@ -1726,6 +1726,8 @@ async def ingest_event(
             conversation_name=payload.conversation.name,
             sender_id=payload.sender.id if payload.sender else None,
             sender_name=payload.sender.name if payload.sender else None,
+            sender_title=payload.sender.title if payload.sender else None,
+            sender_level=payload.sender.level if payload.sender else None,
             sender_roles_json=payload.sender.roles if payload.sender else [],
             text=payload.message.text if payload.message else None,
             segments_json=_dump_list(payload.message.segments if payload.message else [], settings),

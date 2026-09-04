@@ -762,6 +762,34 @@ async def test_nul_in_event_and_response_is_stored_safely(client, app) -> None:
         assert stored_response.metadata_json["nested"]["key"] == "值\ufffd尾"
 
 
+async def test_sender_title_and_level_are_stored_as_event_time_facts(client, app) -> None:
+    event = event_payload(
+        source_event_id="qq:group:123:message:sender-profile",
+        message_id="sender-profile",
+    )
+    event["sender"]["title"] = "群之龙王"
+    event["sender"]["level"] = "活跃等级 42"
+    created = await client.post(
+        "/v1/events",
+        json=event,
+        headers={
+            "Authorization": "Bearer lily-secret",
+            "Idempotency-Key": "sender-profile",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    async with app.state.database.sessions() as session:
+        observation = await session.get(
+            EventObservation,
+            created.json()["observation_id"],
+        )
+
+    assert observation is not None
+    assert observation.sender_title == "群之龙王"
+    assert observation.sender_level == "活跃等级 42"
+
+
 async def test_native_identity_is_visible_in_admin_debug_views(client) -> None:
     payload = event_payload()
     payload["metadata"] = {

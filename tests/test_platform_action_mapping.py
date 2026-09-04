@@ -6,7 +6,12 @@ import pytest
 from sqlalchemy import select
 
 from superlily_contracts import EventIn
-from superlily_core.models import EventObservation, PlatformActionObservation
+from superlily_core.models import (
+    ConversationNameObservation,
+    EventObservation,
+    IdentityNameObservation,
+    PlatformActionObservation,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -39,14 +44,19 @@ def instance(instance_id: str = "lily-command", bot_id: str = "2022692714") -> d
 
 
 def build(module, raw: dict, *, instance_ref: dict | None = None) -> EventIn:
+    post_type = raw.get("post_type")
     payload = module.platform_action_event_payload(
         raw,
         GROUP,
         instance_ref or instance(),
         event_type=(
-            "notice.notify.poke"
-            if raw.get("notice_type") == "notify"
-            else f"notice.{raw.get('notice_type')}"
+            f"request.{raw.get('request_type')}"
+            if post_type == "request"
+            else (
+                f"notice.notify.{raw.get('sub_type')}"
+                if raw.get("notice_type") == "notify"
+                else f"notice.{raw.get('notice_type')}"
+            )
         ),
         fallback_occurred_at="2026-07-18T12:00:00+00:00",
     )
@@ -79,7 +89,7 @@ def test_real_napcat_reaction_is_factual_observed_state(path: Path) -> None:
 
     assert event.capture is not None
     assert event.capture.status == "complete"
-    assert event.capture.sanitizer_version == "onebot-v11-actions-v1"
+    assert event.capture.sanitizer_version == "onebot-v11-actions-v2"
     assert event.source_event_id.startswith("qq:action:v1:")
     assert len(event.actions) == 1
     action = event.actions[0]
@@ -218,6 +228,301 @@ def test_action_identity_is_cross_bridge_stable_and_observer_neutral() -> None:
         GROUP,
     )
     assert first != lily.action_source_event_id(real_reaction(user_id=99), GROUP)
+
+
+HIGH_VALUE_ACTIONS = [
+    (
+        {
+            "time": 1784344001,
+            "post_type": "notice",
+            "notice_type": "group_card",
+            "group_id": 861651713,
+            "user_id": 10001,
+            "card_old": "Old Card",
+            "card_new": "New Card",
+        },
+        "group_card",
+        "update",
+        "10001",
+        {"card_old": "Old Card", "card_new": "New Card"},
+    ),
+    (
+        {
+            "time": 1784344002,
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "group_name",
+            "group_id": 861651713,
+            "user_id": 10002,
+            "name_new": "Renamed Group",
+        },
+        "group_name",
+        "update",
+        "qq:group:861651713",
+        {"name_new": "Renamed Group"},
+    ),
+    (
+        {
+            "time": 1784344003,
+            "post_type": "notice",
+            "notice_type": "group_increase",
+            "sub_type": "approve",
+            "group_id": 861651713,
+            "operator_id": 10002,
+            "user_id": 10003,
+        },
+        "group_membership",
+        "add",
+        "10003",
+        {"sub_type": "approve"},
+    ),
+    (
+        {
+            "time": 1784344004,
+            "post_type": "notice",
+            "notice_type": "group_decrease",
+            "sub_type": "kick",
+            "group_id": 861651713,
+            "operator_id": 10002,
+            "user_id": 10003,
+        },
+        "group_membership",
+        "remove",
+        "10003",
+        {"sub_type": "kick"},
+    ),
+    (
+        {
+            "time": 1784344005,
+            "post_type": "notice",
+            "notice_type": "group_admin",
+            "sub_type": "set",
+            "group_id": 861651713,
+            "user_id": 10004,
+        },
+        "group_role",
+        "update",
+        "10004",
+        {"role": "admin", "active": True, "sub_type": "set"},
+    ),
+    (
+        {
+            "time": 1784344006,
+            "post_type": "notice",
+            "notice_type": "group_ban",
+            "sub_type": "ban",
+            "group_id": 861651713,
+            "operator_id": 10002,
+            "user_id": 10005,
+            "duration": 600,
+        },
+        "group_ban",
+        "update",
+        "10005",
+        {"sub_type": "ban", "duration_seconds": 600},
+    ),
+    (
+        {
+            "time": 1784344007,
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "title",
+            "group_id": 861651713,
+            "user_id": 10006,
+            "title": "群之龙王",
+        },
+        "group_title",
+        "update",
+        "10006",
+        {"title": "群之龙王"},
+    ),
+    (
+        {
+            "time": 1784344008,
+            "post_type": "notice",
+            "notice_type": "essence",
+            "sub_type": "add",
+            "group_id": 861651713,
+            "operator_id": 10002,
+            "sender_id": 10007,
+            "message_id": 556677,
+        },
+        "essence",
+        "add",
+        "10007",
+        {"sub_type": "add"},
+    ),
+    (
+        {
+            "time": 1784344009,
+            "post_type": "notice",
+            "notice_type": "group_upload",
+            "group_id": 861651713,
+            "user_id": 10008,
+            "file": {
+                "id": "file-1",
+                "name": "notes.pdf",
+                "size": 1234,
+                "busid": 102,
+                "download_url": "https://example.test/private",
+            },
+        },
+        "group_file",
+        "add",
+        "10008",
+        {"file_id": "file-1", "name": "notes.pdf", "size_bytes": 1234, "busid": "102"},
+    ),
+    (
+        {
+            "time": 1784344010,
+            "post_type": "notice",
+            "notice_type": "friend_add",
+            "user_id": 10009,
+        },
+        "friendship",
+        "add",
+        "10009",
+        {},
+    ),
+    (
+        {
+            "time": 1784344011,
+            "post_type": "request",
+            "request_type": "friend",
+            "user_id": 10010,
+            "comment": "你好",
+            "flag": "opaque-friend-request",
+        },
+        "friend_request",
+        "observed_state",
+        "10010",
+        {
+            "request_type": "friend",
+            "comment": "你好",
+            "flag": "opaque-friend-request",
+        },
+    ),
+    (
+        {
+            "time": 1784344012,
+            "post_type": "request",
+            "request_type": "group",
+            "sub_type": "add",
+            "group_id": 861651713,
+            "user_id": 10011,
+            "comment": "申请入群",
+            "flag": "opaque-group-request",
+        },
+        "group_request",
+        "observed_state",
+        "10011",
+        {
+            "request_type": "group",
+            "sub_type": "add",
+            "comment": "申请入群",
+            "flag": "opaque-group-request",
+        },
+    ),
+    (
+        {
+            "time": 1784344013,
+            "post_type": "notice",
+            "notice_type": "bot_offline",
+            "user_id": 2022692714,
+            "tag": "network",
+            "message": "connection lost",
+        },
+        "bot_status",
+        "observed_state",
+        "2022692714",
+        {"online": False, "tag": "network", "message": "connection lost"},
+    ),
+]
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+@pytest.mark.parametrize(("raw", "kind", "operation", "subject", "value"), HIGH_VALUE_ACTIONS)
+def test_high_value_onebot_facts_are_structured(
+    path: Path,
+    raw: dict,
+    kind: str,
+    operation: str,
+    subject: str,
+    value: dict,
+) -> None:
+    event = build(load_module(path), raw)
+
+    assert event.capture is not None
+    assert event.capture.status == "complete"
+    assert len(event.actions) == 1
+    action = event.actions[0]
+    assert action.action_kind == kind
+    assert action.operation == operation
+    assert action.subject_principal_id == subject
+    assert action.value == value
+    serialized = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+    assert "example.test/private" not in serialized
+    if raw.get("notice_type") == "group_upload":
+        assert "raw.file.download_url" in event.capture.omitted_fields
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+def test_incomplete_high_value_fact_is_explicit(path: Path) -> None:
+    event = build(
+        load_module(path),
+        {
+            "post_type": "notice",
+            "notice_type": "group_ban",
+            "group_id": 861651713,
+            "user_id": 10005,
+        },
+    )
+
+    assert event.capture is not None
+    assert event.capture.status == "partial"
+    assert event.actions[0].capture_status == "partial"
+    assert "operator_id missing" in str(event.actions[0].reason)
+    assert "platform event time missing" in str(event.actions[0].reason)
+
+
+@pytest.mark.asyncio
+async def test_group_card_and_group_name_actions_feed_name_history(client, app) -> None:
+    module = load_module(ACTION_PATHS[0])
+    raws = [HIGH_VALUE_ACTIONS[0][0], HIGH_VALUE_ACTIONS[1][0]]
+    for index, raw in enumerate(raws, start=1):
+        payload = module.platform_action_event_payload(
+            raw,
+            GROUP,
+            instance(),
+            event_type=f"name-action-{index}",
+            fallback_occurred_at="2026-07-18T12:00:00+00:00",
+        )
+        assert payload is not None
+        response = await client.post(
+            "/v1/events",
+            json=payload,
+            headers={
+                "Authorization": "Bearer lily-secret",
+                "Idempotency-Key": f"name-action-{index}",
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    async with app.state.database.sessions() as session:
+        identity_names = (
+            await session.scalars(select(IdentityNameObservation))
+        ).all()
+        conversation_names = (
+            await session.scalars(select(ConversationNameObservation))
+        ).all()
+
+    assert [
+        (row.user_id, row.name_kind, row.name_value, row.conversation_id)
+        for row in identity_names
+    ] == [("10001", "conversation_display_name", "New Card", "861651713")]
+    assert [
+        (row.conversation_id, row.name_value) for row in conversation_names
+    ] == [("861651713", "Renamed Group")]
 
 
 @pytest.mark.asyncio

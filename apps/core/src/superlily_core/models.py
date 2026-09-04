@@ -330,6 +330,8 @@ class EventObservation(Base):
     conversation_name: Mapped[str | None] = mapped_column(String(512))
     sender_id: Mapped[str | None] = mapped_column(String(256))
     sender_name: Mapped[str | None] = mapped_column(String(512))
+    sender_title: Mapped[str | None] = mapped_column(String(512))
+    sender_level: Mapped[str | None] = mapped_column(String(512))
     sender_roles_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     text: Mapped[str | None] = mapped_column(Text)
     segments_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)

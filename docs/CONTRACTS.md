@@ -63,6 +63,29 @@ QQ message ID is never global. Missing or multiple candidates remain
 `unresolved` or `ambiguous`; reaction rows carry no positive/negative feedback
 meaning.
 
+### C0-E QQ platform facts
+
+C0-E extends the factual action vocabulary without changing the wire schema.
+The two QQ bridges normalize already-pushed OneBot notices and requests for
+group cards/names, membership, roles, bans, titles, essence state, group files,
+friendship, requests and bot status. These are observations, not commands;
+ingesting one never approves a request or mutates QQ state.
+
+For a group-card change, `sender.display_name` is the newly observed card so
+Core appends the existing per-conversation identity-name history. For a
+group-name change, `conversation.name` is the newly observed group name so Core
+appends the existing conversation-name history. Empty or absent values are not
+invented. Message observations may additionally carry nullable, bounded
+`sender.title` and `sender.level`, preserving what the adapter reported at that
+event time without treating either value as a stable identity.
+
+Only bounded business fields enter `actions[].value`. A request flag is an
+opaque correlation identifier; cookies, rkeys, authorization material, full
+raw payloads and unknown nested fields remain outside the contract. Missing
+required identity or target fields produce explicit `partial` or `unavailable`
+capture rather than guessed facts. The exact scope and release gates are in
+[`C0E_QQ_PLATFORM_FACTS.md`](C0E_QQ_PLATFORM_FACTS.md).
+
 Heartbeats may carry a typed `capabilities` snapshot. A snapshot names a
 versioned adapter profile, an explicit list of supported operations, and
 optional numeric limits. Missing capabilities mean unknown, never “supports

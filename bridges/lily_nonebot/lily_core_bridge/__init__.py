@@ -39,7 +39,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.7.0"
+BRIDGE_VERSION = "0.8.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -137,6 +137,13 @@ def _group_name(value: Any) -> str | None:
     item = value if isinstance(value, dict) else model_dict(value)
     name = item.get("group_name") or item.get("name")
     return str(name).strip() if name is not None and str(name).strip() else None
+
+
+def _sender_profile_text(value: Any) -> str | None:
+    if value is None or isinstance(value, (bool, dict, list, tuple, set, bytes, bytearray)):
+        return None
+    normalized = str(value).strip()
+    return normalized[:512] if normalized else None
 
 
 async def _conversation_with_name(
@@ -258,6 +265,8 @@ async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, 
             "account_name": getattr(sender_obj, "nickname", None),
             "display_name": (getattr(sender_obj, "card", None) or getattr(sender_obj, "nickname", None)),
             "name": getattr(sender_obj, "card", None) or getattr(sender_obj, "nickname", None),
+            "title": _sender_profile_text(getattr(sender_obj, "title", None)),
+            "level": _sender_profile_text(getattr(sender_obj, "level", None)),
             "roles": [str(getattr(sender_obj, "role", "member"))],
         }
     metadata: dict[str, Any] = {"to_me": bool(getattr(event, "to_me", False))}

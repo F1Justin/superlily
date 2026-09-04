@@ -69,6 +69,8 @@ class SenderRef(WireModel):
     account_name: str | None = Field(default=None, max_length=512)
     display_name: str | None = Field(default=None, max_length=512)
     name: str | None = Field(default=None, max_length=512)
+    title: str | None = Field(default=None, max_length=512)
+    level: str | None = Field(default=None, max_length=512)
     roles: list[str] = Field(default_factory=list, max_length=32)
 
 

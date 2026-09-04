@@ -420,6 +420,7 @@ async def _ensure_target(conn: asyncpg.Connection) -> None:
         "0026_history_timeline_export",
         "0027_name_observation_history",
         "0028_sqlite_chatrecorder_archive",
+        "0029_qq_platform_facts",
     }:
         raise RuntimeError(
             "archive target must be at a supported history revision, "
