@@ -25,6 +25,7 @@ from .command_rendering import (
 )
 from .directory_snapshots import friend_directory_snapshot, group_directory_snapshot
 from .platform_actions import platform_action_event_payload
+from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
     conversation_from_api,
     conversation_from_event,
@@ -40,7 +41,7 @@ from .payloads import (
 from .reporter import BackgroundReporter, ReportItem
 from .runtime_registry import collect_runtime_registry
 
-BRIDGE_VERSION = "0.8.0"
+BRIDGE_VERSION = "0.9.0"
 ONEBOT_QQ_CAPABILITIES = {
     "profile": "onebot_v11.qq.v1",
     "supported": ["mention", "reply", "send_image", "send_text"],
@@ -109,6 +110,7 @@ phase4_command_client = Phase4CommandClient(
 driver = get_driver()
 event_contexts: dict[int, dict[str, Any]] = {}
 api_started: dict[int, float] = {}
+api_audit_contexts: dict[int, tuple[float, dict[str, Any]]] = {}
 blocked_api_calls: set[int] = set()
 heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
@@ -433,7 +435,21 @@ def _active_event_context() -> dict[str, Any]:
 
 
 @OneBotBot.on_calling_api
-async def observe_api_start(_: OneBotBot, api: str, data: dict[str, Any]) -> None:
+async def observe_api_start(bot: OneBotBot, api: str, data: dict[str, Any]) -> None:
+    if is_audited_side_effect(api):
+        started = time.monotonic()
+        try:
+            payload, key, context = started_api_call(
+                instance=instance(bot.self_id),
+                api=api,
+                data=data,
+                trigger_source_event_id=_active_event_context().get("source_event_id"),
+                occurred_at=utc_iso(),
+            )
+            api_audit_contexts[id(data)] = (started, context)
+            reporter.enqueue(ReportItem("/v1/events", payload, key))
+        except Exception:
+            logger.opt(exception=True).warning("Lily Core could not record platform API call start")
     if api.startswith("send_"):
         api_started[id(data)] = time.monotonic()
         if _active_event_context().get("claim_denied") is True:
@@ -449,6 +465,20 @@ async def observe_api_result(
     data: dict[str, Any],
     result: Any,
 ) -> None:
+    audit_context = api_audit_contexts.pop(id(data), None)
+    if audit_context is not None:
+        audit_started, context = audit_context
+        try:
+            payload, key = completed_api_call(
+                context,
+                exception=exception,
+                result=result,
+                duration_ms=int((time.monotonic() - audit_started) * 1000),
+                occurred_at=utc_iso(),
+            )
+            reporter.enqueue(ReportItem("/v1/events", payload, key))
+        except Exception:
+            logger.opt(exception=True).warning("Lily Core could not record platform API call result")
     if not api.startswith("send_"):
         return
     started = api_started.pop(id(data), None)

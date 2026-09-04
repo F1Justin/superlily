@@ -106,6 +106,36 @@ class EventReference(WireModel):
         return self
 
 
+class PlatformAPICallAudit(WireModel):
+    call_id: str = Field(min_length=1, max_length=128)
+    stage: Literal["started", "completed"]
+    api_name: str = Field(min_length=1, max_length=128)
+    safe_parameters: dict[str, Any] = Field(default_factory=dict)
+    outcome: Literal["pending", "succeeded", "failed", "ambiguous"]
+    success: bool | None = None
+    return_code: int | None = None
+    duration_ms: int | None = Field(default=None, ge=0, le=86_400_000)
+    result_message_ids: list[str] = Field(default_factory=list, max_length=128)
+    safe_error_code: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def require_stage_state(self) -> "PlatformAPICallAudit":
+        if self.stage == "started":
+            if self.outcome != "pending" or any(
+                value is not None
+                for value in (self.success, self.return_code, self.duration_ms, self.safe_error_code)
+            ) or self.result_message_ids:
+                raise ValueError("started API call must only carry pending state")
+            return self
+        if self.outcome == "pending" or self.success is None or self.duration_ms is None:
+            raise ValueError("completed API call requires terminal outcome, success, and duration")
+        if self.outcome == "succeeded" and not self.success:
+            raise ValueError("succeeded API call must set success")
+        if self.outcome != "succeeded" and self.success:
+            raise ValueError("non-succeeded API call must not set success")
+        return self
+
+
 class EventIn(WireModel):
     schema_version: Literal["1.0"] = API_SCHEMA_VERSION
     source_event_id: str = Field(min_length=1, max_length=512)
@@ -118,6 +148,7 @@ class EventIn(WireModel):
     ingress: "IngressRecordRef | None" = None
     capture: "CaptureEnvelope | None" = None
     actions: list["PlatformActionDetail"] = Field(default_factory=list, max_length=128)
+    platform_api_call: PlatformAPICallAudit | None = None
     occurred_at: AwareDatetime
     raw: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

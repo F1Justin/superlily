@@ -647,6 +647,68 @@ class PlatformActionObservation(Base):
     )
 
 
+class PlatformAPICallRecord(Base):
+    __tablename__ = "platform_api_calls"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
+    call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    api_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    target_conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_reported_source_event_id: Mapped[str | None] = mapped_column(String(512))
+    safe_parameters_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    started_observation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="SET NULL")
+    )
+    completed_observation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("event_observations.id", ondelete="SET NULL")
+    )
+    start_observed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    result_observed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    success: Mapped[bool | None] = mapped_column(Boolean)
+    return_code: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    result_message_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    safe_error_code: Mapped[str | None] = mapped_column(String(128))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "call_id", name="uq_platform_api_call_identity"),
+        CheckConstraint(
+            "target_conversation_type IN ('group', 'private', 'channel', 'system', 'unknown')",
+            name="ck_platform_api_call_conversation_type",
+        ),
+        CheckConstraint(
+            "outcome IN ('pending', 'succeeded', 'failed', 'ambiguous')",
+            name="ck_platform_api_call_outcome",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms BETWEEN 0 AND 86400000",
+            name="ck_platform_api_call_duration",
+        ),
+        CheckConstraint(
+            "(start_observed AND started_at IS NOT NULL AND started_observation_id IS NOT NULL) OR "
+            "(NOT start_observed AND started_at IS NULL AND started_observation_id IS NULL)",
+            name="ck_platform_api_call_start_state",
+        ),
+        CheckConstraint(
+            "(NOT result_observed AND outcome = 'pending' AND success IS NULL AND completed_at IS NULL "
+            "AND completed_observation_id IS NULL) OR "
+            "(result_observed AND outcome <> 'pending' AND success IS NOT NULL AND completed_at IS NOT NULL "
+            "AND completed_observation_id IS NOT NULL)",
+            name="ck_platform_api_call_terminal_state",
+        ),
+        Index("ix_platform_api_calls_instance_started", "instance_id", "started_at", "id"),
+        Index("ix_platform_api_calls_conversation_started", "target_conversation_id", "started_at", "id"),
+        Index("ix_platform_api_calls_api_started", "api_name", "started_at", "id"),
+    )
+
+
 class IngressReceiptRecord(Base):
     __tablename__ = "ingress_receipts"
 

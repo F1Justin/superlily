@@ -39,6 +39,7 @@ from .identity import (
 )
 from .directory_snapshots import friend_directory_snapshot, group_directory_snapshot
 from .platform_actions import platform_action_event_payload
+from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
     content_parts,
     message_references,
@@ -55,7 +56,7 @@ from .render_retry import (
     unavailable_instruction,
 )
 
-BRIDGE_VERSION = "1.3.0"
+BRIDGE_VERSION = "1.4.0"
 
 plugin = NekroPlugin(
     name="Lily Core Bridge",
@@ -182,6 +183,7 @@ _EVENT_SUPPRESSIONS_ATTR = "_superlily_event_suppressions_v1"
 _EVENT_SEND_ATTEMPTS_ATTR = "_superlily_event_send_attempts_v1"
 _ACTIVE_CLAIM_EVENTS_ATTR = "_superlily_active_claim_events_v1"
 api_started: dict[int, float] = {}
+api_audit_contexts: dict[int, tuple[float, dict[str, Any]]] = {}
 blocked_api_calls: dict[int, ClaimSuppression] = {}
 _render_send_receipt: ContextVar[asyncio.Future[dict[str, str | None]] | None] = ContextVar(
     "superlily_render_send_receipt",
@@ -1015,6 +1017,58 @@ if not getattr(nonebot_message, "_superlily_message_sent_hook", False):
         )
 
     nonebot_message._superlily_message_sent_hook = True
+
+
+if not getattr(OneBotBot, "_superlily_platform_api_audit_v1", False):
+
+    @OneBotBot.on_calling_api
+    async def observe_platform_api_start(
+        bot: OneBotBot,
+        api: str,
+        data: dict[str, Any],
+    ) -> None:
+        if not is_audited_side_effect(api):
+            return
+        started = time.monotonic()
+        try:
+            conv = _api_conversation(data)
+            payload, key, context = started_api_call(
+                instance=instance(bot.self_id),
+                api=api,
+                data=data,
+                trigger_source_event_id=_current_task_trigger(conv),
+                occurred_at=utc_iso(),
+            )
+            api_audit_contexts[id(data)] = (started, context)
+            reporter.enqueue(ReportItem("/v1/events", payload, key))
+        except Exception:
+            logger.exception("Lily Core could not record platform API call start")
+
+    @OneBotBot.on_called_api
+    async def observe_platform_api_result(
+        _: OneBotBot,
+        exception: Exception | None,
+        api: str,
+        data: dict[str, Any],
+        result: Any,
+    ) -> None:
+        audit_context = api_audit_contexts.pop(id(data), None)
+        if audit_context is None:
+            return
+        audit_started, context = audit_context
+        try:
+            payload, key = completed_api_call(
+                context,
+                exception=exception,
+                result=result,
+                duration_ms=int((time.monotonic() - audit_started) * 1000),
+                occurred_at=utc_iso(),
+            )
+            reporter.enqueue(ReportItem("/v1/events", payload, key))
+        except Exception:
+            logger.exception("Lily Core could not record platform API call result")
+
+    OneBotBot._superlily_platform_api_audit_v1 = True
 
 
 if not getattr(OneBotBot, "_superlily_claim_send_guard_v1", False):

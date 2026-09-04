@@ -60,6 +60,7 @@ from .models import (
     utc_now,
 )
 from .settings import Settings
+from .platform_api_ledger import record_platform_api_call
 
 
 @dataclass
@@ -532,6 +533,18 @@ async def _validate_existing_observation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="event identity or idempotency key was reused for a different event",
+        )
+
+    existing_api_call = existing.metadata_json.get("platform_api_call")
+    incoming_api_call = (
+        _dump_mapping(payload.platform_api_call.model_dump(mode="json"), settings)
+        if payload.platform_api_call is not None
+        else None
+    )
+    if existing_api_call != incoming_api_call:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="event replay changed its platform API call audit",
         )
 
     capture_values = _capture_values(payload, settings)
@@ -1715,6 +1728,11 @@ async def ingest_event(
             "status": correlation_status,
             "fingerprint_present": fingerprint is not None,
         }
+        if payload.platform_api_call is not None:
+            metadata["platform_api_call"] = _dump_mapping(
+                payload.platform_api_call.model_dump(mode="json"),
+                settings,
+            )
         record = EventObservation(
             source_event_id=source.id,
             reported_source_event_id=payload.source_event_id,
@@ -1766,6 +1784,7 @@ async def ingest_event(
             )
             await record_event_links(session, payload, record, settings)
             await _record_platform_actions(session, payload, record, settings)
+            await record_platform_api_call(session, payload, record, settings)
             await _ensure_ingress_receipt(session, record, payload)
             await session.flush()
             await recompute_event_decision(session, source, settings)
