@@ -1,6 +1,6 @@
 # R5.3（C0-G）OneBot 平台副作用操作账本
 
-状态：实现完成，待生产验收（2026-09-04）。
+状态：生产启用并验收通过（2026-09-04）。
 
 ## 用户结果
 
@@ -44,6 +44,13 @@ spool，调用结束后追加 `completed` 事件；Core 将两者汇总到 `plat
 3. SQLite Alembic upgrade/downgrade/upgrade 和全量可运行回归通过。
 4. 生产发布需另行迁移和更新桥接器，验证 spool 连续序号、API 调用延迟、账本 start/result
    完整率、错误日志及数据库增长后才能签署。
+
+## 生产验收记录
+
+2026-09-04 21:44 CST，生产迁移处于 `0031_platform_api_calls`。账本已观察到 18 次真实
+`set_msg_emoji_like` 调用，全部同时具有 started/completed 观测且结果为 `succeeded`，没有
+未完成或非成功记录。Lily 与 Nekro 的 durable spool 水位分别为 `706089/706089` 和
+`248930/248930`，最高连续序号与最高已见序号一致；两实例均上报 online，Core 与数据库健康。
 
 回滚时恢复上一桥接器版本，停止新增审计事件；如需回退 schema，再 downgrade
 `0031_platform_api_calls`。回滚不得删除已经形成的操作证据。
