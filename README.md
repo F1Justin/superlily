@@ -1,6 +1,6 @@
 # Superlily
 
-Superlily 是 [`MANIFESTO.md`](MANIFESTO.md) 约束的 Lily Core 与长期社交主体工程。
+呜哇哇啊啊~ Superlily 是 [`MANIFESTO.md`](MANIFESTO.md) 约束的 Lily Core 与长期社交主体工程哦。呼噜呼噜~
 当前稳定基础已经覆盖事件观察与规范关联、持久采集、工具 authority、可恢复执行、
 artifact/Renderer、平台投递和冻结的 Core Agent v1 参考实现；旧群聊历史也已统一进入
 PostgreSQL archive read model。
