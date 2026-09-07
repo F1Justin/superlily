@@ -129,6 +129,10 @@ Lily 为 `753725/753725`；Lily 水位未增长只说明旧包已确认，不证
 也不能签署 Lily 媒体验收。本次没有改动其 OneBot 登录/连接配置。Nekro 已恢复 online。
 Nekro 启动还报告表情包插件无法访问 Qdrant；该容器自 09-03 起已停止，本次未将其启用。
 
+后续更新：用户重启 Lily 的 NapCat 后，07:41:15 OneBot 重连，实时采集恢复；随后
+另行授权启用了 Lily 的 R5.4 自动补采和午夜窗口回填，见
+[C0H_QQ_HISTORY_RECOVERY.md](C0H_QQ_HISTORY_RECOVERY.md)。这不改变 R5.5 媒体开关仍关闭的状态。
+
 ChatExporter 代码与权限未改；`archive.message_timeline_v2` 定义校验值前后均为
 `3325f70893066204c7bd093ac87e38df`，其与 conversation mappings 的只读权限仍有效。
 

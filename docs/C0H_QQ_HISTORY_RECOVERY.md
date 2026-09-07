@@ -1,6 +1,7 @@
 # R5.4（C0-H）QQ 断线补洞
 
-状态：Nekro 生产小窗口断线 canary 通过，Lily 与全范围验收待完成（2026-09-07）。
+状态：两端自动补采已启用；Nekro 小窗口断线 canary 通过，Lily 长窗口补采已完成一轮并
+保留缺口，仍待全范围验收（2026-09-08）。
 服务 MANIFESTO 第 2、3 条。
 
 ## 范围与身份
@@ -117,3 +118,49 @@ NapCat 始终在线，不退出 QQ 登录；测试的是消费端断线与恢复
 custom-format dump、旧桥接器/配置、重投前两份 SQLite 快照及 Core 回滚命令覆盖。
 旧镜像 tag 为 `superlily/core:pre-c0h-20260907`。回退旧 Core 时须绕过旧 Alembic 启动步骤，
 因为旧版本不认识新 revision；保留新增表和回执，不对生产库执行破坏性 downgrade。
+
+## Lily 自动补采与午夜断档（2026-09-08）
+
+用户重启其 NapCat 后，Lily 在 07:41:15 CST 重连，恢复实时采集。此前补采开关仍为
+false，因此重连本身没有填补午夜断档。随后经用户明确授权启用，而非将部署误记为启用。
+
+Lily `.env.prod` 的生效配置：`LILY_CORE_HISTORY_RECOVERY_ENABLED=true`，回看上限
+`86400` 秒，每页 `50` 条，每会话最多 `100` 页；沿用串行 worker、1 秒请求间隔、
+30 秒 API 超时和最多 3 次失败尝试。原 spool 接近 256 MiB 配额，升为 `536870912`
+bytes，保留 24 小时记录且不删除已有数据。Nekro 保持原 300 秒/50 条/5 页配置；
+两端 R5.5 展开与媒体下载开关不在本次范围，仍关闭。
+
+通过既有 `RecoveryStore.create` 幂等建立 system discovery 任务
+`4e9dc9f5-a6fa-560e-b8b9-c5416663b629`，明确窗口为 00:00:00–07:41:15 CST。
+没有回写/伪造 `online` 连接水位，也没有直接构造历史消息灌入 PostgreSQL；原 worker
+读取实际 OneBot 返回包，经 durable spool 上报。启动另生成首次一小时 bootstrap 任务，
+窗口与专门任务部分重叠，按原生身份去重。bootstrap 的 partial 不能被改称完整恢复。
+
+`tmux-nb.service` 重启后，07:48:00 桥接器启动，07:48:26 QQ 重连。自动发现 28 个群和
+3 个私聊目标；无权限、空历史、分页停滞或超过上限的会话留在缺口账本，不承诺全量恢复。
+只有新入库的消息及其回执可作为补采证据，不能用 captured 次数直接当新增消息数。
+
+07:52:26 CST 核验，两轮共 64 个任务全部终止且待投递报告清空：
+
+- 专门午夜窗口：25 个群、2 个私聊扫描到下界，读取 39 页，captured=887、rejected=0。
+  两个群为空历史（`2167028216`、`637616993`）；群 `908092695` 三次 ActionFailed 后
+  保留 partial。另一个失败的 private 目标是机器人自身 `3643287298`，不是已证明存在
+  遗漏对话的其他联系人。system discovery 仍标 `discovery_scope_bounded`。
+- 首次启动窗口为 06:48:30–07:48:30，captured=167，与专门窗口部分重叠；保留
+  `bootstrap_window`，不升级为全量完整恢复。两个接口失败目标已用尽三次尝试，无无限重试。
+- 合计 1054 次 captured 经 spool 幂等后为 927 个不同历史包，全部 committed。
+  Core 新增 879 条 Lily 历史 observation（关联 879 个 source event），另 48 个包以
+  `history_delivery_receipts` 确认已有 observation；不得把 1054 当新增消息数。
+  新增 observation 中 863 条属于专门午夜窗口，另 16 条属于首次启动窗口的后续时间。
+- 对本次新增午夜历史来源检查：启用后 Lily claim=0、由这些历史 observation 触发的
+  Lily response=0。两端 online，pending=0、quarantined=0、last_error=null；Lily
+  回执水位 `754875/754875`，spool 占用约 240 MB、低于新的 512 MiB 上限。
+
+上述结果证明返回的可验证消息已归档并确认，不证明平台没有遗漏消息；空历史、接口失败、
+有限目录范围以及未被平台保留的内容仍是完整性边界。此次没有改动消息文本、身份或虚构回执。
+
+备份及可复查种子脚本位于 `/home/justin/backups/superlily/20260908-lily-history-074800`，
+含变更前私有配置、SQLite spool 一致性快照、操作窗口和回滚说明。启用前没有补采任务库；
+沿用本日上午 R5.5 部署前完整 PostgreSQL 备份，Core/schema 未因此次启用而变更。
+回滚只关闭 Lily 补采并重启既有 supervisor，保留任务、进度、已入库消息与 spool；
+在占用回到旧配额以下之前，不将缓冲上限贸然降回 256 MiB。
