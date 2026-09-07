@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import threading
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -41,6 +42,7 @@ from .correlation import (
     event_correlation_fingerprint,
 )
 from .decisions import POLICY_VERSION, decide_event
+from .history_recovery import record_recovery_progress, validate_recovery_progress
 from .models import (
     BotInstance,
     CollectorWatermark,
@@ -115,11 +117,14 @@ async def _record_identity_name(
     if payload.sender is None or (value := _observed_name(name_value)) is None:
         return
 
+    from_history = payload.metadata.get("observation_method") == "onebot_history"
+    source_record_type = "history_event_observation" if from_history else "event_observation"
     filters = [
         IdentityNameObservation.platform == payload.instance.platform,
         IdentityNameObservation.user_id == payload.sender.id,
         IdentityNameObservation.name_kind == name_kind,
         IdentityNameObservation.instance_id == observation.instance_id,
+        IdentityNameObservation.source_record_type == source_record_type,
     ]
     if name_kind != "account_name":
         filters.extend(
@@ -146,7 +151,7 @@ async def _record_identity_name(
             id=_name_observation_id(
                 "identity",
                 "superlily_core",
-                "event_observation",
+                source_record_type,
                 observation.id,
                 name_kind,
             ),
@@ -156,15 +161,18 @@ async def _record_identity_name(
             conversation_id=conversation_id,
             name_kind=name_kind,
             name_value=value,
-            observed_at=payload.occurred_at,
+            observed_at=observation.received_at if from_history else payload.occurred_at,
             instance_id=observation.instance_id,
             source_system="superlily_core",
-            source_record_type="event_observation",
+            source_record_type=source_record_type,
             source_record_id=observation.id,
-            observation_method="message" if payload.message is not None else "event",
+            observation_method="onebot_history" if from_history else ("message" if payload.message is not None else "event"),
             provenance_json={
                 "reported_source_event_id": payload.source_event_id,
                 "event_type": payload.event_type,
+                **({"message_occurred_at": payload.occurred_at.isoformat(),
+                    "name_time_semantics": "observed_on_recovery_not_historical_change"}
+                   if from_history else {}),
             },
         )
     )
@@ -444,6 +452,34 @@ async def _existing_observation(
         )
     if matches:
         return matches[0]
+    if payload is not None and payload.message is not None:
+        incoming_native = payload.metadata.get("native_identity") or {}
+        if not isinstance(incoming_native, dict):
+            incoming_native = {}
+        candidates = (await session.scalars(
+            select(EventObservation).join(SourceEvent, SourceEvent.id == EventObservation.source_event_id)
+            .where(EventObservation.instance_id == instance_id,
+                   EventObservation.platform_message_id == (payload.message.id if payload.message else None),
+                   EventObservation.sender_id == (payload.sender.id if payload.sender else None),
+                   SourceEvent.platform == payload.instance.platform,
+                   SourceEvent.conversation_type == payload.conversation.type,
+                   SourceEvent.conversation_id == canonical_conversation_id(
+                       payload.instance.platform, payload.conversation.type, payload.conversation.id),
+                   SourceEvent.occurred_at >= payload.occurred_at - timedelta(seconds=30),
+                   SourceEvent.occurred_at <= payload.occurred_at + timedelta(seconds=30))
+        )).all()
+        exact = [item for item in candidates
+                 if (payload.metadata.get("observation_method") == "onebot_history"
+                     or item.metadata_json.get("observation_method") == "onebot_history")
+                 and _native_identity_time(item.metadata_json) is not None
+                 and _native_identity_time(item.metadata_json) == _native_identity_time(payload.metadata)
+                 and any(incoming_native.get(key) is not None
+                         and str(incoming_native[key]) == str((item.metadata_json.get("native_identity") or {}).get(key))
+                         for key in ("real_seq", "msg_id", "msg_uid"))]
+        if len(exact) > 1:
+            raise HTTPException(409, "ambiguous history identity")
+        if exact:
+            return exact[0]
     if fingerprint is None:
         return None
 
@@ -522,6 +558,7 @@ async def _validate_existing_observation(
             "user_id",
             "group_id",
             "msg_uid",
+            "msg_id",
             "msg_random",
         ):
             existing_value = _native_identity_scalar(existing_native, field)
@@ -548,6 +585,11 @@ async def _validate_existing_observation(
         )
 
     capture_values = _capture_values(payload, settings)
+    incoming_history = payload.metadata.get("observation_method") == "onebot_history"
+    stored_history = existing.metadata_json.get("observation_method") == "onebot_history"
+    cross_delivery = incoming_history != (
+        stored_history and existing.metadata_json.get("live_observed") is not True
+    )
     capture_conflicts = any(
         (
             existing.capture_status != capture_values["capture_status"],
@@ -560,6 +602,9 @@ async def _validate_existing_observation(
             existing.capture_reason != capture_values["capture_reason"],
         )
     )
+    if cross_delivery:
+        # History API responses and live pushes have different capture envelopes.
+        capture_conflicts = False
     stored_actions = (
         await session.scalars(
             select(PlatformActionObservation)
@@ -605,6 +650,48 @@ async def _validate_existing_observation(
             status_code=status.HTTP_409_CONFLICT,
             detail="event replay changed its capture or platform action details",
         )
+    if payload.event_type == "audit.history_recovery" and (
+        existing.metadata_json.get("history_recovery") != payload.metadata.get("history_recovery")
+    ):
+        raise HTTPException(409, "event replay changed its history recovery progress")
+    if (existing.metadata_json.get("observation_method") == "onebot_history"
+            and existing.metadata_json.get("live_observed") is not True
+            and payload.metadata.get("observation_method") != "onebot_history"):
+        # A live delivery can arrive after the background reader. Preserve the
+        # recovery provenance while allowing only that real live delivery to act.
+        metadata = sanitize_payload(payload.metadata, _metadata_policy(settings)) or {}
+        existing.metadata_json = {
+            **existing.metadata_json, **metadata, "live_observed": True,
+            "history_reported_source_event_id": existing.reported_source_event_id,
+        }
+        existing.reported_source_event_id = payload.source_event_id
+        existing.text = payload.message.text if payload.message else None
+        existing.segments_json = _dump_list(payload.message.segments if payload.message else [], settings)
+        existing.attachments_json = _dump_list(payload.message.attachments if payload.message else [], settings)
+        for field, value in capture_values.items():
+            setattr(existing, field, value)
+        existing.raw_json = sanitize_payload(payload.raw, _raw_policy(settings))
+        instance = await session.get(BotInstance, existing.instance_id)
+        if instance is not None and (
+            instance.last_event_at is None
+            or instance.last_event_at.replace(tzinfo=timezone.utc) < payload.occurred_at
+        ):
+            instance.last_event_at = payload.occurred_at
+        await _record_observed_names(session, payload, existing, conversation_id)
+        await session.execute(
+            update(ResponseRecord).where(
+                ResponseRecord.instance_id == existing.instance_id,
+                ResponseRecord.platform == source.platform,
+                ResponseRecord.conversation_type == source.conversation_type,
+                ResponseRecord.conversation_id.in_({
+                    payload.conversation.id, conversation_id,
+                    f"{payload.conversation.type}_{conversation_id}",
+                }),
+                ResponseRecord.trigger_source_event_id == payload.source_event_id,
+            ).values(trigger_source_event_id=source.id)
+        )
+        await session.flush()
+        await recompute_event_decision(session, source, settings)
 
 
 async def ensure_source_event(
@@ -1073,6 +1160,9 @@ async def _recompute_event_decision_unlocked(
             .order_by(EventObservation.received_at, EventObservation.id)
         )
     ).all()
+    observations = [item for item in observations
+                    if item.metadata_json.get("observation_method") != "onebot_history"
+                    or item.metadata_json.get("live_observed") is True]
     if not observations:
         return None
 
@@ -1672,27 +1762,19 @@ async def ingest_event(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventObservation, bool]:
+    recovery_progress = validate_recovery_progress(payload)
     fingerprint = event_correlation_fingerprint(payload)
     conversation_id = canonical_conversation_id(
         payload.instance.platform,
         payload.conversation.type,
         payload.conversation.id,
     )
-    existing = await _existing_observation(
-        session,
-        payload.instance.instance_id,
-        idempotency_key,
-        payload.source_event_id,
-        fingerprint,
-        payload,
-    )
-    if existing:
-        await _validate_existing_observation(session, existing, payload, fingerprint, conversation_id, settings)
-        await _ensure_ingress_receipt(session, existing, payload)
-        await session.commit()
-        return existing, True
-
-    async with _correlation_guard(session, fingerprint):
+    lock_fingerprint = fingerprint
+    if lock_fingerprint is None and payload.message is not None:
+        lock_fingerprint = "local-message:" + json.dumps([
+            payload.instance.instance_id, conversation_id, payload.message.id,
+        ])
+    async with _correlation_guard(session, lock_fingerprint):
         existing = await _existing_observation(
             session,
             payload.instance.instance_id,
@@ -1757,7 +1839,8 @@ async def ingest_event(
             **capture_values,
         )
         session.add(record)
-        instance.last_event_at = payload.occurred_at
+        if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None:
+            instance.last_event_at = payload.occurred_at
         try:
             await session.flush()
             await _record_observed_names(session, payload, record, conversation_id)
@@ -1785,9 +1868,11 @@ async def ingest_event(
             await record_event_links(session, payload, record, settings)
             await _record_platform_actions(session, payload, record, settings)
             await record_platform_api_call(session, payload, record, settings)
+            record_recovery_progress(session, payload, record, recovery_progress)
             await _ensure_ingress_receipt(session, record, payload)
             await session.flush()
-            await recompute_event_decision(session, source, settings)
+            if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None:
+                await recompute_event_decision(session, source, settings)
             await _resolve_links_targeting_observation(session, record, source, settings)
             await _resolve_actions_targeting_observation(session, record, source)
             await session.commit()
@@ -2201,6 +2286,8 @@ async def evaluate_event_claim(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventClaim, bool, EventObservation, bool]:
+    if payload.metadata.get("observation_method") == "onebot_history":
+        raise HTTPException(422, "history recovery cannot request a claim")
     observation, event_duplicate = await ingest_event(session, payload, idempotency_key, settings)
     source = await session.get(SourceEvent, observation.source_event_id)
     assert source is not None

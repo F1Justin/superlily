@@ -244,10 +244,15 @@ spool 保证先记账再调用。Core 将两阶段事件聚合为可按实例、
 超时保持结果不确定，敏感参数不落库，无法可靠关联的后续平台事件不猜测。范围、失败边界、
 验收门和回滚见 [`C0G_PLATFORM_API_LEDGER.md`](C0G_PLATFORM_API_LEDGER.md)。
 
-### R5.4（C0-H）：断线补洞（已纳入路线图，待实施）
+### R5.4（C0-H）：断线补洞（实现与隔离验证完成，待生产 canary）
 
 本项承接最初“应记尽记”调查的第 4 项，服务 `MANIFESTO.md` 第 2、3 条：机器人断线或
 重启后，数据库能够补收平台仍可提供的遗漏消息，并明确标识无法恢复的时间范围。
+
+2026-09-07：两套桥接器已实现默认关闭的有界补采、持久任务与游标；Core 增加
+`0032_qq_history_recovery` 及可查询进度证据，历史消息不进入 claim/Agent 执行。
+已通过自动化回归和隔离 PostgreSQL 迁移验证；尚未生产部署、启用或签署。
+实现边界、配置和验收记录见 [C0H_QQ_HISTORY_RECOVERY.md](C0H_QQ_HISTORY_RECOVERY.md)。
 
 - 实施前核对实际部署的 OneBot/NapCat 版本及 `get_group_msg_history`、
   `get_friend_msg_history`、`get_recent_contact` 的可用性、分页和时间语义。

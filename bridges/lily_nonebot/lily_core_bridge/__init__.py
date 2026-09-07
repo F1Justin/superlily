@@ -44,6 +44,7 @@ from .payloads import (
     utc_iso,
 )
 from .reporter import BackgroundReporter, ReportItem
+from .history_recovery import HistoryRecovery
 from .runtime_registry import collect_runtime_registry
 
 BRIDGE_VERSION = "0.9.0"
@@ -63,6 +64,10 @@ class Config(BaseModel):
     lily_core_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
     lily_core_group_inventory_seconds: int = Field(default=21_600, ge=300, le=86_400)
     lily_core_directory_snapshot_enabled: bool = False
+    lily_core_history_recovery_enabled: bool = False
+    lily_core_history_lookback_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    lily_core_history_page_size: int = Field(default=50, ge=2, le=100)
+    lily_core_history_max_pages: int = Field(default=20, ge=1, le=100)
     lily_core_directory_snapshot_seconds: int = Field(default=86_400, ge=3_600, le=604_800)
     lily_core_directory_api_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     lily_core_queue_size: int = Field(default=1000, ge=10, le=10000)
@@ -121,6 +126,7 @@ blocked_api_calls: set[int] = set()
 heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
 directory_snapshot_task: asyncio.Task | None = None
+history_recovery: HistoryRecovery | None = None
 group_names: dict[str, str] = {}
 heartbeat_failures = 0
 last_heartbeat_error: str | None = None
@@ -352,6 +358,8 @@ async def directory_snapshot_loop() -> None:
 
 async def _observe_event(bot: OneBotBot, event: OneBotEvent) -> tuple[dict[str, Any], str] | None:
     raw = model_dict(event)
+    if history_recovery is not None:
+        history_recovery.observe(bot.self_id, raw)
     if raw.get("post_type") == "message_sent":
         return None
     conversation = conversation_from_event(event)
@@ -886,11 +894,25 @@ async def heartbeat_loop() -> None:
 
 @driver.on_startup
 async def start_bridge() -> None:
-    global heartbeat_task, group_inventory_task, directory_snapshot_task
+    global heartbeat_task, group_inventory_task, directory_snapshot_task, history_recovery
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because LILY_CORE_TOKEN is empty")
         return
     await reporter.start()
+    if plugin_config.lily_core_history_recovery_enabled and reporter.spool_path:
+        history_recovery = HistoryRecovery(
+            plugin_config.lily_core_spool_path + ".history.sqlite3", reporter, instance,
+            lambda: {str(k): v for k, v in get_bots().items() if isinstance(v, OneBotBot)},
+            lookback=plugin_config.lily_core_history_lookback_seconds,
+            page_size=plugin_config.lily_core_history_page_size,
+            max_pages=plugin_config.lily_core_history_max_pages,
+        )
+        try:
+            history_recovery.start()
+        except Exception:
+            logger.exception("History recovery startup failed; live collection remains enabled")
+            await history_recovery.stop()
+            history_recovery = None
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="lily-core-heartbeat")
     group_inventory_task = asyncio.create_task(group_inventory_loop(), name="lily-core-group-inventory")
     if plugin_config.lily_core_directory_snapshot_enabled:
@@ -902,7 +924,10 @@ async def start_bridge() -> None:
 
 @driver.on_shutdown
 async def stop_bridge() -> None:
-    global heartbeat_task, group_inventory_task, directory_snapshot_task
+    global heartbeat_task, group_inventory_task, directory_snapshot_task, history_recovery
+    if history_recovery is not None:
+        await history_recovery.stop()
+        history_recovery = None
     for task in (heartbeat_task, group_inventory_task, directory_snapshot_task):
         if task:
             task.cancel()

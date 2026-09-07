@@ -100,6 +100,8 @@ async def accept_agent_interaction(
 ) -> tuple[AgentInteraction | None, bool, str]:
     """Accept only addressed messages from reviewed instances/conversations."""
 
+    if payload.metadata.get("observation_method") == "onebot_history":
+        return None, False, "history_recovery"
     if settings.agent_product_mode != "canary":
         return None, False, "product_mode_off"
     if authenticated_instance not in settings.agent_entry_instances:

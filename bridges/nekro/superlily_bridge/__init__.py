@@ -43,6 +43,7 @@ from .directory_snapshots import (
     friend_directory_snapshot,
     group_directory_snapshot,
 )
+from .history_recovery import HistoryRecovery
 from .platform_actions import platform_action_event_payload
 from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
@@ -88,6 +89,10 @@ class BridgeConfig(ConfigBase):
         title="QQ group-name inventory interval",
     )
     DIRECTORY_SNAPSHOT_ENABLED: bool = Field(default=False, title="Enable QQ directory snapshots")
+    HISTORY_RECOVERY_ENABLED: bool = Field(default=False, title="Enable QQ history recovery")
+    HISTORY_LOOKBACK_SECONDS: int = Field(default=86_400, ge=60, le=604_800)
+    HISTORY_PAGE_SIZE: int = Field(default=50, ge=2, le=100)
+    HISTORY_MAX_PAGES: int = Field(default=20, ge=1, le=100)
     DIRECTORY_SNAPSHOT_SECONDS: int = Field(
         default=86_400,
         ge=3_600,
@@ -183,6 +188,7 @@ reporter = BackgroundReporter(
 heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
 directory_snapshot_task: asyncio.Task | None = None
+history_recovery: HistoryRecovery | None = None
 agent_delivery_task: asyncio.Task | None = None
 group_names: dict[str, str] = {}
 heartbeat_failures = 0
@@ -880,6 +886,8 @@ if not getattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, False):
     async def capture_native_identity(bot: OneBotBot, event: OneBotEvent) -> None:
         try:
             raw = _event_dict(event)
+            if history_recovery is not None:
+                history_recovery.observe(bot.self_id, raw)
             if raw.get("post_type") != "message" or raw.get("message_id") is None:
                 return
             conv = _onebot_conversation(raw)
@@ -1631,10 +1639,24 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
 @plugin.mount_init_method()
 async def init_bridge() -> None:
     global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
+    global history_recovery
     if not reporter.enabled:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
+    if config.HISTORY_RECOVERY_ENABLED and reporter.spool_path:
+        history_recovery = HistoryRecovery(
+            config.SPOOL_PATH + ".history.sqlite3", reporter, instance,
+            lambda: {str(k): v for k, v in get_bots().items() if isinstance(v, OneBotBot)},
+            lookback=config.HISTORY_LOOKBACK_SECONDS, page_size=config.HISTORY_PAGE_SIZE,
+            max_pages=config.HISTORY_MAX_PAGES,
+        )
+        try:
+            history_recovery.start()
+        except Exception:
+            logger.exception("History recovery startup failed; live collection remains enabled")
+            await history_recovery.stop()
+            history_recovery = None
     heartbeat_task = asyncio.create_task(heartbeat_loop(), name="nekro-lily-core-heartbeat")
     group_inventory_task = asyncio.create_task(group_inventory_loop(), name="nekro-lily-core-group-inventory")
     if config.DIRECTORY_SNAPSHOT_ENABLED:
@@ -1651,6 +1673,10 @@ async def init_bridge() -> None:
 @plugin.mount_cleanup_method()
 async def cleanup_bridge() -> None:
     global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
+    global history_recovery
+    if history_recovery is not None:
+        await history_recovery.stop()
+        history_recovery = None
     for task in (heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task):
         if task:
             task.cancel()

@@ -34,6 +34,32 @@ class Base(DeclarativeBase):
     pass
 
 
+class QQHistoryRecoveryProgress(Base):
+    __tablename__ = "qq_history_recovery_progress"
+
+    observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id"), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    pages: Mapped[int] = mapped_column(Integer, nullable=False)
+    captured: Mapped[int] = mapped_column(Integer, nullable=False)
+    rejected: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(256))
+    cursor: Mapped[str | None] = mapped_column(String(128))
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "job_id", "revision", name="uq_history_recovery_revision"),
+        Index("ix_history_recovery_conversation", "instance_id", "conversation_type", "conversation_id", "window_end"),
+    )
+
+
 class BotInstance(Base):
     __tablename__ = "bot_instances"
 
