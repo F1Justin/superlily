@@ -186,7 +186,7 @@ async def post_event(
     record, duplicate = await ingest_event(session, payload, idempotency_key, session.info["settings"])
     if duplicate:
         response.status_code = status.HTTP_200_OK
-    return await ingress_receipt_view(session, record, duplicate=duplicate)
+    return await ingress_receipt_view(session, record, duplicate=duplicate, payload=payload)
 
 
 @router.post("/v1/claims/evaluate", status_code=status.HTTP_200_OK)
@@ -207,6 +207,7 @@ async def post_claim(
         session,
         observation,
         duplicate=event_duplicate,
+        payload=payload,
     )
     return {
         **claim_record_payload(record),
@@ -1539,6 +1540,7 @@ async def post_agent_interaction(
         session,
         observation,
         duplicate=event_duplicate,
+        payload=payload,
     )
     if interaction is None:
         response.status_code = status.HTTP_200_OK

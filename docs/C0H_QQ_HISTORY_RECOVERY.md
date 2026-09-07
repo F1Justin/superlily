@@ -1,6 +1,7 @@
 # R5.4（C0-H）QQ 断线补洞
 
-状态：实现与隔离验证完成，待生产 canary（2026-09-07）。服务 MANIFESTO 第 2、3 条。
+状态：Nekro 生产小窗口断线 canary 通过，Lily 与全范围验收待完成（2026-09-07）。
+服务 MANIFESTO 第 2、3 条。
 
 ## 范围与身份
 
@@ -77,6 +78,42 @@ PostgreSQL 唯一消息数；最终入库还需核对 ingress receipt、水位�
   以及进度投影与篡改重放拒绝。
 - 完整本地回归：659 passed、8 skipped、1 deselected。未运行的 PostgreSQL archive
   专项不作为本阶段通过证据。
-- 独立 PostgreSQL 17 临时实例：迁移升级、降级及模型 drift 检查 1 passed。
-- 未改动 ChatExporter；未修改生产配置或部署。本阶段尚缺真实群/私聊小窗口分页、
-  断线 canary、双桥接生产健康和最终 receipt 验收。
+- 独立 PostgreSQL 17 临时实例：真实 spool → Core → 回执确认专项及迁移/模型 drift
+  检查合计 26 passed；SQLite 专项及迁移 27 passed、1 skipped。
+
+## Nekro 生产断线 canary（2026-09-07）
+
+经用户明确授权，Core 部署到 `0033_history_delivery_receipts`，Nekro 启用
+300 秒回看、每页 50 条、每任务最多 5 页；Lily 不启用补采，ChatExporter 不改动。
+Core 镜像为 `sha256:f0ec484d914de723dd448878d5e08699b728536438da9b6b8ecb00ff57a33b0b`。
+
+北京时间 19:45:14.675 停止 `nekro_agent`，由独立 systemd 定时器在
+19:46:16.064 自动启动（停止约 61.4 秒），19:46:45 OneBot 重连。
+NapCat 始终在线，不退出 QQ 登录；测试的是消费端断线与恢复，不是 QQ 服务端离线。
+
+- 19:45:15–19:46:15 的一分钟核心窗口，Lily 记录了 11 条消息。其中 4 条属于
+  Nekro 本次群清单中的共同群，4/4 均以 `onebot_history` 补回；另 7 条属于
+  不在该清单中的两个群，不计入 Nekro 可采范围。
+- 覆盖重连等待的 19:45:15–19:46:45 窗口，共补回 8 条消息、8 个不同 source event。
+  这些来源关联的 Nekro claim 为 0、回复为 0。
+- 检查时 Nekro 连续/最高水位为 `274225/274225`，Lily 为 `749876/749876`；
+  本次隔离补采包已全部确认，spool 无 pending/quarantined。
+- 扫描到时间下界的会话不等于全量历史完整；空历史及不可用会话仍保留 partial/失败证据。
+  本次没有可证明的私聊断线消息样本，也未做 NapCat 自身离线或 Lily 断线验收。
+- 本次重连任务全部结束：24 个群、6 个私聊为 scanned；2 个群、4 个私聊三次
+  `ActionFailed` 后标为 partial，1 个群为空历史。系统发现任务因有限会话清单而为 partial。
+
+真实 canary 覆盖并修正了两个自动化盲点：PostgreSQL advisory lock 必须使用十六进制
+摘要；同一原生消息的不同投递包必须分别确认 spool 回执。`history_delivery_receipts`
+保存额外回执，原 `ingress_receipts` 仍每条 observation 一行，避免改变 archive 视图基数。
+连续水位合并两张回执表；已绑定的包仍拒绝篡改序号、摘要或时间。迁移不重写原回执表，
+额外回执非空时拒绝直接 downgrade，以免删除入库证据。
+
+部署检查期间的 85 条 `durable spool binding` 隔离包在完整备份后按原包重投，已全部确认；
+没有改写消息内容或假造回执。复核依据包含 PostgreSQL 时间窗对照、OneBot 重连日志、
+任务 SQLite 和 spool 回执，不以“容器 healthy”代替补采成功。
+
+备份与回滚文件：`/home/justin/backups/superlily/20260907-c0h-112806`，含约 2.6 GB
+custom-format dump、旧桥接器/配置、重投前两份 SQLite 快照及 Core 回滚命令覆盖。
+旧镜像 tag 为 `superlily/core:pre-c0h-20260907`。回退旧 Core 时须绕过旧 Alembic 启动步骤，
+因为旧版本不认识新 revision；保留新增表和回执，不对生产库执行破坏性 downgrade。

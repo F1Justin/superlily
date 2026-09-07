@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from collections import namedtuple
 from copy import deepcopy
 import importlib.util
@@ -140,7 +141,20 @@ async def test_stalled_page_and_identity_gap(module, tmp_path):
 
 @pytest.mark.parametrize("kind", ["group", "private"])
 @pytest.mark.parametrize("history_first", [False, True])
-async def test_core_deduplicates_live_and_history_without_claim(module, client, app, kind, history_first):
+async def test_core_deduplicates_live_and_history_without_claim(module, client, app, kind, history_first, monkeypatch, tmp_path):
+    from superlily_core import service
+    from superlily_core.correlation import advisory_lock_key
+
+    guard = service._correlation_guard
+
+    @asynccontextmanager
+    async def checked_guard(session, fingerprint):
+        if fingerprint is not None:
+            advisory_lock_key(fingerprint)
+        async with guard(session, fingerprint):
+            yield
+
+    monkeypatch.setattr(service, "_correlation_guard", checked_guard)
     peer = "7" if kind == "group" else "8"
     history = module.history_message(raw(kind=kind), instance(), kind, peer)
     live = deepcopy(history)
@@ -150,13 +164,28 @@ async def test_core_deduplicates_live_and_history_without_claim(module, client, 
     live["capture"] = {"status": "partial", "reason": "live_envelope", "omitted_fields": ["url"]}
     headers = {"Authorization": "Bearer lily-secret"}
     first, second = (history, live) if history_first else (live, history)
+    spool_module = importlib.import_module(module.__package__ + ".spool")
+    spool = spool_module.DurableIngressSpool(str(tmp_path / "core-spool.db"))
+    spool.open()
+    first_record = spool.append_event(first, "first-event")
+    second_record = spool.append_event(second, "second-event")
     a = await client.post("/v1/events", json=first, headers={**headers, "Idempotency-Key": "first-event"})
     assert a.status_code == 201, a.text
+    spool.acknowledge(first_record, a.json())
     if history_first:
         async with app.state.database.sessions() as session:
             assert not (await session.scalars(select(EventDecision))).all()
     b = await client.post("/v1/events", json=second, headers={**headers, "Idempotency-Key": "second-event"})
     assert b.status_code == 200, b.text
+    spool.acknowledge(second_record, b.json())
+    assert b.json()["highest_contiguous_sequence"] == 2
+    replay = await client.post("/v1/events", json=first, headers={**headers, "Idempotency-Key": "first-event"})
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["receipt_id"] == a.json()["receipt_id"]
+    changed = deepcopy(first)
+    changed["ingress"]["sequence"] = 3
+    replay = await client.post("/v1/events", json=changed, headers={**headers, "Idempotency-Key": "first-event"})
+    assert replay.status_code == 409
     claim = await client.post("/v1/claims/evaluate", json=history,
                               headers={**headers, "Idempotency-Key": "claim-event"})
     assert claim.status_code == 422
@@ -173,6 +202,7 @@ async def test_core_deduplicates_live_and_history_without_claim(module, client, 
             for name in names:
                 if name.observation_method == "onebot_history":
                     assert name.observed_at.year > 1970
+    spool.close()
 
 
 async def test_progress_contract_and_projection(module, tmp_path, client, app):

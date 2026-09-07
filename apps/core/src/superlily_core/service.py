@@ -9,7 +9,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import HTTPException, status
-from sqlalchemy import exists, func, or_, select, text as sql_text, update
+from sqlalchemy import exists, func, or_, select, text as sql_text, update, union_all
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -46,6 +46,7 @@ from .history_recovery import record_recovery_progress, validate_recovery_progre
 from .models import (
     BotInstance,
     CollectorWatermark,
+    HistoryDeliveryReceipt,
     CommandRegistrySnapshot,
     ConversationCaptureProfile,
     ConversationNameObservation,
@@ -1619,13 +1620,13 @@ async def _advance_collector_watermark(
 
     sequences = (
         await session.scalars(
-            select(IngressReceiptRecord.collector_sequence)
-            .where(
-                IngressReceiptRecord.instance_id == receipt.instance_id,
-                IngressReceiptRecord.spool_id == receipt.spool_id,
-                IngressReceiptRecord.collector_sequence > watermark.highest_contiguous_sequence,
-            )
-            .order_by(IngressReceiptRecord.collector_sequence)
+            union_all(*[
+                select(model.collector_sequence).where(
+                    model.instance_id == receipt.instance_id,
+                    model.spool_id == receipt.spool_id,
+                    model.collector_sequence > watermark.highest_contiguous_sequence,
+                ) for model in (IngressReceiptRecord, HistoryDeliveryReceipt)
+            ]).order_by("collector_sequence")
         )
     ).all()
     expected = watermark.highest_contiguous_sequence + 1
@@ -1644,10 +1645,23 @@ async def _ensure_ingress_receipt_locked(
     observation: EventObservation,
     payload: EventIn,
 ) -> IngressReceiptRecord:
-    existing = await session.scalar(
+    receipts = (await session.scalars(
         select(IngressReceiptRecord).where(IngressReceiptRecord.observation_id == observation.id)
-    )
+    )).all()
+    receipts = list(receipts) + list((await session.scalars(
+        select(HistoryDeliveryReceipt).where(HistoryDeliveryReceipt.observation_id == observation.id)
+    )).all())
     ingress = payload.ingress
+    legacy_source = observation.metadata_json.get("history_reported_source_event_id", observation.reported_source_event_id)
+    existing = next((item for item in receipts if (
+        (getattr(item, "delivery_source_event_id", None) or legacy_source) == payload.source_event_id
+        or (ingress is not None and item.spool_id == ingress.spool_id
+            and item.collector_sequence == ingress.sequence)
+    )), None)
+    history_delivery = (payload.metadata.get("observation_method") == "onebot_history"
+                        or observation.metadata_json.get("observation_method") == "onebot_history")
+    if existing is None and receipts and not history_delivery:
+        existing = receipts[0]
     if existing is not None:
         expected = (
             ingress.spool_id if ingress else None,
@@ -1685,16 +1699,23 @@ async def _ensure_ingress_receipt_locked(
                 IngressReceiptRecord.collector_sequence == ingress.sequence,
             )
         )
-        if collision is not None:
+        duplicate_collision = await session.scalar(select(HistoryDeliveryReceipt).where(
+            HistoryDeliveryReceipt.instance_id == observation.instance_id,
+            HistoryDeliveryReceipt.spool_id == ingress.spool_id,
+            HistoryDeliveryReceipt.collector_sequence == ingress.sequence,
+        ))
+        if collision is not None or duplicate_collision is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="durable spool sequence is already bound to another observation",
             )
 
     now = utc_now()
-    receipt = IngressReceiptRecord(
+    receipt_type = HistoryDeliveryReceipt if receipts else IngressReceiptRecord
+    receipt = receipt_type(
         observation_id=observation.id,
         instance_id=observation.instance_id,
+        **({"delivery_source_event_id": payload.source_event_id} if receipts else {}),
         spool_id=ingress.spool_id if ingress else None,
         collector_sequence=ingress.sequence if ingress else None,
         record_sha256=ingress.record_sha256 if ingress else None,
@@ -1726,10 +1747,19 @@ async def ingress_receipt_view(
     observation: EventObservation,
     *,
     duplicate: bool,
+    payload: EventIn,
 ) -> dict[str, Any]:
-    receipt = await session.scalar(
-        select(IngressReceiptRecord).where(IngressReceiptRecord.observation_id == observation.id)
-    )
+    receipt = None
+    for model in (IngressReceiptRecord, HistoryDeliveryReceipt):
+        filters = [model.observation_id == observation.id]
+        if payload.ingress is not None:
+            filters.extend((model.spool_id == payload.ingress.spool_id,
+                            model.collector_sequence == payload.ingress.sequence))
+        else:
+            filters.append(model.spool_id.is_(None))
+        receipt = await session.scalar(select(model).where(*filters).order_by(model.committed_at.desc()))
+        if receipt is not None:
+            break
     assert receipt is not None
     watermark = (
         await session.get(
@@ -1771,9 +1801,9 @@ async def ingest_event(
     )
     lock_fingerprint = fingerprint
     if lock_fingerprint is None and payload.message is not None:
-        lock_fingerprint = "local-message:" + json.dumps([
+        lock_fingerprint = hashlib.sha256(("local-message:" + json.dumps([
             payload.instance.instance_id, conversation_id, payload.message.id,
-        ])
+        ])).encode()).hexdigest()
     async with _correlation_guard(session, lock_fingerprint):
         existing = await _existing_observation(
             session,

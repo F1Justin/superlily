@@ -773,6 +773,31 @@ class IngressReceiptRecord(Base):
     )
 
 
+class HistoryDeliveryReceipt(Base):
+    __tablename__ = "history_delivery_receipts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("bot_instances.id", ondelete="RESTRICT"), nullable=False)
+    delivery_source_event_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    spool_id: Mapped[str | None] = mapped_column(String(128))
+    collector_sequence: Mapped[int | None] = mapped_column(BigInteger)
+    record_sha256: Mapped[str | None] = mapped_column(String(64))
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("observation_id", "delivery_source_event_id", name="uq_history_receipt_delivery"),
+        UniqueConstraint("instance_id", "spool_id", "collector_sequence", name="uq_history_receipt_sequence"),
+        CheckConstraint(
+            "(spool_id IS NULL AND collector_sequence IS NULL AND record_sha256 IS NULL AND captured_at IS NULL) "
+            "OR (spool_id IS NOT NULL AND collector_sequence IS NOT NULL AND record_sha256 IS NOT NULL AND captured_at IS NOT NULL)",
+            name="ck_history_receipt_binding",
+        ),
+        CheckConstraint("collector_sequence IS NULL OR collector_sequence >= 1", name="ck_history_receipt_sequence"),
+    )
+
+
 class CollectorWatermark(Base):
     __tablename__ = "collector_watermarks"
 
