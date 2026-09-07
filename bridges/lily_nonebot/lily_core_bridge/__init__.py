@@ -45,6 +45,7 @@ from .payloads import (
 )
 from .reporter import BackgroundReporter, ReportItem
 from .history_recovery import HistoryRecovery
+from .media_archive import MediaArchive
 from .runtime_registry import collect_runtime_registry
 
 BRIDGE_VERSION = "0.9.0"
@@ -65,6 +66,8 @@ class Config(BaseModel):
     lily_core_group_inventory_seconds: int = Field(default=21_600, ge=300, le=86_400)
     lily_core_directory_snapshot_enabled: bool = False
     lily_core_history_recovery_enabled: bool = False
+    lily_core_media_archive_enabled: bool = False
+    lily_core_media_downloads_enabled: bool = False
     lily_core_history_lookback_seconds: int = Field(default=86_400, ge=60, le=604_800)
     lily_core_history_page_size: int = Field(default=50, ge=2, le=100)
     lily_core_history_max_pages: int = Field(default=20, ge=1, le=100)
@@ -127,6 +130,7 @@ heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
 directory_snapshot_task: asyncio.Task | None = None
 history_recovery: HistoryRecovery | None = None
+media_archive: MediaArchive | None = None
 group_names: dict[str, str] = {}
 heartbeat_failures = 0
 last_heartbeat_error: str | None = None
@@ -899,6 +903,17 @@ async def start_bridge() -> None:
         logger.warning("Lily Core bridge disabled because LILY_CORE_TOKEN is empty")
         return
     await reporter.start()
+    global media_archive
+    if plugin_config.lily_core_media_archive_enabled and reporter.spool_path:
+        media_archive = MediaArchive(reporter.spool_path, reporter,
+            lambda: {str(k): v for k,v in get_bots().items() if isinstance(v, OneBotBot)},
+            downloads=plugin_config.lily_core_media_downloads_enabled)
+        try:
+            media_archive.start()
+        except Exception:
+            logger.exception("Media archive startup failed; live collection remains enabled")
+            await media_archive.stop()
+            media_archive = None
     if plugin_config.lily_core_history_recovery_enabled and reporter.spool_path:
         history_recovery = HistoryRecovery(
             plugin_config.lily_core_spool_path + ".history.sqlite3", reporter, instance,
@@ -925,6 +940,10 @@ async def start_bridge() -> None:
 @driver.on_shutdown
 async def stop_bridge() -> None:
     global heartbeat_task, group_inventory_task, directory_snapshot_task, history_recovery
+    global media_archive
+    if media_archive is not None:
+        await media_archive.stop()
+        media_archive = None
     if history_recovery is not None:
         await history_recovery.stop()
         history_recovery = None

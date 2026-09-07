@@ -44,6 +44,7 @@ from .directory_snapshots import (
     group_directory_snapshot,
 )
 from .history_recovery import HistoryRecovery
+from .media_archive import MediaArchive
 from .platform_actions import platform_action_event_payload
 from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
@@ -90,6 +91,8 @@ class BridgeConfig(ConfigBase):
     )
     DIRECTORY_SNAPSHOT_ENABLED: bool = Field(default=False, title="Enable QQ directory snapshots")
     HISTORY_RECOVERY_ENABLED: bool = Field(default=False, title="Enable QQ history recovery")
+    MEDIA_ARCHIVE_ENABLED: bool = Field(default=False, title="Enable QQ media expansion")
+    MEDIA_DOWNLOADS_ENABLED: bool = Field(default=False, title="Enable QQ media content archival")
     HISTORY_LOOKBACK_SECONDS: int = Field(default=86_400, ge=60, le=604_800)
     HISTORY_PAGE_SIZE: int = Field(default=50, ge=2, le=100)
     HISTORY_MAX_PAGES: int = Field(default=20, ge=1, le=100)
@@ -189,6 +192,7 @@ heartbeat_task: asyncio.Task | None = None
 group_inventory_task: asyncio.Task | None = None
 directory_snapshot_task: asyncio.Task | None = None
 history_recovery: HistoryRecovery | None = None
+media_archive: MediaArchive | None = None
 agent_delivery_task: asyncio.Task | None = None
 group_names: dict[str, str] = {}
 heartbeat_failures = 0
@@ -1644,6 +1648,17 @@ async def init_bridge() -> None:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
+    global media_archive
+    if config.MEDIA_ARCHIVE_ENABLED and reporter.spool_path:
+        media_archive = MediaArchive(reporter.spool_path, reporter,
+            lambda: {str(k): v for k,v in get_bots().items() if isinstance(v, OneBotBot)},
+            downloads=config.MEDIA_DOWNLOADS_ENABLED)
+        try:
+            media_archive.start()
+        except Exception:
+            logger.exception("Media archive startup failed; live collection remains enabled")
+            await media_archive.stop()
+            media_archive = None
     if config.HISTORY_RECOVERY_ENABLED and reporter.spool_path:
         history_recovery = HistoryRecovery(
             config.SPOOL_PATH + ".history.sqlite3", reporter, instance,
@@ -1674,6 +1689,10 @@ async def init_bridge() -> None:
 async def cleanup_bridge() -> None:
     global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
     global history_recovery
+    global media_archive
+    if media_archive is not None:
+        await media_archive.stop()
+        media_archive = None
     if history_recovery is not None:
         await history_recovery.stop()
         history_recovery = None

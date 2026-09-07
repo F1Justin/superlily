@@ -117,6 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = active_settings
     app.state.database = database
+    app.state.qq_media_upload_slots = asyncio.Semaphore(2)
 
     @app.middleware("http")
     async def control_security_headers(request: Request, call_next):

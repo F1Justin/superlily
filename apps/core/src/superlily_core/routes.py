@@ -4,6 +4,7 @@ import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,6 +142,7 @@ from .agent_product_service import (
     lease_agent_delivery,
 )
 from .qq_directory_service import ingest_qq_directory_snapshot
+from .media_archive import content_path, register_content
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -149,6 +151,40 @@ ProviderIdentity = Annotated[str, Depends(provider_identity)]
 ModelProviderIdentity = Annotated[str, Depends(model_provider_identity)]
 ToolInvocationIdentity = Annotated[InvocationIdentity, Depends(invocation_identity)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=256)]
+
+
+@router.put("/v1/qq-media/blobs/{digest}")
+async def upload_qq_media(digest: str, request: Request, session: Session, authenticated_instance: Identity):
+    import asyncio
+    settings = request.app.state.settings
+    content_path(settings, digest)
+    slots = request.app.state.qq_media_upload_slots
+    if slots.locked():
+        raise HTTPException(429, "media upload concurrency limit")
+    await slots.acquire()
+    body = bytearray()
+    try:
+        async with asyncio.timeout(30):
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > settings.qq_media_max_bytes:
+                    raise HTTPException(413, "media exceeds size limit")
+                body.extend(chunk)
+        return await register_content(session, settings, authenticated_instance, digest, bytes(body))
+    except TimeoutError as exc:
+        raise HTTPException(408, "media upload timed out") from exc
+    finally:
+        slots.release()
+
+
+@router.get("/v1/qq-media/blobs/{digest}", dependencies=[Depends(require_admin)])
+async def read_qq_media(digest: str, request: Request):
+    path = content_path(request.app.state.settings, digest)
+    if path.is_symlink() or not path.is_file():
+        raise HTTPException(404, "media content unavailable")
+    return FileResponse(path, media_type="application/octet-stream", filename=digest,
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
+
+
 _ARTIFACT_UPLOAD_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 

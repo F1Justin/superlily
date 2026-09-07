@@ -34,6 +34,47 @@ class Base(DeclarativeBase):
     pass
 
 
+class QQMediaBlob(Base):
+    __tablename__ = "qq_media_blobs"
+    instance_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class QQMediaArchiveItem(Base):
+    __tablename__ = "qq_media_archive_items"
+    observation_id: Mapped[str] = mapped_column(ForeignKey("event_observations.id"), primary_key=True)
+    path: Mapped[str] = mapped_column(String(128), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    conversation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    parent_source_event_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    parent_message_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_id: Mapped[str | None] = mapped_column(String(512))
+    name: Mapped[str | None] = mapped_column(String(512))
+    media_type: Mapped[str | None] = mapped_column(String(256))
+    content_ref: Mapped[str | None] = mapped_column(String(256))
+    sender_id: Mapped[str | None] = mapped_column(String(256))
+    sender_name: Mapped[str | None] = mapped_column(String(512))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    segments_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    omitted_fields_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(String(128))
+    __table_args__ = (
+        UniqueConstraint("instance_id", "job_id", "revision", "path", name="uq_qq_media_revision_path"),
+        Index("ix_qq_media_parent", "instance_id", "conversation_type", "conversation_id", "parent_message_id"),
+    )
+
+
 class QQHistoryRecoveryProgress(Base):
     __tablename__ = "qq_history_recovery_progress"
 

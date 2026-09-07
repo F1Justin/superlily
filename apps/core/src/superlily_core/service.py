@@ -43,6 +43,7 @@ from .correlation import (
 )
 from .decisions import POLICY_VERSION, decide_event
 from .history_recovery import record_recovery_progress, validate_recovery_progress
+from .media_archive import record_media_report, report_digest, validate_media_report
 from .models import (
     BotInstance,
     CollectorWatermark,
@@ -655,6 +656,10 @@ async def _validate_existing_observation(
         existing.metadata_json.get("history_recovery") != payload.metadata.get("history_recovery")
     ):
         raise HTTPException(409, "event replay changed its history recovery progress")
+    if payload.event_type == "audit.qq_media_archive" and (
+        existing.metadata_json.get("qq_media_archive_sha256") != report_digest(payload)
+    ):
+        raise HTTPException(409, "event replay changed its media archive report")
     if (existing.metadata_json.get("observation_method") == "onebot_history"
             and existing.metadata_json.get("live_observed") is not True
             and payload.metadata.get("observation_method") != "onebot_history"):
@@ -1161,9 +1166,12 @@ async def _recompute_event_decision_unlocked(
             .order_by(EventObservation.received_at, EventObservation.id)
         )
     ).all()
-    observations = [item for item in observations
-                    if item.metadata_json.get("observation_method") != "onebot_history"
-                    or item.metadata_json.get("live_observed") is True]
+    observations = [
+        item for item in observations
+        if "qq_media_archive" not in item.metadata_json
+        and (item.metadata_json.get("observation_method") != "onebot_history"
+             or item.metadata_json.get("live_observed") is True)
+    ]
     if not observations:
         return None
 
@@ -1793,6 +1801,7 @@ async def ingest_event(
     settings: Settings,
 ) -> tuple[EventObservation, bool]:
     recovery_progress = validate_recovery_progress(payload)
+    media_report = await validate_media_report(session, payload, settings)
     fingerprint = event_correlation_fingerprint(payload)
     conversation_id = canonical_conversation_id(
         payload.instance.platform,
@@ -1840,6 +1849,11 @@ async def ingest_event(
             "status": correlation_status,
             "fingerprint_present": fingerprint is not None,
         }
+        if media_report is not None:
+            # Large forward trees live in the typed projection, not truncated generic metadata.
+            metadata = {"qq_media_archive": {"job_id": media_report.job_id, "revision": media_report.revision,
+                                             "state": media_report.state, "reason": media_report.reason},
+                        "qq_media_archive_sha256": report_digest(payload)}
         if payload.platform_api_call is not None:
             metadata["platform_api_call"] = _dump_mapping(
                 payload.platform_api_call.model_dump(mode="json"),
@@ -1869,7 +1883,7 @@ async def ingest_event(
             **capture_values,
         )
         session.add(record)
-        if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None:
+        if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None and media_report is None:
             instance.last_event_at = payload.occurred_at
         try:
             await session.flush()
@@ -1899,9 +1913,10 @@ async def ingest_event(
             await _record_platform_actions(session, payload, record, settings)
             await record_platform_api_call(session, payload, record, settings)
             record_recovery_progress(session, payload, record, recovery_progress)
+            record_media_report(session, payload, record, media_report)
             await _ensure_ingress_receipt(session, record, payload)
             await session.flush()
-            if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None:
+            if payload.metadata.get("observation_method") != "onebot_history" and recovery_progress is None and media_report is None:
                 await recompute_event_decision(session, source, settings)
             await _resolve_links_targeting_observation(session, record, source, settings)
             await _resolve_actions_targeting_observation(session, record, source)
@@ -2316,8 +2331,8 @@ async def evaluate_event_claim(
     idempotency_key: str,
     settings: Settings,
 ) -> tuple[EventClaim, bool, EventObservation, bool]:
-    if payload.metadata.get("observation_method") == "onebot_history":
-        raise HTTPException(422, "history recovery cannot request a claim")
+    if payload.metadata.get("observation_method") == "onebot_history" or payload.event_type == "audit.qq_media_archive":
+        raise HTTPException(422, "archival observations cannot request a claim")
     observation, event_duplicate = await ingest_event(session, payload, idempotency_key, settings)
     source = await session.get(SourceEvent, observation.source_event_id)
     assert source is not None

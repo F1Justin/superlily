@@ -199,6 +199,9 @@ class Settings:
     tool_confirmation_seconds: int = 120
     tool_reaper_interval_seconds: int = 1
     artifact_root: str = ""
+    qq_media_root: str = ""
+    qq_media_max_bytes: int = 8_388_608
+    qq_media_quota_bytes: int = 1_073_741_824
     artifact_secret_pepper: str = field(default="", repr=False)
     artifact_orphan_grace_seconds: int = 300
     render_mode: str = "off"
@@ -247,6 +250,12 @@ class Settings:
     claim_coalesce_milliseconds: int = 200
 
     def __post_init__(self) -> None:
+        if self.qq_media_root:
+            media_root = Path(self.qq_media_root)
+            if not media_root.is_absolute() or len(media_root.parts) < 4 or ".." in media_root.parts:
+                raise ValueError("qq_media_root must be a narrow absolute directory")
+        if not 1 <= self.qq_media_max_bytes <= 33_554_432 or self.qq_media_quota_bytes < self.qq_media_max_bytes:
+            raise ValueError("invalid QQ media storage budget")
         active_ingest_tokens = [token for token in self.ingest_tokens.values() if token]
         active_provider_tokens = [token for token in self.provider_tokens.values() if token]
         active_model_provider_tokens = [
@@ -537,6 +546,9 @@ class Settings:
                 os.getenv("SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS", "1")
             ),
             artifact_root=os.getenv("SUPERLILY_ARTIFACT_ROOT", ""),
+            qq_media_root=os.getenv("SUPERLILY_QQ_MEDIA_ROOT", ""),
+            qq_media_max_bytes=int(os.getenv("SUPERLILY_QQ_MEDIA_MAX_BYTES", "8388608")),
+            qq_media_quota_bytes=int(os.getenv("SUPERLILY_QQ_MEDIA_QUOTA_BYTES", "1073741824")),
             artifact_secret_pepper=os.getenv("SUPERLILY_ARTIFACT_SECRET_PEPPER", ""),
             artifact_orphan_grace_seconds=int(
                 os.getenv("SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS", "300")
