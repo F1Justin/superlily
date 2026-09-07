@@ -1,7 +1,7 @@
 # R5.5（C0-I）媒体与合并转发补全
 
-状态：代码已实现，待生产部署与真实样本验收（2026-09-08）。服务 MANIFESTO 第 2、3 条，
-不改变 Nekro 消息执行行为或 ChatExporter。此状态不等于已在生产启用。
+状态：已部署，展开与下载未启用，待真实样本验收（2026-09-08）。服务 MANIFESTO 第 2、3 条，
+不改变 Nekro 消息执行行为或 ChatExporter。部署不等于采集功能已启用或生产验收通过。
 
 ## 边界
 
@@ -42,7 +42,7 @@ Core 使用独立私有内容存储，按 SHA-256 去重；PostgreSQL 保存稳�
 
 鼠标查看：DBeaver 刷新 `public → Tables`，打开 `qq_media_archive_items → Data`，
 先筛选外层群号 `conversation_id` 和 `parent_message_id`，再看 `revision`、`path`、
-`state`、`reason`、`text`。这两张表要部署迁移后才会在生产出现。
+`state`、`reason`、`text`。两张表已在生产出现；本次未启用采集，部署检查时均无媒体记录。
 `content_ref` 是 Core 的相对地址，GET 需要管理员鉴权；返回附件、`nosniff` 和不缓存头，
 不是公共下载链接。当前 ChatExporter 不会自动导出新增节点或下载媒体。
 
@@ -98,7 +98,43 @@ PostgreSQL 新迁移往返与模型漂移检查、既有聊天归档合同往返
 隔离 PostgreSQL 的媒体与迁移组合 21 passed，另行执行归档合同测试 1 passed。
 另有 `compileall` 与 `git diff --check` 通过；所有数据库验证均针对临时测试实例，非生产库。
 
-生产尚未部署本阶段，也未开启展开或媒体下载。下一步须先备份数据库和内容卷、部署迁移，
-以真实图片/语音/视频/文件及嵌套转发样本作小范围验收，确认回执、存储增量、权限、失败
-原因、实时采集延迟和回滚。平台已经删除或无法返回的内容不承诺恢复；不以接口成功代替
+下一步为受控启用与真实图片/语音/视频/文件及嵌套转发样本验收，确认回执、存储增量、权限、
+失败原因、实时采集延迟和回滚。平台已经删除或无法返回的内容不承诺恢复；不以接口成功代替
 内容验证，也不以自动化测试代替生产签署。
+
+## 生产部署记录（2026-09-08）
+
+经用户授权部署代码 `031df41849dde214bef811032dafd2c3481b860a`，仅更新 Core 与两套桥接器。
+Core 镜像为 `sha256:99b0dcdf6777b232795095c598b7bfc0d4f69f30bcf8c571a0394f70c753128f`，
+保留 tag `superlily/core:r5.5-031df41`；数据库从 `0033_history_delivery_receipts` 升到
+`0034_qq_media_archive`。`alembic check` 无模型漂移，Core readiness/容器健康通过，
+新旧镜像的主要依赖版本一致，重建镜像 `pip check` 通过。
+
+私有内容目录为已有持久卷内的 `/var/lib/superlily/artifacts/qq-media`，权限 `0700`，
+运行用户可写，单文件 8 MiB、总配额 1 GiB。未上传伪造媒体验收数据；只读接口探针确认
+匿名 401、管理员读取不存在的哈希 404。部署检查时两张新表均为 0 行。
+
+Nekro 07:36:36 CST 重启，07:37:06 OneBot 重连；桥接器加载成功，
+`MEDIA_ARCHIVE_ENABLED=false`、`MEDIA_DOWNLOADS_ENABLED=false`，既有 R5.4 的
+300 秒/50 条/5 页配置保留。Runtime 镜像仍为 `.10`，NapCat 未重启。
+Lily 通过既有 `tmux-nb.service` 于 07:37:21 重启，07:37:27 新桥接器启动；默认两个
+媒体开关保持关闭。两个进程的心跳及 spool 上报继续工作。
+
+07:38:53 CST 复核：Core/Nekro 均 healthy、无重启循环或 OOM；两桥接器均
+pending=0、quarantined=0、last_error=null。Nekro 回执水位为 `277091/277091`，
+Lily 为 `753725/753725`；Lily 水位未增长只说明旧包已确认，不证明它正在接收消息。
+
+**部署前已有的限制**：Lily 自 00:00:11 CST 后没有新消息，心跳报告 `degraded`、
+`connected_bots=0`；此次重启后仍无 OneBot 连接。不能据心跳将 Lily 采集标为正常，
+也不能签署 Lily 媒体验收。本次没有改动其 OneBot 登录/连接配置。Nekro 已恢复 online。
+Nekro 启动还报告表情包插件无法访问 Qdrant；该容器自 09-03 起已停止，本次未将其启用。
+
+ChatExporter 代码与权限未改；`archive.message_timeline_v2` 定义校验值前后均为
+`3325f70893066204c7bd093ac87e38df`，其与 conversation mappings 的只读权限仍有效。
+
+备份位于 `/home/justin/backups/superlily/20260908-c0i-073200`：约 2.6 GiB PostgreSQL
+custom dump、artifact 卷、旧桥接器/私有配置、两份 spool 与 Nekro 补采 SQLite 快照。
+dump 完整解码检查（未向数据库执行恢复）及三份 SQLite `quick_check` 均通过；dump SHA-256：
+`0836fb740402e01e826313986ab29c19d0c864b96297ebbb198fc3f6eab69ca8`。
+保留旧 Core `superlily/core:pre-c0i-20260908` 及跳过旧 Alembic 的回滚 Compose；
+正常回滚保留新增表/内容与事实，不对生产库执行 downgrade 或整库覆盖。
