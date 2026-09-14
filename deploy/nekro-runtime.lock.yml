@@ -9,6 +9,14 @@ upstream:
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.10
-  id: sha256:3b3d638c9c938f1e1b7da36bb701cd2770e5e4559d1f42f1fc80e3036a73af8a
+  tag: superlily/nekro-agent:2.3.3-superlily.10-ablation.2
+  id: sha256:cf6f66a458d7754cdaa50c74493c2e28cfd54529f17e878207a5b861f142920a
+local_patch:
+  kind: disabled-plugin-lazy-initialization
+  base_image_id: sha256:3b3d638c9c938f1e1b7da36bb701cd2770e5e4559d1f42f1fc80e3036a73af8a
+  dockerfile: deploy/Dockerfile.nekro-ablation
+  # The commit/tag above still identify the base release; R2 work is not deployed.
+  files:
+    nekro_agent/services/plugin/base.py: e7d0eec40cb048ba4ed7292721237492fb12ad7f10bdbf0d3beab3c476e84b67
+    nekro_agent/services/plugin/collector.py: 01f9a81e6c744a51a9ff22bd7cbd2b5e23fa9449dab4ac8ca3b9d12922ac71dd
 legacy_overlay_release: nekro-startup-permissions-production-20260828

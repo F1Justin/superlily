@@ -45,6 +45,7 @@ class DocumentRendererClient:
             raise ValueError("render backend URL must be an exact internal HTTP origin")
         if len(token) < 32:
             raise ValueError("render backend token must contain at least 32 characters")
+        self.theme_id = "default"
         self.backend_url = backend_url
         self.token = token
         self.connect_timeout_seconds = connect_timeout_seconds
@@ -61,7 +62,7 @@ class DocumentRendererClient:
                 response = await client.post(
                     "/render-document",
                     json=document.model_dump(mode="json"),
-                    headers={"Authorization": f"Bearer {self.token}"},
+                    headers={"Authorization": f"Bearer {self.token}", "X-Render-Theme": self.theme_id},
                 )
         except httpx.TimeoutException as exc:
             raise DocumentRendererError("timeout", "document renderer timed out") from exc

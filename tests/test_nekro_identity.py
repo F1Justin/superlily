@@ -288,3 +288,18 @@ def test_claim_decision_target_survives_safe_coordination_abstain() -> None:
         {**claim, "action": "deny"},
         "nekro-agent",
     )
+
+
+def test_observation_only_hint_binds_trigger_without_claim_authority() -> None:
+    identity = load_identity_module()
+    claim = {
+        "recorded": False,
+        "claim_id": None,
+        "ready": False,
+        "enforced": False,
+        "action": "abstain",
+        "reason": "outside_canary_observation_only",
+        "features": {"gates": {"decision_type": "talk", "target_instance_id": "nekro-agent"}},
+    }
+    assert identity.claim_decision_targets_instance(claim, "nekro-agent")
+    assert not identity.claim_decision_targets_instance(claim, "lily-command")

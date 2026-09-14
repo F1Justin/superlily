@@ -213,11 +213,15 @@ class LatexWorkerClient:
         document: RenderDocument,
         *,
         timeout_seconds: float,
+        theme_id: str = "default",
     ) -> LatexPngResult:
         if not 1 <= timeout_seconds <= 3_600:
             raise ValueError("worker timeout must be between 1 and 3600 seconds")
+        request = {"op": "render_document", "document": document.model_dump(mode="json")}
+        if theme_id != "default":
+            request["theme_id"] = theme_id
         header, content = await self._call(
-            {"op": "render_document", "document": document.model_dump(mode="json")},
+            request,
             timeout_seconds=timeout_seconds,
         )
         return self._parse_render_result(header, content)

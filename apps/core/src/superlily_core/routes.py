@@ -246,7 +246,7 @@ async def post_claim(
         payload=payload,
     )
     return {
-        **claim_record_payload(record),
+        **(record if isinstance(record, dict) else claim_record_payload(record)),
         "duplicate": duplicate,
         "ingest_receipt": receipt,
     }
@@ -336,6 +336,7 @@ def _render_receipt(record, attempt, artifact, plan, duplicate: bool) -> dict:
         "height_pixels": artifact.height_pixels,
         "render_duration_ms": record.render_duration_ms or 0,
         "content_path": f"/v1/render-artifacts/{artifact.id}/content",
+        "expires_at": (artifact.expires_at if artifact.expires_at.tzinfo else artifact.expires_at.replace(tzinfo=timezone.utc)).isoformat(),
         "delivery_plan": {
             "delivery_plan_id": plan.id,
             "capability_hash": plan.capability_hash,

@@ -1,0 +1,7 @@
+FROM superlily/nekro-agent:2.3.3-superlily.10
+
+# Copy only the reviewed lifecycle delta; the Runtime checkout also contains undeployed R2 work.
+COPY nekro_agent/services/plugin/base.py /app/nekro_agent/services/plugin/base.py
+COPY nekro_agent/services/plugin/collector.py /app/nekro_agent/services/plugin/collector.py
+
+LABEL org.opencontainers.image.version="2.3.3-superlily.10-ablation.2"

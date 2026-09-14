@@ -36,6 +36,9 @@ from superlily_contracts import (
     strict_json_loads,
 )
 
+from superlily_contracts.festival_themes import PALETTES, THEME_VERSION
+from .festival_renderer import decorate_document
+
 from .runtime import (
     MAX_ARTIFACT_BYTES,
     MAX_DIMENSION_PIXELS,
@@ -138,7 +141,7 @@ DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{st
 
 def template_sha256() -> str:
     templates = (
-        "formula\x00"
+        THEME_VERSION + "\x00formula\x00"
         + TEMPLATE_PREFIX
         + "<LATEX>"
         + TEMPLATE_SUFFIX
@@ -211,7 +214,7 @@ def _mixed_text_latex(value: str, *, markdown_lite: bool) -> str:
     return "".join(parts)
 
 
-def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
+def _leaf_block_latex(block: Any, *, markdown_lite: bool, theme_id: str = "default") -> str:
     if block.kind == "heading":
         size = (
             r"\fontsize{16pt}{19pt}\selectfont"
@@ -220,6 +223,7 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
         )
         return (
             "{"
+            + (r"\color{festivalHeading}" if theme_id != "default" else "")
             + size
             + r"\bfseries "
             + _mixed_text_latex(block.text, markdown_lite=markdown_lite)
@@ -409,7 +413,7 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool) -> str:
     raise ValueError("unsupported render block")
 
 
-def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
+def _render_block_latex(block: Any, *, markdown_lite: bool, theme_id: str = "default") -> str:
     marker = f"% superlily-node:{block.node_id}\n" if block.node_id else ""
     if isinstance(block, GroupBlock):
         label = (
@@ -421,7 +425,7 @@ def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
         )
         return marker + label + "".join(
             (f"% superlily-node:{child.node_id}\n" if child.node_id else "")
-            + _leaf_block_latex(child, markdown_lite=markdown_lite)
+            + _leaf_block_latex(child, markdown_lite=markdown_lite, theme_id=theme_id)
             for child in block.blocks
         )
     if isinstance(block, AlternativeBlock):
@@ -430,26 +434,35 @@ def _render_block_latex(block: Any, *, markdown_lite: bool) -> str:
         )
         return marker + "".join(
             (f"% superlily-node:{child.node_id}\n" if child.node_id else "")
-            + _leaf_block_latex(child, markdown_lite=markdown_lite)
+            + _leaf_block_latex(child, markdown_lite=markdown_lite, theme_id=theme_id)
             for child in option.blocks
         )
-    return marker + _leaf_block_latex(block, markdown_lite=markdown_lite)
+    return marker + _leaf_block_latex(block, markdown_lite=markdown_lite, theme_id=theme_id)
 
 
-def document_latex(document: RenderDocument) -> str:
+def document_latex(document: RenderDocument, *, theme_id: str = "default") -> str:
     """Compile the reviewed RenderDocument AST into a bounded TeX document."""
 
     markdown_lite = document.schema_version in {"1.2", "1.3"}
+    background, body, heading = PALETTES[theme_id]
     parts = [DOCUMENT_TEMPLATE_PREFIX]
+    if theme_id != "default":
+        parts.append(
+            rf"\definecolor{{festivalBackground}}{{HTML}}{{{background}}}"
+            rf"\definecolor{{festivalBody}}{{HTML}}{{{body}}}"
+            rf"\definecolor{{festivalHeading}}{{HTML}}{{{heading}}}"
+            r"\pagecolor{festivalBackground}\color{festivalBody}" + "\n"
+        )
     if document.title:
         parts.append(
-            r"{\fontsize{20pt}{24pt}\selectfont\bfseries "
+            "{" + (r"\color{festivalHeading}" if theme_id != "default" else "")
+            + r"\fontsize{20pt}{24pt}\selectfont\bfseries "
             + _mixed_text_latex(document.title, markdown_lite=markdown_lite)
             + r"}\par\smallskip"
             + "\n"
         )
     for block in document.blocks:
-        parts.append(_render_block_latex(block, markdown_lite=markdown_lite))
+        parts.append(_render_block_latex(block, markdown_lite=markdown_lite, theme_id=theme_id))
     parts.append(TEMPLATE_SUFFIX)
     return "".join(parts)
 
@@ -656,6 +669,7 @@ def render_latex_png(
 def render_document_png(
     document: RenderDocument,
     *,
+    theme_id: str = "default",
     work_root: Path = DEFAULT_WORK_ROOT,
     xelatex: Path = DEFAULT_XELATEX,
     pdftoppm: Path = DEFAULT_PDFTOPPM,
@@ -663,7 +677,7 @@ def render_document_png(
 ) -> bytes:
     """Render a validated mixed CJK/math document with the same isolated toolchain."""
 
-    latex = document_latex(document)
+    latex = document_latex(document, theme_id=theme_id)
     if len(latex.encode("utf-8")) > 64 * 1024:
         raise LatexWorkerError("budget_exceeded", "document exceeded its compiled byte limit")
     try:
@@ -741,7 +755,7 @@ def render_document_png(
             )
             if converted.returncode != 0 or not png_path.is_file():
                 raise LatexWorkerError("execution_failed", "document PNG conversion failed safely")
-            content = png_path.read_bytes()
+            content = decorate_document(png_path.read_bytes(), theme_id)
             if not 1 <= len(content) <= MAX_ARTIFACT_BYTES:
                 raise LatexWorkerError("budget_exceeded", "document PNG exceeded its hard byte bound")
             inspect_png(content)
@@ -829,22 +843,29 @@ class LatexWorkerServer:
                 )
                 return
             operation = payload.get("op")
+            render_options = {}
             if operation == "render":
                 if set(payload) != {"op", "latex"} or not isinstance(payload.get("latex"), str):
                     raise ValueError("latex request invalid")
                 render_function = render_latex_png
                 render_input: str | RenderDocument = payload["latex"]
             elif operation == "render_document":
-                if set(payload) != {"op", "document"} or not isinstance(payload.get("document"), dict):
+                if not {"op", "document"} <= set(payload) <= {"op", "document", "theme_id"} or not isinstance(payload.get("document"), dict):
                     raise ValueError("document request invalid")
                 render_function = render_document_png
                 render_input = RenderDocument.model_validate(payload["document"])
+                theme_id = payload.get("theme_id", "default")
+                if not isinstance(theme_id, str) or theme_id not in PALETTES:
+                    raise ValueError("unknown renderer theme")
+                if theme_id != "default":
+                    render_options["theme_id"] = theme_id
             else:
                 raise ValueError("request operation invalid")
             async with self._render_lock:
                 content = await asyncio.to_thread(
                     render_function,
                     render_input,
+                    **render_options,
                     work_root=self.work_root,
                     xelatex=self.xelatex,
                     pdftoppm=self.pdftoppm,

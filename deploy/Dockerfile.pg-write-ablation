@@ -1,0 +1,6 @@
+ARG CORE_BASE=superlily/core:pre-pg-ablation-20260912
+FROM ${CORE_BASE}
+USER 0
+COPY apps/core/src/superlily_core/service.py /usr/local/lib/python3.13/site-packages/superlily_core/service.py
+RUN chmod a+r /usr/local/lib/python3.13/site-packages/superlily_core/service.py
+USER 65532:65532

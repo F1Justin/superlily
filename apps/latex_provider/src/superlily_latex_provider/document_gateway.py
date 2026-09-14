@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 from superlily_contracts import RenderDocument
+from superlily_contracts.festival_themes import PALETTES
 
 from .runtime import LatexWorkerClient, LatexWorkerError
 
@@ -71,12 +72,17 @@ def create_app(settings: GatewaySettings) -> FastAPI:
     async def render_document(
         document: RenderDocument,
         authorization: str | None = Header(default=None),
+        x_render_theme: str = Header(default="default"),
     ) -> Response:
         if not hmac.compare_digest(_bearer(authorization), settings.token):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+        if x_render_theme not in PALETTES:
+            raise HTTPException(status_code=400, detail="unknown renderer theme")
+        options = {"theme_id": x_render_theme} if x_render_theme != "default" else {}
         try:
             result = await worker.render_document(
                 document,
+                **options,
                 timeout_seconds=settings.render_timeout_seconds,
             )
         except LatexWorkerError as exc:

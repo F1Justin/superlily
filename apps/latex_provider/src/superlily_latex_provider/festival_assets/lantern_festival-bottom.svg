@@ -1,0 +1,33 @@
+<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" width="3960" height="270" viewBox="0 1007.6639344262294 660 45"><ns0:defs><ns0:linearGradient id="silk" x1="0" y1="0" x2="0" y2="1"><ns0:stop stop-color="#d75943" /><ns0:stop offset="1" stop-color="#b6362d" /></ns0:linearGradient></ns0:defs><ns0:g transform="translate(518 4)" stroke-linecap="round" stroke-linejoin="round">
+<ns0:path d="M51 0 V13 M93 0 V24" stroke="#e9bf77" stroke-width=".8" />
+<ns0:g transform="translate(51 33)">
+<ns0:ellipse rx="23" ry="20" fill="#d85a3d" stroke="#efc27b" stroke-width=".85" />
+<ns0:ellipse rx="14" ry="20" fill="none" stroke="#eeb874" stroke-width=".55" />
+<ns0:ellipse rx="5" ry="20" fill="none" stroke="#eeb874" stroke-width=".55" />
+<ns0:path d="M-9 -20 H9 M-9 20 H9" stroke="#f2d39b" stroke-width="2.3" />
+<ns0:path d="M0 22 V28 M-3 29 V38 M0 29 V40 M3 29 V38" stroke="#e9bf77" stroke-width=".8" />
+<ns0:circle cy="27" r="1.6" fill="#f1cc86" stroke="none" />
+</ns0:g>
+<ns0:g transform="translate(93 40) scale(.68)">
+<ns0:ellipse rx="23" ry="20" fill="#d85a3d" stroke="#efc27b" stroke-width="1" />
+<ns0:ellipse rx="12" ry="20" fill="none" stroke="#eeb874" stroke-width=".75" />
+<ns0:path d="M-9 -20 H9 M-9 20 H9" stroke="#f2d39b" stroke-width="2.6" />
+<ns0:path d="M0 22 V28 M-3 29 V38 M0 29 V40 M3 29 V38" stroke="#e9bf77" stroke-width="1" />
+</ns0:g>
+<ns0:path d="M13 25 V33 M9 29 H17 M18 10 V14 M16 12 H20" stroke="#f0cc87" stroke-width=".8" />
+<ns0:circle cx="17" cy="50" r="1.1" fill="#efc983" />
+</ns0:g>
+<ns0:g opacity=".75"><ns0:g fill="none" stroke="#e8bd78" stroke-width=".85" stroke-linecap="round"><ns0:path d="M510.50 28.00 L515.60 28.00" /><ns0:path d="M509.50 31.75 L515.99 35.50" /><ns0:path d="M506.75 34.50 L509.30 38.91" /><ns0:path d="M503.00 35.50 L503.00 43.00" /><ns0:path d="M499.25 34.50 L496.70 38.91" /><ns0:path d="M496.50 31.75 L490.01 35.50" /><ns0:path d="M495.50 28.00 L490.40 28.00" /><ns0:path d="M496.50 24.25 L490.01 20.50" /><ns0:path d="M499.25 21.50 L496.70 17.09" /><ns0:path d="M503.00 20.50 L503.00 13.00" /><ns0:path d="M506.75 21.50 L509.30 17.09" /><ns0:path d="M509.50 24.25 L515.99 20.50" /></ns0:g></ns0:g><ns0:g transform="translate(36 1014.6639344262294)" stroke-linecap="round" stroke-linejoin="round">
+<ns0:ellipse cx="37" cy="32" rx="29" ry="3" fill="#64263a" opacity=".5" />
+<ns0:path d="M9 14 Q13 34 36 35 Q59 34 64 14 Z" fill="#e8bf82" />
+<ns0:ellipse cx="36.5" cy="14" rx="27.5" ry="6.5" fill="#f5dfb9" stroke="#efcc91" stroke-width=".7" />
+<ns0:circle cx="24" cy="12" r="7" fill="#fff3d9" stroke="#d4b58a" stroke-width=".6" />
+<ns0:circle cx="40" cy="10" r="7.5" fill="#fff3d9" stroke="#d4b58a" stroke-width=".6" />
+<ns0:circle cx="51" cy="15" r="6" fill="#fff3d9" stroke="#d4b58a" stroke-width=".6" />
+<ns0:circle cx="33" cy="17" r="7" fill="#fff3d9" stroke="#d4b58a" stroke-width=".6" />
+<ns0:path d="M11 19 Q36 29 61 19" fill="none" stroke="#bb794d" stroke-width=".8" />
+<ns0:path d="M21 26 Q36 32 51 26" fill="none" stroke="#f9dc9d" stroke-width=".6" />
+<ns0:path d="M69 25 Q77 17 83 9" fill="none" stroke="#e9c28a" stroke-width="2.7" />
+<ns0:ellipse cx="68" cy="27" rx="6" ry="3" transform="rotate(-25 68 27)" fill="#f3d7aa" />
+<ns0:path d="M26 2 Q22 -1 25 -4 M45 0 Q41 -3 45 -6" fill="none" stroke="#d0a8a1" stroke-width=".7" />
+</ns0:g></ns0:svg>

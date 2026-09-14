@@ -1408,12 +1408,25 @@ async def render_prompt_policy(_ctx: AgentCtx) -> str:
 """.strip()
 
 
+def _render_receipt_expired(receipt: dict[str, Any]) -> bool:
+    value = receipt.get("expires_at")
+    if value is None:
+        return False  # Allows rollback to a Core predating artifact deadlines.
+    try:
+        deadline = datetime.fromisoformat(value)
+        return deadline.tzinfo is None or datetime.now(timezone.utc) >= deadline
+    except (ValueError, TypeError):
+        return True
+
+
 async def _deliver_render_request(
     _ctx: AgentCtx,
     *,
     endpoint: str,
     payload: dict[str, Any],
     request_context: str,
+    _theme_retry: int = 0,
+    _renew_delivery: bool = False,
 ) -> str:
     canonical = json.dumps(
         payload,
@@ -1453,7 +1466,7 @@ async def _deliver_render_request(
                 json={
                     "instance_id": config.INSTANCE_ID,
                     "delivery_plan_id": delivery_plan_id,
-                    "idempotency_key": f"nekro-delivery:{render_key}",
+                    "idempotency_key": f"nekro-delivery:{render_key}" + (":theme-renewal" if _renew_delivery else ""),
                 },
                 headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
             )
@@ -1488,8 +1501,15 @@ async def _deliver_render_request(
                             content,
                             file_name=f"lily-render-{receipt['artifact_id']}.png",
                         )
-                        await _ctx.send_image(sandbox_path)
-                        send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
+                        if _render_receipt_expired(receipt):
+                            send_receipt = {
+                                "outcome": "failed",
+                                "platform_message_id": None,
+                                "safe_error_code": "theme_window_expired",
+                            }
+                        else:
+                            await _ctx.send_image(sandbox_path)
+                            send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
                 elif selected_family == "text" and isinstance(delivery_plan.get("fallback_text"), str):
                     await _ctx.send_text(delivery_plan["fallback_text"])
                     send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
@@ -1499,6 +1519,12 @@ async def _deliver_render_request(
                         "platform_message_id": None,
                         "safe_error_code": "delivery_plan_invalid",
                     }
+            except httpx.HTTPStatusError as exc:
+                send_receipt = {
+                    "outcome": "failed",
+                    "platform_message_id": None,
+                    "safe_error_code": "theme_window_expired" if exc.response.headers.get("X-Render-Error-Code") == "artifact_expired" else "artifact_download_failed",
+                }
             except asyncio.TimeoutError:
                 send_receipt = {
                     "outcome": "ambiguous",
@@ -1526,6 +1552,11 @@ async def _deliver_render_request(
                 headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
             )
             completion_response.raise_for_status()
+            if send_receipt.get("safe_error_code") == "theme_window_expired" and _theme_retry == 0:
+                return await _deliver_render_request(
+                    _ctx, endpoint=endpoint, payload=payload, request_context=request_context,
+                    _theme_retry=1, _renew_delivery=True,
+                )
             if send_receipt["outcome"] == "succeeded":
                 return (
                     "INTERNAL_RENDER_DELIVERED. The answer is already delivered. "
@@ -1546,6 +1577,11 @@ async def _deliver_render_request(
             "X-Render-Error-Code",
             "render_request_rejected",
         )
+        if error_code == "artifact_expired" and _theme_retry == 0:
+            return await _deliver_render_request(
+                _ctx, endpoint=endpoint, payload=payload, request_context=request_context,
+                _theme_retry=1, _renew_delivery=_renew_delivery,
+            )
         logger.warning(f"Lily Core rejected render request with status {exc.response.status_code} code={error_code}")
         content_error = endpoint == "/v1/markdown-documents" and (
             exc.response.status_code == 422 or error_code in {"renderer_content_error", "renderer_execution_failed"}

@@ -1,0 +1,54 @@
+{
+  "record_kind": "2026-09-09 festival release snapshot",
+  "verification_2026_09_12": {
+    "enabled": true,
+    "active_theme": "default",
+    "next_window_start": "2026-09-25T00:00:00+08:00",
+    "current_core_image": "sha256:2d57b4c23a8ba6bc5f1f8b87f8c91b401e2d4fb6fddacd4d76b3e2a3f19d1a59",
+    "core_successor_record": "docs/ABLATION_20260912.md",
+    "renderer_and_worker_unchanged": true,
+    "worker_identity_unchanged": true,
+    "theme_module_sha256": "e94dfc114a393e40735fd7743487c3e6bf48c00f994b7c658cbb40e71afbbd00"
+  },
+  "worker_identity": "840a36c24e8a1425595848aabf1f52982f183ed2ad0b156d9adb4d53338c0412",
+  "images": {
+    "core": "sha256:3d2256e612bcd70b5cc474ab8f326627178b9869281e0902f892797945bb8b0c",
+    "renderer": "sha256:d746fc2fdd066cc049fa1b09ae234901472da3783e5f6053a290fa7c5211eb7e",
+    "worker": "sha256:6f9086bd8e92f07682ffd67b0bfaab3dd8f3ea7afad16814b8eb2967467fa73e"
+  },
+  "sandbox": {
+    "ReadonlyRootfs": true,
+    "NetworkMode": "none",
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Memory": 1073741824,
+    "NanoCpus": 1000000000,
+    "PidsLimit": 128,
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000,mode=0700",
+      "/work": "rw,noexec,nosuid,nodev,size=96m,uid=1000,gid=1000,mode=0700"
+    }
+  },
+  "base_images": {
+    "core": {
+      "image": "sha256:a98ec3acdd6f60bb7e1752842da2b7ac717e7eafe3affbb6c3bf9d66a9469172",
+      "started_at": "2026-09-09T07:11:18.402732543Z"
+    },
+    "renderer": {
+      "image": "sha256:312915be6a72566414e88bebf6625c43f4488bb1e0c93b14618a12fec0b7560e",
+      "started_at": "2026-09-09T07:11:18.410400967Z"
+    },
+    "worker": {
+      "image": "sha256:78c816bfbb580645d5dcd9beda0cc4d48f5bfefd2446c379c8a51a85375c6af9",
+      "started_at": "2026-09-09T07:11:18.388795611Z"
+    }
+  },
+  "enabled": true,
+  "calendar_scope": "2026-09-25 through 2027-02-20, UTC+08:00",
+  "bridge_sha256": "6892c53653d4755e18ccf12805fd0202a75ca24ce0b82e8167ddb39bc27783b4",
+  "asset_manifest_sha256": "63c4a04e186caf3e0c9301321d0afd6fc6c987417128051a74107846e894ecf0"
+}

@@ -3,6 +3,13 @@ import pytest
 from superlily_core.settings import Settings
 
 
+def test_claim_observe_only_flag_from_env(monkeypatch):
+    monkeypatch.delenv("SUPERLILY_CLAIM_OBSERVE_ONLY_OUTSIDE_CANARY", raising=False)
+    assert Settings.from_env().claim_observe_only_outside_canary is False
+    monkeypatch.setenv("SUPERLILY_CLAIM_OBSERVE_ONLY_OUTSIDE_CANARY", "true")
+    assert Settings.from_env().claim_observe_only_outside_canary is True
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

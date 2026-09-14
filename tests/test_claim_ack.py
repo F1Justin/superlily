@@ -1,7 +1,66 @@
 from dataclasses import replace
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import func, select
 
 from superlily_core.command_registry import runtime_registry_snapshot_hash
+from superlily_core import service
+from superlily_core.models import EventClaim, EventObservation
+
+
+@pytest.mark.parametrize(
+    ("mode", "canaries", "expected_wait"),
+    [
+        ("canary", frozenset({"qq:group:123"}), 200),
+        ("canary", frozenset({"qq:group:other"}), 0),
+        ("canary", frozenset(), 0),
+        ("shadow", frozenset(), 200),
+        ("enforce", frozenset(), 200),
+        ("off", frozenset(), 0),
+    ],
+)
+@pytest.mark.parametrize("observe_only", [False, True])
+async def test_claim_wait_respects_enforcement_scope(
+    client, app, monkeypatch, mode, canaries, expected_wait, observe_only,
+):
+    app.state.settings = replace(
+        app.state.settings,
+        claim_mode=mode,
+        claim_observe_only_outside_canary=observe_only,
+        claim_canary_conversations=canaries,
+        claim_coalesce_milliseconds=200,
+    )
+    coalesce = AsyncMock(wraps=service._coalesce_claim_observations)
+    monkeypatch.setattr(service, "_coalesce_claim_observations", coalesce)
+    payload = _event_payload(
+        "lily-command", event_label="scope", real_seq="scope", occurred_at=datetime.now(timezone.utc),
+    )
+    response = await client.post(
+        "/v1/claims/evaluate", json=payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-scope-test"},
+    )
+    assert response.status_code == 200, response.text
+    unrecorded = observe_only and mode == "canary" and "qq:group:123" not in canaries
+    if unrecorded:
+        coalesce.assert_not_awaited()
+        assert response.json()["recorded"] is False
+        assert response.json()["claim_id"] is None
+    else:
+        assert coalesce.await_args.args[3] == expected_wait
+        assert response.json()["recorded"] is True
+    assert not response.json()["enforced"]
+    replay = await client.post(
+        "/v1/claims/evaluate", json=payload,
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "claim-scope-test"},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["claim_id"] == response.json()["claim_id"]
+    if unrecorded:
+        coalesce.assert_not_awaited()
+    else:
+        coalesce.assert_awaited_once()
 
 
 def _event_payload(
@@ -59,6 +118,7 @@ async def _ready_claim_runtime(client, app, observed_at: datetime) -> None:
     app.state.settings = replace(
         app.state.settings,
         claim_mode="canary",
+        claim_observe_only_outside_canary=True,
         claim_canary_conversations=frozenset({"qq:group:123"}),
         claim_coalesce_milliseconds=0,
     )
@@ -154,6 +214,60 @@ async def _observe_pair(client, *, label: str, real_seq: str, observed_at: datet
         )
         assert response.status_code == 201, response.text
     return lily, nekro
+
+
+async def test_outside_canary_keeps_receipt_and_trigger_hint_without_claim(client, app, monkeypatch):
+    observed_at = datetime.now(timezone.utc)
+    await _ready_claim_runtime(client, app, observed_at)
+    app.state.settings = replace(app.state.settings, claim_canary_conversations=frozenset())
+    lily = _event_payload("lily-command", event_label="observe-only", real_seq="observe-only", occurred_at=observed_at)
+    nekro = _event_payload("nekro-agent", event_label="observe-only", real_seq="observe-only", occurred_at=observed_at)
+    lily["ingress"] = {
+        "spool_id": "observe-only-spool",
+        "sequence": 1,
+        "record_sha256": "a" * 64,
+        "captured_at": observed_at.isoformat(),
+    }
+    for payload, token in ((lily, "lily-secret"), (nekro, "nekro-secret")):
+        observed = await client.post(
+            "/v1/events", json=payload,
+            headers={"Authorization": f"Bearer {token}", "Idempotency-Key": f"observe-only-{token}"},
+        )
+        assert observed.status_code == 201, observed.text
+    coalesce = AsyncMock(side_effect=AssertionError("outside scope must not coordinate"))
+    monkeypatch.setattr(service, "_coalesce_claim_observations", coalesce)
+    headers = {"Authorization": "Bearer lily-secret", "Idempotency-Key": "observe-only-claim"}
+    response = await client.post("/v1/claims/evaluate", json=lily, headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["claim_id"], body["recorded"], body["action"], body["enforced"]) == (None, False, "abstain", False)
+    assert body["features"]["gates"] == {"decision_type": "command", "target_instance_id": "lily-command"}
+    assert body["decision_id"]
+    assert body["ingest_receipt"]["spool_id"] == "observe-only-spool"
+    assert body["ingest_receipt"]["sequence"] == 1
+    replay = await client.post("/v1/claims/evaluate", json=lily, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["duplicate"] is True
+    assert replay.json()["ingest_receipt"]["receipt_id"] == body["ingest_receipt"]["receipt_id"]
+    assert replay.json()["ingest_receipt"]["outcome"] == "duplicate"
+    coalesce.assert_not_awaited()
+    async with app.state.database.sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(EventClaim)) == 0
+        assert await session.scalar(select(func.count()).select_from(EventObservation)) == 2
+
+
+async def test_observe_only_preserves_pre_rollout_claim_replay(client, app):
+    app.state.settings = replace(app.state.settings, claim_mode="canary")
+    payload = _event_payload("lily-command", event_label="old-claim", real_seq="old-claim", occurred_at=datetime.now(timezone.utc))
+    headers = {"Authorization": "Bearer lily-secret", "Idempotency-Key": "old-claim-replay"}
+    before = await client.post("/v1/claims/evaluate", json=payload, headers=headers)
+    assert before.status_code == 200, before.text
+    app.state.settings = replace(app.state.settings, claim_observe_only_outside_canary=True)
+    replay = await client.post("/v1/claims/evaluate", json=payload, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["claim_id"] == before.json()["claim_id"]
+    assert replay.json()["recorded"] is True
+    assert replay.json()["duplicate"] is True
 
 
 async def test_enforced_allow_requires_acknowledged_peer_suppression(client, app) -> None:

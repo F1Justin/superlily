@@ -26,6 +26,8 @@ from superlily_contracts import (
     render_document_plain_text,
 )
 
+from superlily_contracts.festival_themes import THEME_VERSION, theme_window
+
 from .artifact_store import ArtifactStore, ArtifactStoreError
 from .document_renderer_client import DocumentRendererClient, DocumentRendererError
 from .models import (
@@ -72,8 +74,13 @@ def _renderer_snapshot(
     document: RenderDocument,
     decision: DeliveryPlanDecision,
 ) -> dict[str, str]:
+    window = theme_window(utc_now(), enabled=settings.render_festival_enabled)
     return {
         "profile": "xelatex-document-v1",
+        "theme_id": window.theme_id,
+        "theme_key": window.key,
+        "theme_version": THEME_VERSION,
+        "theme_valid_until": window.valid_until.isoformat() if window.valid_until else "",
         "implementation_hash": settings.render_implementation_hash,
         "document_schema_version": document.schema_version,
         "capability_hash": decision.capability_hash,
@@ -278,6 +285,21 @@ async def submit_render_document(
     settings: Settings,
     document: RenderDocument,
     idempotency_key: str,
+):
+    for renewal in range(2):
+        try:
+            return await _submit_render_document(session, settings, document, idempotency_key)
+        except RenderServiceError as exc:
+            if exc.code != "render_theme_changed" or renewal:
+                raise
+    raise AssertionError("unreachable")
+
+
+async def _submit_render_document(
+    session: AsyncSession,
+    settings: Settings,
+    document: RenderDocument,
+    idempotency_key: str,
 ) -> tuple[
     RenderDocumentRecord,
     RenderAttemptRecord,
@@ -376,6 +398,7 @@ async def submit_render_document(
             settings.render_backend_url,
             settings.render_backend_token,
         )
+        worker.theme_id = snapshot["theme_id"]
         result = await worker.render_document(
             decision.resolved_document,
             timeout_seconds=float(settings.render_timeout_seconds),
@@ -400,6 +423,10 @@ async def submit_render_document(
             await session.rollback()
             raise RenderServiceError("render_attempt_superseded", "render attempt was superseded")
 
+        completed_window = theme_window(utc_now(), enabled=settings.render_festival_enabled)
+        if completed_window.key != snapshot["theme_key"]:
+            raise RenderServiceError("render_theme_changed", "theme window changed during rendering")
+
         artifact_id = str(uuid4())
         store = ArtifactStore(settings.artifact_root)
         quarantine_key = store.quarantine_key(artifact_id)
@@ -422,6 +449,10 @@ async def submit_render_document(
         expires_at = completed + timedelta(
             seconds=settings.render_artifact_ttl_seconds
         )
+        if snapshot["theme_valid_until"]:
+            expires_at = min(expires_at, datetime.fromisoformat(snapshot["theme_valid_until"]))
+        if expires_at <= completed:
+            raise RenderServiceError("render_theme_changed", "theme window changed during publication")
         artifact = RenderArtifactRecord(
             id=artifact_id,
             render_id=locked_record.id,
@@ -852,6 +883,15 @@ async def create_delivery_intent(
             await session.commit()
         return existing, False
 
+    if _as_utc(plan.expires_at) <= now:
+        raise RenderServiceError("artifact_expired", "delivery plan expired before sending")
+    artifact = await session.get(RenderArtifactRecord, artifact_id)
+    render_attempt = await session.get(RenderAttemptRecord, artifact.attempt_id) if artifact else None
+    if render_attempt and "theme_key" in render_attempt.renderer_snapshot_json:
+        expected = theme_window(now, enabled=settings.render_festival_enabled).key
+        if render_attempt.renderer_snapshot_json["theme_key"] != expected:
+            raise RenderServiceError("artifact_expired", "delivery theme window has ended")
+
     intent = RenderDeliveryIntent(
         plan_id=plan.id,
         instance_id=authenticated_instance,
@@ -862,7 +902,7 @@ async def create_delivery_intent(
         mention_ids_json=payload.mention_ids,
         idempotency_key=payload.idempotency_key,
         status="pending",
-        deadline_at=now + timedelta(seconds=settings.render_delivery_intent_seconds),
+        deadline_at=min(_as_utc(plan.expires_at), now + timedelta(seconds=settings.render_delivery_intent_seconds)),
         created_at=now,
     )
     session.add(intent)

@@ -42,8 +42,8 @@ def _install_access_log_filter() -> None:
         access_logger.addFilter(_EmptyLeaseAccessFilter())
 
 
-async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
-    """独立回收 artifact 与执行账本；任一失败不阻塞另一条清理线。"""
+async def _run_artifact_reaper(app: FastAPI, database: Database) -> None:
+    """产物扫描降频不改变执行租约的超时清理周期。"""
 
     while True:
         settings: Settings = app.state.settings
@@ -55,6 +55,12 @@ async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
                 raise
             except Exception:
                 logger.exception("tool artifact reaper iteration failed")
+        await asyncio.sleep(settings.artifact_reaper_interval_seconds)
+
+
+async def _run_tool_reaper(app: FastAPI, database: Database) -> None:
+    while True:
+        settings: Settings = app.state.settings
         if settings.tool_execution_mode == "canary":
             try:
                 async with database.sessions() as session:
@@ -91,6 +97,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        artifact_reaper = asyncio.create_task(
+            _run_artifact_reaper(app, database),
+            name="superlily-artifact-reaper",
+        )
         reaper = asyncio.create_task(
             _run_tool_reaper(app, database),
             name="superlily-tool-reaper",
@@ -102,9 +112,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            for task in (reaper, agent_product):
+            for task in (artifact_reaper, reaper, agent_product):
                 task.cancel()
-            for task in (reaper, agent_product):
+            for task in (artifact_reaper, reaper, agent_product):
                 with suppress(asyncio.CancelledError):
                     await task
             await database.dispose()

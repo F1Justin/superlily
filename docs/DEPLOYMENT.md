@@ -1,5 +1,34 @@
 # Deployment
 
+Current runtime-surface defaults (2026-09-12): `status-provider` requires
+`--profile status-execution`; `latex-provider` requires `--profile latex-execution`.
+The `latex` profile still starts `document-renderer` and its worker without the
+tool execution Provider. Explicitly targeting a Provider can still start it;
+profiles are deployment selection, not an authorization boundary.
+Wolfram defaults to `SUPERLILY_WOLFRAM_PROVIDER_MODE=report` (inventory/health
+only); `serve` opts back into lease polling. Production additionally enables
+`SUPERLILY_CLAIM_OBSERVE_ONLY_OUTSIDE_CANARY=true`: only in canary mode, new
+out-of-scope evaluations retain event ingestion, durable receipts and decision
+hints, but do not persist a claim. They return `claim_id=null`, `recorded=false`,
+`action=abstain`, `enforced=false`. Existing claim retries retain their original
+records. In-scope ACK/ownership and off/shadow/enforce modes are unchanged.
+Claim summaries therefore describe persisted claims, not total ingested traffic.
+See [the operation and rollback record](ABLATION_20260912.md).
+
+Festival skins are deployed and enabled as an R1 Renderer enhancement. See
+[the festival release and current verification](FESTIVAL_RENDERER_20260909.md).
+The festival lock preserves the September 9 release images; the current Core is
+the September 12 ablation successor, retaining festival support. Do not restore
+the historical festival Core tag over later changes. Outside configured dates,
+`default` is expected even with the feature enabled; the first window starts
+September 25, 2026 at 00:00 UTC+08:00.
+
+The September 12 C0-E patch updates only the two bridges' `platform_actions.py`;
+Lily and Nekro were restarted in sequence after verifying collection recovery.
+Core/Runtime/Renderer images and media/search flags were not changed. File
+hashes, the private rollback checkpoint and post-release watermarks are recorded
+in [C0E_QQ_PLATFORM_FACTS.md](C0E_QQ_PLATFORM_FACTS.md).
+
 ## 1. Core
 
 Copy `.env.example` to `.env`, replace every placeholder with an independently
@@ -28,6 +57,12 @@ success.
 
 The Compose project creates `superlily_bus` and publishes Core only on host
 loopback.
+
+2026-09-08 的可逆运行面消融记录见 [ABLATION_20260908.md](ABLATION_20260908.md)。
+artifact 扫描使用独立的 `SUPERLILY_ARTIFACT_REAPER_INTERVAL_SECONDS`（默认 30 秒），
+执行租约清理仍使用 `SUPERLILY_TOOL_REAPER_INTERVAL_SECONDS`（默认 1 秒）。
+降低扫描频率不改变过期访问校验；物理回收最多增加一个扫描周期的等待。
+观察期内仅按服务名更新，避免整套 `up` 重新启动已停的 status/latex Provider。
 
 Command shadow decisions read `apps/core/config/command_registry.toml` by
 default. Set `SUPERLILY_COMMAND_REGISTRY_PATH` only when you intentionally want

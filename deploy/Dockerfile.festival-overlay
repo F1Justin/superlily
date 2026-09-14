@@ -1,0 +1,26 @@
+ARG CORE_BASE=deploy-lily-core
+ARG RENDERER_BASE=deploy-document-renderer
+ARG WORKER_BASE=deploy-latex-worker
+
+FROM ${CORE_BASE} AS core
+USER 0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+COPY apps/core/src/superlily_core/render_service.py apps/core/src/superlily_core/document_renderer_client.py apps/core/src/superlily_core/routes.py apps/core/src/superlily_core/settings.py /usr/local/lib/python3.13/site-packages/superlily_core/
+RUN chmod -R a+rX /usr/local/lib/python3.13/site-packages/superlily_core /usr/local/lib/python3.13/site-packages/superlily_contracts
+USER 65532:65532
+
+FROM ${RENDERER_BASE} AS renderer
+USER 0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+COPY apps/latex_provider/src/superlily_latex_provider/document_gateway.py apps/latex_provider/src/superlily_latex_provider/runtime.py /usr/local/lib/python3.13/site-packages/superlily_latex_provider/
+RUN chmod -R a+rX /usr/local/lib/python3.13/site-packages/superlily_latex_provider /usr/local/lib/python3.13/site-packages/superlily_contracts
+USER 1000:1000
+
+FROM ${WORKER_BASE} AS worker
+USER 0
+RUN python -m pip install --no-cache-dir Pillow==12.3.0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+COPY apps/latex_provider/src/superlily_latex_provider/worker.py apps/latex_provider/src/superlily_latex_provider/festival_renderer.py apps/latex_provider/src/superlily_latex_provider/runtime.py /usr/local/lib/python3.13/site-packages/superlily_latex_provider/
+COPY apps/latex_provider/src/superlily_latex_provider/festival_assets /usr/local/lib/python3.13/site-packages/superlily_latex_provider/festival_assets
+RUN chmod -R a+rX /usr/local/lib/python3.13/site-packages/superlily_latex_provider /usr/local/lib/python3.13/site-packages/superlily_contracts
+USER 1000:1000

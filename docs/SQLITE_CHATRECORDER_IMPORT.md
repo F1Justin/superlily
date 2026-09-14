@@ -55,7 +55,7 @@ SQLite `time` 是无时区列，按 UTC 解释。依据是插件的 UTC 时间�
 4. 每个来源依次执行 `sample -> month -> full -> full rerun`，使用原有 checkpoint、
    bounded chunk 和 source identity ledger。full rerun 必须 `writes=0`。
 5. 导入期间监控等待锁、Core observation 延迟、容器健康和磁盘，不暂停在线采集。
-6. 验证三个 completed batch、741,743 imported、221 rejected、月份/会话聚合、复合 FK、
+6. 验证三个 completed batch、741,964 imported、221 rejected、月份/会话聚合、复合 FK、
    timeline 数量和真实 ChatExporter 导出。
 7. 创建 post-import custom dump，并恢复到新的隔离 PostgreSQL 17 数据库比较 batch、
    checkpoint、hash、来源/月计数和代表性导出结果。
@@ -70,7 +70,7 @@ SQLite `time` 是无时区列，按 UTC 解释。依据是插件的 UTC 时间�
 - 三个来源均完成 `sample -> month -> full -> full rerun`。最终导入分别为
   228,166、171,944、341,854；`data2`/`data3` 分别以
   `missing_private_peer_id` 拒绝 215/6 条。三个 full rerun 都是 `writes=0`。
-- 生产 archive 最终为 10,039,221 条，其中新来源 timeline 741,743 条；110 个历史
+- 生产 archive 最终为 10,039,221 条，其中新来源 timeline 741,964 条；110 个历史
   会话，复合 FK 缺失 0，default 分区 0，导入结束时锁等待 0，Core healthy。
 - Nitori 的 ChatExporter 保持未修改的
   `6aca5b345b755a9d33a1c67609865bf1479d84e9`，从群 `1080353942` 成功导出

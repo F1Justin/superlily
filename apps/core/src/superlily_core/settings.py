@@ -198,12 +198,14 @@ class Settings:
     tool_lease_seconds: int = 15
     tool_confirmation_seconds: int = 120
     tool_reaper_interval_seconds: int = 1
+    artifact_reaper_interval_seconds: int = 30
     artifact_root: str = ""
     qq_media_root: str = ""
     qq_media_max_bytes: int = 8_388_608
     qq_media_quota_bytes: int = 1_073_741_824
     artifact_secret_pepper: str = field(default="", repr=False)
     artifact_orphan_grace_seconds: int = 300
+    render_festival_enabled: bool = False
     render_mode: str = "off"
     render_canary_conversations: frozenset[str] = field(default_factory=frozenset)
     render_backend_url: str = ""
@@ -244,6 +246,7 @@ class Settings:
     group_default_mode: str = "command_only"
     group_modes: dict[str, str] = field(default_factory=dict)
     claim_mode: str = "off"
+    claim_observe_only_outside_canary: bool = False
     claim_canary_conversations: frozenset[str] = field(default_factory=frozenset)
     claim_minimum_confidence: int = 85
     claim_required_observations: int = 2
@@ -313,6 +316,8 @@ class Settings:
             raise ValueError("tool_confirmation_seconds must be between 30 and 900")
         if not 1 <= self.tool_reaper_interval_seconds <= 60:
             raise ValueError("tool_reaper_interval_seconds must be between 1 and 60")
+        if not 1 <= self.artifact_reaper_interval_seconds <= 60:
+            raise ValueError("artifact_reaper_interval_seconds must be between 1 and 60")
         if bool(self.artifact_root) != bool(self.artifact_secret_pepper):
             raise ValueError("artifact root and secret pepper must be configured together")
         if self.artifact_root:
@@ -550,9 +555,13 @@ class Settings:
             qq_media_max_bytes=int(os.getenv("SUPERLILY_QQ_MEDIA_MAX_BYTES", "8388608")),
             qq_media_quota_bytes=int(os.getenv("SUPERLILY_QQ_MEDIA_QUOTA_BYTES", "1073741824")),
             artifact_secret_pepper=os.getenv("SUPERLILY_ARTIFACT_SECRET_PEPPER", ""),
+            artifact_reaper_interval_seconds=int(
+                os.getenv("SUPERLILY_ARTIFACT_REAPER_INTERVAL_SECONDS", "30")
+            ),
             artifact_orphan_grace_seconds=int(
                 os.getenv("SUPERLILY_ARTIFACT_ORPHAN_GRACE_SECONDS", "300")
             ),
+            render_festival_enabled=_as_bool(os.getenv("SUPERLILY_RENDER_FESTIVAL_ENABLED")),
             render_mode=os.getenv("SUPERLILY_RENDER_MODE", "off").strip().lower(),
             render_canary_conversations=_string_set(
                 os.getenv("SUPERLILY_RENDER_CANARY_CONVERSATIONS_JSON"),
@@ -668,6 +677,9 @@ class Settings:
                 variable="SUPERLILY_GROUP_MODES_JSON",
             ),
             claim_mode=claim_mode,
+            claim_observe_only_outside_canary=_as_bool(
+                os.getenv("SUPERLILY_CLAIM_OBSERVE_ONLY_OUTSIDE_CANARY"),
+            ),
             claim_canary_conversations=_string_set(
                 os.getenv("SUPERLILY_CLAIM_CANARY_CONVERSATIONS_JSON"),
                 variable="SUPERLILY_CLAIM_CANARY_CONVERSATIONS_JSON",

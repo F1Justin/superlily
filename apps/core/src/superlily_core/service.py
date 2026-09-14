@@ -366,18 +366,19 @@ async def ensure_instance(
         "display_name": instance.display_name,
         "version": instance.version,
     }
+    changed = or_(*(getattr(BotInstance, key).is_distinct_from(value) for key, value in updates.items()))
     dialect = session.bind.dialect.name
     if dialect == "postgresql":
         statement = (
             postgresql_insert(BotInstance)
             .values(**values)
-            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates)
+            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates, where=changed)
         )
     elif dialect == "sqlite":
         statement = (
             sqlite_insert(BotInstance)
             .values(**values)
-            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates)
+            .on_conflict_do_update(index_elements=[BotInstance.id], set_=updates, where=changed)
         )
     else:
         record = await session.get(BotInstance, instance.instance_id)
@@ -1617,34 +1618,32 @@ async def _advance_collector_watermark(
         session.add(watermark)
         await session.flush()
 
-    watermark.highest_seen_sequence = max(
-        watermark.highest_seen_sequence,
-        receipt.collector_sequence,
-    )
+    highest_contiguous = watermark.highest_contiguous_sequence
+    if receipt.collector_sequence > highest_contiguous:
+        sequences = (
+            await session.scalars(
+                union_all(*[
+                    select(model.collector_sequence).where(
+                        model.instance_id == receipt.instance_id,
+                        model.spool_id == receipt.spool_id,
+                        model.collector_sequence > highest_contiguous,
+                    ) for model in (IngressReceiptRecord, HistoryDeliveryReceipt)
+                ]).order_by("collector_sequence")
+            )
+        ).all()
+        expected = highest_contiguous + 1
+        for sequence in sequences:
+            if sequence is None or sequence < expected:
+                continue
+            if sequence != expected:
+                break
+            highest_contiguous = sequence
+            expected += 1
+    # Keep the receipt query's autoflush from writing a partial watermark update.
+    watermark.highest_contiguous_sequence = highest_contiguous
+    watermark.highest_seen_sequence = max(watermark.highest_seen_sequence, receipt.collector_sequence)
     watermark.last_receipt_at = now
     watermark.updated_at = now
-    if receipt.collector_sequence <= watermark.highest_contiguous_sequence:
-        return watermark
-
-    sequences = (
-        await session.scalars(
-            union_all(*[
-                select(model.collector_sequence).where(
-                    model.instance_id == receipt.instance_id,
-                    model.spool_id == receipt.spool_id,
-                    model.collector_sequence > watermark.highest_contiguous_sequence,
-                ) for model in (IngressReceiptRecord, HistoryDeliveryReceipt)
-            ]).order_by("collector_sequence")
-        )
-    ).all()
-    expected = watermark.highest_contiguous_sequence + 1
-    for sequence in sequences:
-        if sequence is None or sequence < expected:
-            continue
-        if sequence != expected:
-            break
-        watermark.highest_contiguous_sequence = sequence
-        expected += 1
     return watermark
 
 
@@ -2281,6 +2280,7 @@ async def _ensure_claim_decision(
 
 def claim_record_payload(record: EventClaim) -> dict[str, Any]:
     return {
+        "recorded": True,
         "claim_id": record.id,
         "source_event_id": record.source_event_id,
         "instance_id": record.instance_id,
@@ -2330,7 +2330,7 @@ async def evaluate_event_claim(
     payload: EventIn,
     idempotency_key: str,
     settings: Settings,
-) -> tuple[EventClaim, bool, EventObservation, bool]:
+) -> tuple[EventClaim | dict[str, Any], bool, EventObservation, bool]:
     if payload.metadata.get("observation_method") == "onebot_history" or payload.event_type == "audit.qq_media_archive":
         raise HTTPException(422, "archival observations cannot request a claim")
     observation, event_duplicate = await ingest_event(session, payload, idempotency_key, settings)
@@ -2350,11 +2350,51 @@ async def evaluate_event_claim(
             )
         return existing, True, observation, event_duplicate
 
+    configured_enforcement = enforcement_enabled(
+        mode=settings.claim_mode,
+        platform=source.platform,
+        conversation_type=source.conversation_type,
+        conversation_id=source.conversation_id,
+        canary_conversations=settings.claim_canary_conversations,
+    )
+    if (
+        settings.claim_observe_only_outside_canary
+        and settings.claim_mode == "canary"
+        and not configured_enforcement
+    ):
+        # The legacy bridge needs the decision hint to bind its later response,
+        # but no ownership record or coordination is needed outside the canary.
+        decision = await _ensure_claim_decision(session, source, settings)
+        return {
+            "recorded": False,
+            "claim_id": None,
+            "source_event_id": source.id,
+            "instance_id": payload.instance.instance_id,
+            "decision_id": decision.id if decision else None,
+            "decision_revision": decision.revision if decision else None,
+            "mode": settings.claim_mode,
+            "action": "abstain",
+            "reason": "outside_canary_observation_only",
+            "ready": False,
+            "enforced": False,
+            "acknowledged_at": None,
+            "created_at": None,
+            "features": {
+                "configured_enforcement": False,
+                "gates": {
+                    "decision_type": decision.decision_type if decision else None,
+                    "target_instance_id": decision.target_instance_id if decision else None,
+                },
+            },
+        }, event_duplicate, observation, event_duplicate
+
+    # Shadow keeps its paired-observation evaluation; canary waits only inside its scope.
+    coalesce_enabled = configured_enforcement or settings.claim_mode == "shadow"
     observation_count = await _coalesce_claim_observations(
         session,
         source.id,
         settings.claim_required_observations,
-        settings.claim_coalesce_milliseconds if settings.claim_mode != "off" else 0,
+        settings.claim_coalesce_milliseconds if coalesce_enabled else 0,
     )
     decision = await _ensure_claim_decision(session, source, settings)
 
@@ -2387,13 +2427,6 @@ async def evaluate_event_claim(
             target_status=target_status,
         )
 
-    configured_enforcement = enforcement_enabled(
-        mode=settings.claim_mode,
-        platform=source.platform,
-        conversation_type=source.conversation_type,
-        conversation_id=source.conversation_id,
-        canary_conversations=settings.claim_canary_conversations,
-    )
     action = evaluation.action
     reason = evaluation.reason
     ready = evaluation.ready
