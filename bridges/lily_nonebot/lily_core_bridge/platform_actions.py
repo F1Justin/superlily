@@ -603,6 +603,7 @@ def normalize_platform_action_event(
         subject = _principal(raw.get("sender_id"))
         target_message = _platform_message_id(raw.get("message_id"))
         subtype = _text(raw.get("sub_type"), max_length=64)
+        operation = {"add": "add", "delete": "remove", "remove": "remove"}.get(subtype, "unknown")
         missing = []
         if actor is None:
             missing.append("essence operator_id missing")
@@ -612,6 +613,8 @@ def normalize_platform_action_event(
             missing.append("essence message_id missing")
         if subtype is None:
             missing.append("essence sub_type missing")
+        elif operation == "unknown":
+            missing.append("essence sub_type unsupported")
         if occurred_at is None:
             missing.append("platform event time missing")
         if subject is None and target_message is None:
@@ -625,7 +628,7 @@ def normalize_platform_action_event(
             {
                 "schema_version": "1.0",
                 "action_kind": "essence",
-                "operation": "remove" if subtype in {"delete", "remove"} else "add",
+                "operation": operation,
                 "actor_principal_id": actor,
                 "subject_principal_id": subject,
                 "target_source_event_id": None,

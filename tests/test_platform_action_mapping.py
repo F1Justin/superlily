@@ -485,6 +485,87 @@ def test_incomplete_high_value_fact_is_explicit(path: Path) -> None:
     assert "platform event time missing" in str(event.actions[0].reason)
 
 
+@pytest.mark.parametrize("path", ACTION_PATHS)
+@pytest.mark.parametrize(
+    ("subtype", "operation", "reason"),
+    [
+        ("add", "add", None),
+        ("delete", "remove", None),
+        ("remove", "remove", None),
+        (None, "unknown", "essence sub_type missing"),
+        ("", "unknown", "essence sub_type missing"),
+        ("unexpected", "unknown", "essence sub_type unsupported"),
+    ],
+)
+def test_essence_operation_does_not_guess_an_add(path, subtype, operation, reason) -> None:
+    raw = {
+        "time": 1784344008,
+        "post_type": "notice",
+        "notice_type": "essence",
+        "group_id": 861651713,
+        "operator_id": 10002,
+        "sender_id": 10007,
+        "message_id": 556677,
+    }
+    if subtype is not None:
+        raw["sub_type"] = subtype
+    event = build(load_module(path), raw)
+    action = event.actions[0]
+    assert action.operation == operation
+    assert action.reason == reason
+    assert action.capture_status == ("partial" if reason else "complete")
+    assert event.capture.status == action.capture_status
+    assert action.value == ({"sub_type": subtype} if subtype else {})
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+@pytest.mark.parametrize("message_id", [None, ""])
+def test_essence_missing_target_stays_partial_without_inventing_id(path, message_id) -> None:
+    raw = {
+        "time": 1784344008,
+        "post_type": "notice",
+        "notice_type": "essence",
+        "sub_type": "add",
+        "group_id": 861651713,
+        "operator_id": 10002,
+        "sender_id": 10007,
+        "message_id": message_id,
+    }
+    event = build(load_module(path), raw)
+    action = event.actions[0]
+    assert action.operation == "add"
+    assert action.target_platform_message_id is None
+    assert action.subject_principal_id == "10007"
+    assert action.reason == "essence message_id missing"
+    assert action.capture_status == event.capture.status == "partial"
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+async def test_unknown_essence_operation_is_persisted_without_guessing(client, app, path) -> None:
+    event = build(load_module(path), {
+        "time": 1784344008,
+        "post_type": "notice",
+        "notice_type": "essence",
+        "group_id": 861651713,
+        "operator_id": 10002,
+        "sender_id": 10007,
+        "message_id": 556677,
+        "sub_type": "unexpected",
+    })
+    response = await client.post(
+        "/v1/events",
+        json=event.model_dump(mode="json"),
+        headers={"Authorization": "Bearer lily-secret", "Idempotency-Key": "unknown-essence"},
+    )
+    assert response.status_code == 201, response.text
+    async with app.state.database.sessions() as session:
+        action = await session.scalar(select(PlatformActionObservation))
+        assert action is not None
+        assert action.operation == "unknown"
+        assert action.capture_status == "partial"
+        assert action.reason == "essence sub_type unsupported"
+
+
 @pytest.mark.asyncio
 async def test_group_card_and_group_name_actions_feed_name_history(client, app) -> None:
     module = load_module(ACTION_PATHS[0])
