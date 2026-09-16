@@ -183,6 +183,14 @@ R1.2 为既有 Renderer 提供按时间窗口自动切换的节日展示，独�
 
 ## R2：Cognitive Workspace / World Effect Boundary
 
+2026-09-16 推进记录：前两阶段 RPC/执行凭证与工作区已有实现，现按用户确认调整为
+**同群持久共享目录 + 每任务独立临时区**；保留旧群文件，同群执行轮次串行，跨群隔离。
+任务到期仅清理临时状态，不删除群成果。JSON RPC、执行级授权与安全文件导出保持。
+Runtime lint、typecheck 及含真实隔离 Docker 的 83 项测试通过；生产启用插件已做静态
+接口兼容预检。**尚未部署，也未签署 R2 生产验收**；群目录长期容量/硬配额、候选镜像
+及实际插件外部效果的受控回归与回滚条件仍须落实。实现与边界见 Runtime 仓库
+[`docs/R2_IMPLEMENTATION.md`](https://github.com/F1Justin/superlily-nekro-runtime/blob/superlily/runtime-v2.3.3/docs/R2_IMPLEMENTATION.md)。
+
 在 R1 的真实实现上概括最小边界：
 
 - Cognitive Workspace 允许私有、可逆的临时文件、执行反馈、局部重试和脚手架；
