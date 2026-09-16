@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         fontconfig \
-        fonts-noto-cjk \
+        fonts-noto-cjk fonts-noto-core=20201225-2 \
         libbrotli1 \
         libbz2-1.0 \
         libexpat1 \
@@ -27,6 +27,9 @@ COPY registry ./registry
 RUN python -m pip install --constraint deploy/constraints.txt ".[renderer]" \
     && chmod -R a+rX /app \
     && install -d -o 1000 -g 1000 -m 0700 /latex-ipc /work
+
+COPY apps/latex_provider/src/superlily_latex_provider/fonts/NotoEmoji-Regular.ttf /usr/local/share/fonts/NotoEmoji-Regular.ttf
+RUN chmod a+r /usr/local/share/fonts/NotoEmoji-Regular.ttf && fc-cache -f
 
 USER 1000:1000
 ENTRYPOINT ["superlily-latex-worker"]

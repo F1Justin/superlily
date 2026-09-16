@@ -1,0 +1,19 @@
+ARG CORE_BASE=superlily/core:pre-spring-20260916
+ARG RENDERER_BASE=superlily/renderer:pre-spring-20260916
+ARG WORKER_BASE=superlily/worker:pre-spring-20260916
+FROM ${CORE_BASE} AS core
+USER 0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+RUN chmod a+r /usr/local/lib/python3.13/site-packages/superlily_contracts/festival_themes.py
+USER 65532:65532
+FROM ${RENDERER_BASE} AS renderer
+USER 0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+RUN chmod a+r /usr/local/lib/python3.13/site-packages/superlily_contracts/festival_themes.py
+USER 1000:1000
+FROM ${WORKER_BASE} AS worker
+USER 0
+COPY packages/contracts/src/superlily_contracts/festival_themes.py /usr/local/lib/python3.13/site-packages/superlily_contracts/
+COPY apps/latex_provider/src/superlily_latex_provider/festival_assets /usr/local/lib/python3.13/site-packages/superlily_latex_provider/festival_assets
+RUN chmod a+r /usr/local/lib/python3.13/site-packages/superlily_contracts/festival_themes.py && chmod -R a+rX /usr/local/lib/python3.13/site-packages/superlily_latex_provider/festival_assets
+USER 1000:1000

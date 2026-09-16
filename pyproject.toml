@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-renderer = ["Pillow==12.3.0"]
+renderer = ["Pillow==12.3.0", "regex==2026.9.10"]
 dev = [
   "aiosqlite>=0.20,<1",
   "pytest>=8.3,<9",
@@ -58,4 +58,4 @@ pythonpath = [
 ]
 
 [tool.setuptools.package-data]
-superlily_latex_provider = ["festival_assets/*.png", "festival_assets/*.svg", "festival_assets/*.json"]
+superlily_latex_provider = ["festival_assets/*.png", "festival_assets/*.svg", "festival_assets/*.json", "fonts/*.ttf", "fonts/*.txt", "fonts/*.json"]

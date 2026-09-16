@@ -1,0 +1,266 @@
+{
+  "date": "2026-09-16",
+  "worker_image": "sha256:40257a8f7109981dd2a95e4316253edb93d98ee02316c6e66555b607f3e2968c",
+  "core_image": "sha256:bfcdba29c6048c9ee754ffc6960238d39d9f7e6342f795bfa68821b9ada6efec",
+  "gateway_image": "sha256:447b195c23dda1e7e040235e7b2e8e7f6f71356538dd3738bb0c23749afdeaec",
+  "previous_core_image": "sha256:0f55e7d510ac14dfae469f4f85807ed963531551d9bc1eea0623bc526660884d",
+  "previous_gateway_image": "sha256:d746fc2fdd066cc049fa1b09ae234901472da3783e5f6053a290fa7c5211eb7e",
+  "previous_worker_image": "sha256:eb9a6ca5b2c70a725314bc65f19775d94c8779f9bcbdbd7e2258d064db00ea2c",
+  "worker_identity": "7336022b86e266ab50915de83737b4fa8e52923d1a638120060c5abd64547476",
+  "previous_worker_identity": "b51b9cdcf18a23f473cd0f4c81e0c040353d2695bbff53ae189f9788c117eccf",
+  "sandbox": {
+    "ReadonlyRootfs": true,
+    "NetworkMode": "none",
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Memory": 1073741824,
+    "NanoCpus": 1000000000,
+    "PidsLimit": 128,
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000,mode=0700",
+      "/work": "rw,noexec,nosuid,nodev,size=96m,uid=1000,gid=1000,mode=0700"
+    }
+  },
+  "verification": {
+    "template_sha256": "1c98029be246b580a87ad334d4a426036a13c3b5a66c0ab8c23ce0833f1a626f",
+    "engine_versions": [
+      "XeTeX 3.141592653-2.6-0.999996 (TeX Live 2024)",
+      "pdftoppm version 25.03.0"
+    ],
+    "renders": {
+      "default": {
+        "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8",
+        "size": [
+          2048,
+          1167
+        ],
+        "seconds": 1.8
+      },
+      "mid_autumn": {
+        "sha256": "5290cbb73963a0b01ee5f10e08a00c0e0c4f8d5dc68e210ec4dd9d57d19bede7",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.02
+      },
+      "national_day": {
+        "sha256": "efe0736dfc0287988504c972cf394105852695c017026381b93a6400b6ccc79f",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.05
+      },
+      "double_ninth": {
+        "sha256": "4fb3f18bfd6ee83fdce3fb9ea714429decfe72bb699c62a8f8f0e3479c5cc305",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.03
+      },
+      "winter_solstice": {
+        "sha256": "f58a8fdb10e074dba930981e4456e86e604c673b96da2a17337bc3d1c24a114e",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 1.98
+      },
+      "new_year": {
+        "sha256": "1cc0749dabe4b51cc1aea1be53050d6d26ea376379b691960a0e2a354a3ae982",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 1.98
+      },
+      "new_years_eve": {
+        "sha256": "5d074c3f6efddcedc920eed36fbd1f44d375e5a5b0d3a89f7b413a9e6c0bbf24",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.11
+      },
+      "new_years_day": {
+        "sha256": "81de1a150c5ee1efd4a5e9790b408b814af2bafaa832de2aa0ee3ef304d2e58f",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.07
+      },
+      "lantern_festival": {
+        "sha256": "7dcd5e983e21776634833c4201e7494cff9acfa1476f27660974a3893a7f495a",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.11
+      },
+      "lichun": {
+        "sha256": "c9333f5980c0e30aad69f9a4cf62da1700b3f419e8463e69a498999d69305d7b",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "yushui": {
+        "sha256": "94c004f33d9ad8ccb1886296cc2ddc15b77660cc4b72d133eae4942835ff97b6",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "jingzhe": {
+        "sha256": "3e3d14a146765573db94d9fed53b54128b115df53a9003cecda3abaeada6ff17",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "chunfen": {
+        "sha256": "b8e55d76e062e6b774353fd1418308e5fb33577ff4bcf252216ba92645da84e8",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.0
+      },
+      "qingming": {
+        "sha256": "688c904af0ac0b97cb10676acfe189f7ba7b600625e7f6d07305bed4e862d839",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 1.98
+      },
+      "guyu": {
+        "sha256": "4d8ff19a000afbd70a94c0d80ca9d87624441f6eba5fa4655a3b5bc715575bc6",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "halloween": {
+        "sha256": "4712297c20e5724cb3bcd5e5d5ca40eced39524a6bd85e2b4f4e2144a8d5b007",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.05
+      },
+      "christmas": {
+        "sha256": "6de7591893bfcaa143287a5efa386f15d1d893c745725de1df932328570a03b8",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.0
+      }
+    },
+    "missing_glyph_rejected": true
+  },
+  "health": [
+    {
+      "name": "/deploy-lily-core-1",
+      "running": true,
+      "health": "healthy",
+      "restarts": 0
+    },
+    {
+      "name": "/deploy-document-renderer-1",
+      "running": true,
+      "health": "healthy",
+      "restarts": 0
+    },
+    {
+      "name": "/deploy-latex-worker-1",
+      "running": true,
+      "health": null,
+      "restarts": 0
+    }
+  ],
+  "live_smoke": {
+    "render_id": "94eb9d96-07c4-4e64-bc68-335ed1e9228c",
+    "artifact_id": "0bf73f5e-5c8f-4b81-a24e-da26dcaaf4a3",
+    "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8",
+    "size": [
+      2048,
+      1167
+    ],
+    "expires_at": "2026-09-16T02:32:21.970374+00:00",
+    "cache_hit": true,
+    "platform_send": false,
+    "implementation_hash": "7336022b86e266ab50915de83737b4fa8e52923d1a638120060c5abd64547476"
+  },
+  "approved_preview_smoke": {
+    "theme_version": "8338d6ac718d3835a727924d4d6ae1101bc0dcd886f910235dda374ef51b17f9",
+    "calendar_boundaries": 16,
+    "results": {
+      "lichun": {
+        "sha256": "6495b233c75075711fcd51d27ddcf79599b43ec5494fc269aca1f2d71c1cc39a"
+      },
+      "yushui": {
+        "sha256": "a54124302a88ec1e297a866b8c2c77aaee1c571911a3b965304220c87161681d"
+      },
+      "jingzhe": {
+        "sha256": "a875068a6db02f676352f81d67290bad9b9cfd67f0f5ca78a1ce8a89ce381015"
+      },
+      "chunfen": {
+        "sha256": "09417019013fafa87c618a547509b5ab7b8bcb8ea065ecae45008cdda0b67806"
+      },
+      "qingming": {
+        "sha256": "8bb281db9beccdcadd8877f946982c370003b3dee26a0917cf71eb42cc3e7802"
+      },
+      "guyu": {
+        "sha256": "4aa37248076558b3ad64654b96576d9722f0a80de2e2997baf85687d0d8956d0"
+      },
+      "halloween": {
+        "sha256": "5d6e64e40826f24387d67e194724218d00ca0cdc5dc5e067ae22798412c1997d"
+      },
+      "christmas": {
+        "sha256": "5ebc217c6a6cac0c1fee56e0d396511fdadf24234fdb346f7f76042ea14993b2"
+      }
+    }
+  },
+  "theme_module_sha256": "89fb0c9d4299f7959b7a8806e5a4588378b81454755bef68e2e9c2ddca77b79e",
+  "asset_manifest_sha256": "a05ed2d4c061676dd346e5f79611e0dc1515c95deae6db8dad4b8832de7bf3ec",
+  "tests": "97 passed",
+  "inherited_live_base_layers_verified": true,
+  "collector_health": {
+    "watermarks": [
+      {
+        "instance_id": "lily-command",
+        "highest_contiguous_sequence": 900908,
+        "highest_seen_sequence": 900908
+      },
+      {
+        "instance_id": "nekro-agent",
+        "highest_contiguous_sequence": 365039,
+        "highest_seen_sequence": 365039
+      }
+    ],
+    "instances": [
+      {
+        "id": "lily-command",
+        "last_heartbeat_at": "2026-09-16 01:34:41.966793+00:00"
+      },
+      {
+        "id": "nekro-agent",
+        "last_heartbeat_at": "2026-09-16 01:34:40.802905+00:00"
+      }
+    ],
+    "active_renders": 0
+  }
+}

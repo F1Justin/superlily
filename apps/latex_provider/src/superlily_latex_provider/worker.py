@@ -38,6 +38,7 @@ from superlily_contracts import (
 
 from superlily_contracts.festival_themes import PALETTES, THEME_VERSION
 from .festival_renderer import decorate_document
+from .multilingual import font_preamble, implementation_sha256, text_latex
 
 from .runtime import (
     MAX_ARTIFACT_BYTES,
@@ -119,6 +120,9 @@ DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{st
 \usepackage{mathrsfs}
 \usepackage{tabularx}
 \usepackage[punct=kaiming,fontset=none]{ctex}
+\tracinglostchars=3
+\setmainfont{Noto Serif}
+\setmonofont{Noto Sans Mono}
 \setCJKmainfont{Noto Serif CJK SC}
 \setCJKsansfont{Noto Sans CJK SC}
 \setCJKmonofont{Noto Sans Mono CJK SC}
@@ -141,7 +145,7 @@ DOCUMENT_TEMPLATE_PREFIX = r"""\documentclass[12pt,border=8pt,varwidth=350pt]{st
 
 def template_sha256() -> str:
     templates = (
-        THEME_VERSION + "\x00formula\x00"
+        THEME_VERSION + implementation_sha256() + "\x00formula\x00"
         + TEMPLATE_PREFIX
         + "<LATEX>"
         + TEMPLATE_SUFFIX
@@ -180,24 +184,8 @@ def _document(latex: str) -> str:
     return TEMPLATE_PREFIX + equation + TEMPLATE_SUFFIX
 
 
-_TEXT_ESCAPES = str.maketrans(
-    {
-        "\\": r"\textbackslash{}",
-        "{": r"\{",
-        "}": r"\}",
-        "$": r"\$",
-        "&": r"\&",
-        "#": r"\#",
-        "%": r"\%",
-        "_": r"\_",
-        "^": r"\textasciicircum{}",
-        "~": r"\textasciitilde{}",
-    }
-)
-
-
 def _escape_text(value: str) -> str:
-    return value.translate(_TEXT_ESCAPES).replace("\n", r"\\" + "\n")
+    return text_latex(value)
 
 
 def _mixed_text_latex(value: str, *, markdown_lite: bool) -> str:
@@ -464,7 +452,8 @@ def document_latex(document: RenderDocument, *, theme_id: str = "default") -> st
     for block in document.blocks:
         parts.append(_render_block_latex(block, markdown_lite=markdown_lite, theme_id=theme_id))
     parts.append(TEMPLATE_SUFFIX)
-    return "".join(parts)
+    latex = "".join(parts)
+    return latex.replace(r"\begin{document}", font_preamble(latex) + r"\begin{document}", 1)
 
 
 def _read_log_tail(log_path: Path) -> str:

@@ -1,0 +1,18 @@
+{
+  "source": "https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji",
+  "derivation": "fonttools 4.61.1 instantiateVariableFont wght=400, recalcTimestamp=False",
+  "coverage_package": "fonts-noto-core=20201225-2",
+  "coverage_inputs": {
+    "NotoSerif-Regular.ttf": "9d7583b7dc9e812afd32a14280c5cac3160012efe50c8d08938f4fea266ff67f",
+    "NotoSansSymbols-Regular.ttf": "24b615ceb7d50a2c09060664ca9e24a160c9beb6bfca0563e8359369a4bc0993",
+    "NotoSansSymbols2-Regular.ttf": "876598db5f1e3bef2bc77c4d94c5b0d5d2c1620be4878a06f18fb5434e331688",
+    "NotoMusic-Regular.ttf": "fdf04893f04fabd36261bc5fb4fb2b0ae4da268286318ab8919f34b3e3458397",
+    "NotoSansMath-Regular.ttf": "8242bd1e55368b27e32455260754cf9aa58f3ad7ea80664b66c21f1b09910d6c"
+  },
+  "files": {
+    "NotoEmoji-Variable.ttf": "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+    "NotoEmoji-Regular.ttf": "1ada997ccb67bf2404828e25528e5257d6db10c80287e77684abf6737a5d198f",
+    "OFL-NotoEmoji.txt": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+    "coverage.json": "8cc1d43cd5bb941a4c801622bc7df06376aa36c372a68ed82b6d0c9812100ef8"
+  }
+}

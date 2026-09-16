@@ -1,0 +1,10 @@
+ARG WORKER_BASE=superlily/worker:pre-fonts-20260914
+FROM ${WORKER_BASE}
+USER 0
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-core=20201225-2 && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir regex==2026.9.10
+COPY apps/latex_provider/src/superlily_latex_provider/worker.py apps/latex_provider/src/superlily_latex_provider/multilingual.py /usr/local/lib/python3.13/site-packages/superlily_latex_provider/
+COPY apps/latex_provider/src/superlily_latex_provider/fonts /usr/local/lib/python3.13/site-packages/superlily_latex_provider/fonts
+COPY apps/latex_provider/src/superlily_latex_provider/fonts/NotoEmoji-Regular.ttf /usr/local/share/fonts/NotoEmoji-Regular.ttf
+RUN chmod -R a+rX /usr/local/lib/python3.13/site-packages/superlily_latex_provider /usr/local/share/fonts && fc-cache -f
+USER 1000:1000

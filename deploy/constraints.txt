@@ -35,3 +35,4 @@ uvicorn==0.51.0
 uvloop==0.22.1
 watchfiles==1.2.0
 websockets==16.1
+regex==2026.9.10

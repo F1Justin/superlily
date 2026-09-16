@@ -32,11 +32,25 @@ def test_exact_24_hour_window(date, theme_id):
     assert theme_window(end).theme_id != theme_id
 
 
+def test_new_year_covers_countdown_and_expires_at_noon():
+    start = datetime(2026, 12, 31, 12, tzinfo=CST)
+    end = datetime(2027, 1, 1, 12, tzinfo=CST)
+    before = theme_window(start - timedelta(microseconds=1))
+    assert before.theme_id == 'default'
+    assert before.valid_until == start
+    for now in [start, datetime(2027, 1, 1, tzinfo=CST), end - timedelta(microseconds=1)]:
+        window = theme_window(now)
+        assert window.theme_id == 'new_year'
+        assert window.valid_until == end
+    assert theme_window(end).theme_id == 'default'
+
+
 def test_calendar_is_bounded_and_switch_can_disable_it():
     assert theme_window(datetime(2027,2,6,tzinfo=CST)).theme_id == 'new_years_day'
     assert theme_window(datetime(2027,2,6,tzinfo=CST),enabled=False).theme_id == 'default'
     assert theme_window(datetime(2027,9,25,tzinfo=CST)).theme_id == 'default'
-    assert theme_window(datetime(2027,2,21,tzinfo=CST)).valid_until is None
+    assert theme_window(datetime(2027,2,21,tzinfo=CST)).valid_until == datetime(2027,3,6,tzinfo=CST)
+    assert theme_window(datetime(2027,4,21,tzinfo=CST)).valid_until is None
     with pytest.raises(ValueError): theme_window(datetime(2027,2,6))
 
 
@@ -70,8 +84,13 @@ def test_default_is_byte_preserving_and_uncolored():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('cross_during_render',[False,True])
-async def test_core_renews_cross_midnight_and_fences_old_delivery(tmp_path,monkeypatch,cross_during_render):
-    clock=[datetime(2027,2,5,23,59,59,tzinfo=CST)]
+@pytest.mark.parametrize('boundary,expected_themes', [
+    (datetime(2027,2,6,tzinfo=CST), ['new_years_eve','new_years_day']),
+    (datetime(2026,12,31,12,tzinfo=CST), ['default','new_year']),
+    (datetime(2027,1,1,12,tzinfo=CST), ['new_year','default']),
+])
+async def test_core_renews_cross_window_and_fences_old_delivery(tmp_path,monkeypatch,cross_during_render,boundary,expected_themes):
+    clock=[boundary-timedelta(seconds=1)]
     monkeypatch.setattr(render_service,'utc_now',lambda:clock[0])
     themes=[]
     async def render(self,document,*,timeout_seconds):
@@ -91,15 +110,15 @@ async def test_core_renews_cross_midnight_and_fences_old_delivery(tmp_path,monke
             first=await client.post('/v1/render-documents',json=doc().model_dump(mode='json'),headers=headers)
             assert first.status_code==201,first.text
             if cross_during_render:
-                assert themes==['new_years_eve','new_years_day']
+                assert themes==expected_themes
             else:
-                assert datetime.fromisoformat(first.json()['expires_at'])==datetime(2027,2,6,tzinfo=CST)
+                assert datetime.fromisoformat(first.json()['expires_at'])==boundary
                 clock[0]+=timedelta(seconds=1)
                 expired=await client.post(f"/v1/render-artifacts/{first.json()['artifact_id']}/delivery-intents",json={'instance_id':'nekro-agent','delivery_plan_id':first.json()['delivery_plan_id'],'idempotency_key':'never-sent'},headers=headers)
                 assert expired.headers['X-Render-Error-Code']=='artifact_expired'
             again=await client.post('/v1/render-documents',json=doc().model_dump(mode='json'),headers=headers)
             assert again.status_code in {200,201},again.text
-            assert themes==['new_years_eve','new_years_day']
+            assert themes==expected_themes
             if not cross_during_render:assert first.json()['artifact_id']!=again.json()['artifact_id']
     finally:
         await app.state.database.drop_schema();await app.state.database.dispose()

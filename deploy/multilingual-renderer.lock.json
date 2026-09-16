@@ -1,0 +1,159 @@
+{
+  "date": "2026-09-14",
+  "worker_image": "sha256:eb9a6ca5b2c70a725314bc65f19775d94c8779f9bcbdbd7e2258d064db00ea2c",
+  "core_image": "sha256:0f55e7d510ac14dfae469f4f85807ed963531551d9bc1eea0623bc526660884d",
+  "gateway_image": "sha256:d746fc2fdd066cc049fa1b09ae234901472da3783e5f6053a290fa7c5211eb7e",
+  "previous_worker_image": "sha256:6f9086bd8e92f07682ffd67b0bfaab3dd8f3ea7afad16814b8eb2967467fa73e",
+  "worker_identity": "b51b9cdcf18a23f473cd0f4c81e0c040353d2695bbff53ae189f9788c117eccf",
+  "previous_worker_identity": "840a36c24e8a1425595848aabf1f52982f183ed2ad0b156d9adb4d53338c0412",
+  "sandbox": {
+    "ReadonlyRootfs": true,
+    "NetworkMode": "none",
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Memory": 1073741824,
+    "NanoCpus": 1000000000,
+    "PidsLimit": 128,
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000,mode=0700",
+      "/work": "rw,noexec,nosuid,nodev,size=96m,uid=1000,gid=1000,mode=0700"
+    }
+  },
+  "verification": {
+    "template_sha256": "c0087f15e562f43e2ea276cfac62c6f6ca7374252d17cf00ee832ab721361ddf",
+    "engine_versions": [
+      "XeTeX 3.141592653-2.6-0.999996 (TeX Live 2024)",
+      "pdftoppm version 25.03.0"
+    ],
+    "renders": {
+      "default": {
+        "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8",
+        "size": [
+          2048,
+          1167
+        ],
+        "seconds": 1.85
+      },
+      "mid_autumn": {
+        "sha256": "5290cbb73963a0b01ee5f10e08a00c0e0c4f8d5dc68e210ec4dd9d57d19bede7",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.12
+      },
+      "national_day": {
+        "sha256": "efe0736dfc0287988504c972cf394105852695c017026381b93a6400b6ccc79f",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.05
+      },
+      "double_ninth": {
+        "sha256": "4fb3f18bfd6ee83fdce3fb9ea714429decfe72bb699c62a8f8f0e3479c5cc305",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.08
+      },
+      "winter_solstice": {
+        "sha256": "f58a8fdb10e074dba930981e4456e86e604c673b96da2a17337bc3d1c24a114e",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "new_year": {
+        "sha256": "1cc0749dabe4b51cc1aea1be53050d6d26ea376379b691960a0e2a354a3ae982",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "new_years_eve": {
+        "sha256": "5d074c3f6efddcedc920eed36fbd1f44d375e5a5b0d3a89f7b413a9e6c0bbf24",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      },
+      "new_years_day": {
+        "sha256": "81de1a150c5ee1efd4a5e9790b408b814af2bafaa832de2aa0ee3ef304d2e58f",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 1.98
+      },
+      "lantern_festival": {
+        "sha256": "7dcd5e983e21776634833c4201e7494cff9acfa1476f27660974a3893a7f495a",
+        "size": [
+          2048,
+          1495
+        ],
+        "seconds": 2.04
+      }
+    },
+    "missing_glyph_rejected": true
+  },
+  "live_smoke": {
+    "render_id": "e59dd2cd-c879-4fd4-92e4-d0a01435fc70",
+    "artifact_id": "01e358b4-ae4f-4c99-beb0-8a21fb4d4205",
+    "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8",
+    "size": [
+      2048,
+      1167
+    ],
+    "expires_at": "2026-09-14T11:58:51.927380+00:00",
+    "cache_hit": true,
+    "platform_send": false,
+    "implementation_hash": "b51b9cdcf18a23f473cd0f4c81e0c040353d2695bbff53ae189f9788c117eccf"
+  },
+  "health": [
+    {
+      "name": "deploy-lily-core-1",
+      "image": "sha256:0f55e7d510ac14dfae469f4f85807ed963531551d9bc1eea0623bc526660884d",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "error_lines": 0
+    },
+    {
+      "name": "deploy-document-renderer-1",
+      "image": "sha256:d746fc2fdd066cc049fa1b09ae234901472da3783e5f6053a290fa7c5211eb7e",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "error_lines": 0
+    },
+    {
+      "name": "deploy-latex-worker-1",
+      "image": "sha256:eb9a6ca5b2c70a725314bc65f19775d94c8779f9bcbdbd7e2258d064db00ea2c",
+      "status": "running",
+      "health": null,
+      "restarts": 0,
+      "error_lines": 0
+    },
+    {
+      "name": "nekro_agent",
+      "image": "sha256:cf6f66a458d7754cdaa50c74493c2e28cfd54529f17e878207a5b861f142920a",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "error_lines": 0
+    }
+  ],
+  "font_manifest_sha256": "fd73d0e80a809ec76241e6a7839ca98a1271cb88fbe27888f38aec0964003635",
+  "worker_sha256": "0c7105ad20dc65ece153b284119a0d1616afcd59bf4a31b423bd71978bbedfcb",
+  "multilingual_sha256": "40998c638987788c5e6715722a71b20c872cf6fc132d6289542f51d93f48aa8b",
+  "tests_passed": 86
+}

@@ -1,0 +1,90 @@
+{
+  "date": "2026-09-16",
+  "worker_image": "sha256:3f8aa7451fe3a6ab90dc1da7ed0f16c4dc8641193d0e51726c0e38805c0a7feb",
+  "core_image": "sha256:d7eef850d4a663d23230fba16dfdb0b12c6cb184e968aa13ccd7c57b8d62d0d6",
+  "gateway_image": "sha256:2cbdea27a7c98aa33434da8589316b98d7f978d498d5d2b089fb8c2fb8ce7cc6",
+  "previous_core_image": "sha256:bfcdba29c6048c9ee754ffc6960238d39d9f7e6342f795bfa68821b9ada6efec",
+  "previous_gateway_image": "sha256:447b195c23dda1e7e040235e7b2e8e7f6f71356538dd3738bb0c23749afdeaec",
+  "previous_worker_image": "sha256:40257a8f7109981dd2a95e4316253edb93d98ee02316c6e66555b607f3e2968c",
+  "worker_identity": "3a509dda0f1da1ff0d996b241c0329a9ec35c507d1d801b4d09cbec336885337",
+  "previous_worker_identity": "7336022b86e266ab50915de83737b4fa8e52923d1a638120060c5abd64547476",
+  "sandbox": {
+    "ReadonlyRootfs": true,
+    "NetworkMode": "none",
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Memory": 1073741824,
+    "NanoCpus": 1000000000,
+    "PidsLimit": 128,
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,nodev,size=8m,uid=1000,gid=1000,mode=0700",
+      "/work": "rw,noexec,nosuid,nodev,size=96m,uid=1000,gid=1000,mode=0700"
+    }
+  },
+  "identity_metadata_source": "live worker; template identity includes the updated theme version",
+  "tests": "72 passed; includes noon cache expiry and renewal across both boundaries",
+  "window": {
+    "theme_id": "new_year",
+    "start": "2026-12-31T12:00:00+08:00",
+    "end_exclusive": "2027-01-01T12:00:00+08:00",
+    "seconds": 86400
+  },
+  "live_smoke": {
+    "render_id": "7fa1ed2a-8059-40ca-b54f-e219c7c152d5",
+    "artifact_id": "408c0a07-0209-425d-9120-aa280f3f28ea",
+    "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8",
+    "size": [
+      2048,
+      1167
+    ],
+    "expires_at": "2026-09-16T13:39:00.849779+00:00",
+    "cache_hit": true,
+    "platform_send": false,
+    "implementation_hash": "3a509dda0f1da1ff0d996b241c0329a9ec35c507d1d801b4d09cbec336885337"
+  },
+  "theme_smoke": {
+    "theme_version": "066cb686151ed2d27fe062baf0f307943fe6ed46fe2ec62bbad33e4f0544e45d",
+    "calendar_boundaries": 16,
+    "results": {
+      "default": {
+        "sha256": "898c272bfc993e5ff7524136863b3802434b5f9021a13b1a0608a2d20262bae8"
+      },
+      "new_year": {
+        "sha256": "1cc0749dabe4b51cc1aea1be53050d6d26ea376379b691960a0e2a354a3ae982"
+      }
+    }
+  },
+  "verified_worker_metadata": {
+    "worker_sha256": "0c7105ad20dc65ece153b284119a0d1616afcd59bf4a31b423bd71978bbedfcb",
+    "template_sha256": "539b1aafbd20d3e8bb50ee3d6a5aac7bb8cb248920f2e129d27d6fd3078a6729",
+    "engine_versions": [
+      "XeTeX 3.141592653-2.6-0.999996 (TeX Live 2024)",
+      "pdftoppm version 25.03.0"
+    ]
+  },
+  "theme_module_sha256": "78ecfb6c87bdece7fb98349a4ccc464f8eb3b1442229c913c99aa2e27a4c2d6a",
+  "health": [
+    {
+      "name": "/deploy-lily-core-1",
+      "running": true,
+      "health": "healthy",
+      "restarts": 0
+    },
+    {
+      "name": "/deploy-document-renderer-1",
+      "running": true,
+      "health": "healthy",
+      "restarts": 0
+    },
+    {
+      "name": "/deploy-latex-worker-1",
+      "running": true,
+      "health": null,
+      "restarts": 0
+    }
+  ]
+}
