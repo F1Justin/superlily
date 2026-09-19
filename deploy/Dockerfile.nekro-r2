@@ -1,0 +1,28 @@
+FROM superlily/nekro-agent:2.3.3-superlily.10-ablation.2
+
+COPY nekro_agent/__init__.py /app/nekro_agent/__init__.py
+COPY nekro_agent/core/config.py /app/nekro_agent/core/config.py
+COPY nekro_agent/routers/rpc.py /app/nekro_agent/routers/rpc.py
+COPY nekro_agent/schemas/rpc.py /app/nekro_agent/schemas/rpc.py
+COPY nekro_agent/services/agent/run_agent.py /app/nekro_agent/services/agent/run_agent.py
+COPY nekro_agent/services/agent/templates/j2/runtime_contract.j2 /app/nekro_agent/services/agent/templates/j2/runtime_contract.j2
+COPY nekro_agent/services/agent/templates/j2_zh/runtime_contract.j2 /app/nekro_agent/services/agent/templates/j2_zh/runtime_contract.j2
+COPY nekro_agent/services/chat/universal_chat_service.py /app/nekro_agent/services/chat/universal_chat_service.py
+COPY nekro_agent/services/plugin/base.py /app/nekro_agent/services/plugin/base.py
+COPY nekro_agent/services/plugin/collector.py /app/nekro_agent/services/plugin/collector.py
+COPY nekro_agent/services/rpc_service.py /app/nekro_agent/services/rpc_service.py
+COPY nekro_agent/services/sandbox/ext_caller.py /app/nekro_agent/services/sandbox/ext_caller.py
+COPY nekro_agent/services/sandbox/ext_caller_code.py /app/nekro_agent/services/sandbox/ext_caller_code.py
+COPY nekro_agent/services/sandbox/rpc_broker.py /app/nekro_agent/services/sandbox/rpc_broker.py
+COPY nekro_agent/services/sandbox/rpc_grants.py /app/nekro_agent/services/sandbox/rpc_grants.py
+COPY nekro_agent/services/sandbox/rpc_wire.py /app/nekro_agent/services/sandbox/rpc_wire.py
+COPY nekro_agent/services/sandbox/runner.py /app/nekro_agent/services/sandbox/runner.py
+COPY nekro_agent/services/sandbox/workspace.py /app/nekro_agent/services/sandbox/workspace.py
+COPY nekro_agent/tools/file_utils.py /app/nekro_agent/tools/file_utils.py
+COPY nekro_agent/tools/path_convertor.py /app/nekro_agent/tools/path_convertor.py
+COPY nekro_agent/tools/sandbox_files.py /app/nekro_agent/tools/sandbox_files.py
+COPY nekro_agent/tools/sandbox_paths.py /app/nekro_agent/tools/sandbox_paths.py
+COPY plugins/builtin/basic.py /app/plugins/builtin/basic.py
+
+LABEL org.opencontainers.image.version="2.3.3-superlily.11-r2.1"
+LABEL org.opencontainers.image.revision="396e82a62d4ef10a9f580ff7ab799e34032c9e35"
