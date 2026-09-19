@@ -21,7 +21,9 @@ AI-assisted / vibe-coded 开发，生产变更以 Git 身份、合同测试、�
 - Cognitive Runtime：[SuperLily Nekro Runtime](https://github.com/F1Justin/superlily-nekro-runtime)；
 - 当前生产 Runtime 的 tag、commit 与镜像由
   [`deploy/nekro-runtime.lock.yml`](deploy/nekro-runtime.lock.yml) 统一记录；
-- 后续工作：以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的 R0–R5 为唯一顺序。
+- R2 前两阶段已上线；近期优先补齐 R3.2 真实阅读资料与按需看图（未实施）。
+- 后续工作以 [`docs/ROADMAP.md`](docs/ROADMAP.md) 的当前焦点为准，不按编号自动排期；
+  全部 R、P/Phase、C0、H 编号见 [编号对照](docs/ROADMAP_INDEX.md)。
 
 问题与 PR 可以作为外部反馈提交，维护范围见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 安全问题、凭据和私人聊天数据请按 [`Security Policy`](.github/SECURITY.md) 私下报告。
