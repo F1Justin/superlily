@@ -1,0 +1,18 @@
+FROM superlily/nekro-agent:2.3.3-superlily.11-r2.1
+
+COPY nekro_agent/adapters/interface/collector.py /app/nekro_agent/adapters/interface/collector.py
+COPY nekro_agent/adapters/interface/schemas/extra.py /app/nekro_agent/adapters/interface/schemas/extra.py
+COPY nekro_agent/adapters/onebot_v11/adapter.py /app/nekro_agent/adapters/onebot_v11/adapter.py
+COPY nekro_agent/adapters/onebot_v11/matchers/message.py /app/nekro_agent/adapters/onebot_v11/matchers/message.py
+COPY nekro_agent/adapters/onebot_v11/tools/voice.py /app/nekro_agent/adapters/onebot_v11/tools/voice.py
+COPY nekro_agent/services/message_service.py /app/nekro_agent/services/message_service.py
+
+COPY nekro_agent/core/config.py /app/nekro_agent/core/config.py
+
+COPY nekro_agent/services/agent/openai.py /app/nekro_agent/services/agent/openai.py
+
+COPY nekro_agent/services/agent/templates/history.py /app/nekro_agent/services/agent/templates/history.py
+
+COPY nekro_agent/services/agent/templates/audio.py /app/nekro_agent/services/agent/templates/audio.py
+
+LABEL org.opencontainers.image.version="2.3.3-superlily.12-qq-voice.5"

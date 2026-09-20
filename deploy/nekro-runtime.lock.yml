@@ -2,8 +2,8 @@ schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
 branch: superlily/runtime-v2.3.3
-commit: db0c6d0595e8fb550a0a4cc2cf51e6771f06a6a5
-source_tree: 5826121912490872d511c23a451a10d7ba29a086
+commit: 3254ed24b556108f1030341bd4216e6ce426c918
+source_tree: a2c28f93ac4e6aecf6df0bb512bc9bb765308e79
 image_revision: 396e82a62d4ef10a9f580ff7ab799e34032c9e35
 tag: null
 upstream:
@@ -11,44 +11,52 @@ upstream:
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.11-r2.1
-  id: sha256:df3a01581b7071939cea84e56f69fcc789314c58b964c7e08ed7ec16d98d3062
+  tag: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
+  id: sha256:5da3568727beb7f0d25baeef6847357818b1c4acfc0e79604513523db94327ad
 local_patch:
-  kind: r2-conversation-workspace-and-execution-boundary
-  base_image_id: sha256:cf6f66a458d7754cdaa50c74493c2e28cfd54529f17e878207a5b861f142920a
-  dockerfile: deploy/Dockerfile.nekro-r2
+  kind: qq-native-audio-plus-reference-transcript
+  base_image_id: sha256:df3a01581b7071939cea84e56f69fcc789314c58b964c7e08ed7ec16d98d3062
+  base_image_tag: superlily/nekro-agent:2.3.3-superlily.11-r2.1
+  dockerfile: deploy/Dockerfile.nekro-qq-voice
+  source_state: committed source; exact deployed overlay files below
   files:
-    nekro_agent/__init__.py: c9b7bcc19abde1bd23de341037270288785cb0990d8e3d60fe9887de952f363f
-    nekro_agent/core/config.py: e721aca236dbe558d37d5f88e69da16268f58fcc0a6011c9b03179457e1a2040
-    nekro_agent/routers/rpc.py: b55ed1720608579b0b051311724b9476c70a1679be4f4c2e5b0797c31997cb8f
-    nekro_agent/schemas/rpc.py: a5fc06ffc757d7e909aac5fa59d186648ddf1794c22f1f500612199b11e8c9bd
-    nekro_agent/services/agent/run_agent.py: 32f5f52fa86492cb8643b2107e5b084b5bb022a41815ad39fb921ec0279eaed1
-    nekro_agent/services/agent/templates/j2/runtime_contract.j2: 3249bd4a38d3bcd001598403eda82b976be671018b6aed287f101c4025627543
-    nekro_agent/services/agent/templates/j2_zh/runtime_contract.j2: 52fd7046395f886b2da854eb08481dc68c80962adb4aac0383d537b5d8e47d9f
-    nekro_agent/services/chat/universal_chat_service.py: a91b63deb7cc70a6acd60ff1bec8cfa60fffb8eab16d13c8caa2d6792298dec0
-    nekro_agent/services/plugin/base.py: e7d0eec40cb048ba4ed7292721237492fb12ad7f10bdbf0d3beab3c476e84b67
-    nekro_agent/services/plugin/collector.py: 01f9a81e6c744a51a9ff22bd7cbd2b5e23fa9449dab4ac8ca3b9d12922ac71dd
-    nekro_agent/services/rpc_service.py: 62e84978c8cb1bf2d38f6a8d97eaf71a349a2b9767d00bf5cec7e5ea761cd9e7
-    nekro_agent/services/sandbox/ext_caller.py: aacf7e65ef3ee6b81a72ec8aa9250659a94d8c04fa34b31f593bbf529444b28a
-    nekro_agent/services/sandbox/ext_caller_code.py: d724497c75530431992163f4a85905672285212f03ec412605e73e25aa9d3abf
-    nekro_agent/services/sandbox/rpc_broker.py: 3b649293b3122b7544aae4c27684fb64f2ec70ce521d7d0262bcb4c10f69b7d9
-    nekro_agent/services/sandbox/rpc_grants.py: eca844dde909df8c5d83168562eb6784de046e7c998dde98f2f1721e116cdb27
-    nekro_agent/services/sandbox/rpc_wire.py: 4b09d3cc9ebca26046f346ce902e53b7a5cb686a5abc316048fcc14f93bf148d
-    nekro_agent/services/sandbox/runner.py: 2402daf5a63a6ae3a5ffd987b2461a9c67b104b66eb94fe5fb730f68340a043a
-    nekro_agent/services/sandbox/workspace.py: 6a8ae7896a950fdc5869ac14d29d59c079082d3e3a572083487ce01409ba3d6c
-    nekro_agent/tools/file_utils.py: 45691610cd593f4890af37986319ba5198b2abb61c799bc4d86cc304d87d85e3
-    nekro_agent/tools/path_convertor.py: 02195adf13315ec335f17572435ed9a573406a6c2b9fa8a412d5b4b2e1073b67
-    nekro_agent/tools/sandbox_files.py: ea667354584fa49e54d6926e4642bd02ab6b1ed53c091acc05ca5eadfefddf44
-    nekro_agent/tools/sandbox_paths.py: 0f6fecf17d18e9f3063b7c14edd0f836c5e6e832c541309ef44a9b2f99631913
-    plugins/builtin/basic.py: 6f986361b6fc70be47d2ddad3206f053d893f3bd40d38cdb2edb0fd975146d3b
+    nekro_agent/adapters/interface/collector.py: 0fd1632989509c7d695c531993c556beb1959e9a3bc37191f700cefb2adcef46
+    nekro_agent/adapters/interface/schemas/extra.py: 48934f12afb6977dd72fab37734dc6eb3ec05a8c31a70f31ee84be5953b83044
+    nekro_agent/adapters/onebot_v11/adapter.py: 25e2c650a30cd2b502d80e7bf7646338f4df3b4ea74fc50951568fa97e1b8830
+    nekro_agent/adapters/onebot_v11/matchers/message.py: 5b6e1216cc6e60628a068fc1104b1f2550468be1619b00c44cf8a9be6e1143cd
+    nekro_agent/adapters/onebot_v11/tools/voice.py: 1f470a88d10de470194bb54d68a35c4eaf28dc2f9e18a714479ad88b7d955cb7
+    nekro_agent/services/message_service.py: 3b663c1c326192cd8cb31b16b80926afa90c48443ad0e70dcbc5259532ba4843
+    nekro_agent/core/config.py: 8edad9b6fb4d5fe0df502698d5f3bdd8e591fa65d1a8f84e4d9fde143c4c2e27
+    nekro_agent/services/agent/openai.py: 1a4367404c94e2ac8af83709659cf67e10bfac157d02f84369035c514a5c8d6f
+    nekro_agent/services/agent/templates/history.py: 6a477b5a95ea5157553d26f671505d90573eb0a4d6c68fbd5db8c6b5ed8d8c0b
+    nekro_agent/services/agent/templates/audio.py: e1f3e50fe77a80d85cb1b606af0d8a891c2eb711e0122da99c9b1b58ab72b2d5
 deployment:
-  date: "2026-09-19"
-  scope: r2-stages-1-and-2
-  record: docs/R2_DEPLOYMENT_20260919.md
+  date: '2026-09-19'
+  scope: r2-stages-1-and-2-plus-qq-voice-input
+  record: docs/QQ_VOICE_DEPLOYMENT_20260919.md
   offline_mode: false
   conversation_max_mib: 256
   task_max_mib: 128
   total_max_mib: 2048
   min_free_mib: 2048
-  rollback_overlay: deploy/nekro-r2.rollback.yml
+  rollback_overlay: deploy/nekro-qq-voice.rollback.yml
+  voice_channels: []
+  voice_provider: napcat-fetch_ptt_text
+  audio_input: true
+  audio_models:
+  - openrouter-taohuayuan
+  - openrouter-YunFaShu
+  - openrouter-TongjiTouhou
+  - openrouter-private
+  - xiaomi-mimo
+  audio_record: docs/QQ_AUDIO_INPUT_20260919.md
+  voice_scope: all-enabled-onebot-conversations
+  audio_context: same-message-window-as-text
+  audio_total_max_seconds: 960
 legacy_overlay_release: nekro-startup-permissions-production-20260828
+napcat:
+  version: 4.18.28
+  image: mlikiowa/napcat-docker:v4.18.28@sha256:2cc70b45244ae3fabc657ffc3aaa4de8fb893518171e519659ab83d80e6d36b5
+  qq_version: 3.2.30-50969
+  previous_image_id: sha256:2df04f8f31d87dc247aabf7ca3660e7d1332ef36ce8145839746b425315f51b1
+  backup: /home/justin/napcat-backups/20260919-native-asr/napcat_data
