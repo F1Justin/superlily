@@ -1,5 +1,12 @@
 # Lily NoneBot bridge
 
+## 2026-09-27 导出事实修复
+
+动作采集 `onebot-v11-actions-v3` 保留 NapCat 的布尔 `is_add` 为 `add/remove`；
+没有明确方向时仍使用 `observed_state` 并标为 partial。历史记录不按数量猜方向。
+部署、导出验收与回退见 `docs/CHATEXPORTER_DEPLOYMENT_20260927.md`。
+
+
 ## 0.8.0 QQ 平台事实完整性
 
 0.8.0 把 OneBot 已推送的群名片/群名称、成员进退、管理员、禁言、头衔、精华、群文件、

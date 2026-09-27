@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-ACTION_SANITIZER_VERSION = "onebot-v11-actions-v2"
+ACTION_SANITIZER_VERSION = "onebot-v11-actions-v3"
 ACTION_SOURCE_EVENT_ID_SCHEMA = "qq.action.source.v1"
 _SUPPORTED_NOTICE_TYPES = frozenset(
     {
@@ -42,6 +42,7 @@ _COMMON_FIELDS = frozenset(
         "target_id",
         "message_id",
         "likes",
+        "is_add",
         "raw_info",
         "card_new",
         "card_old",
@@ -298,9 +299,15 @@ def normalize_platform_action_event(
                 ),
             }
 
+        is_add = raw.get("is_add")
+        operation = (
+            "add" if is_add is True else "remove" if is_add is False else "observed_state"
+        )
+        direction_missing = [] if isinstance(is_add, bool) else ["reaction operation missing or invalid"]
+        event_reasons.extend(direction_missing)
         likes = raw.get("likes")
         if not isinstance(likes, list) or not likes:
-            missing = ["reaction likes value missing"]
+            missing = [*direction_missing, "reaction likes value missing"]
             if actor is None:
                 missing.append("reaction actor user_id missing")
             if occurred_at is None:
@@ -309,7 +316,7 @@ def normalize_platform_action_event(
                 {
                     "schema_version": "1.0",
                     "action_kind": "reaction",
-                    "operation": "observed_state",
+                    "operation": operation,
                     "actor_principal_id": actor,
                     "subject_principal_id": None,
                     "target_source_event_id": None,
@@ -324,7 +331,7 @@ def normalize_platform_action_event(
             event_reasons.extend(missing)
         else:
             for like in likes[:128]:
-                missing: list[str] = []
+                missing: list[str] = list(direction_missing)
                 value: dict[str, Any] = {}
                 if isinstance(like, dict):
                     emoji_id = _text(like.get("emoji_id"), max_length=128)
@@ -347,7 +354,7 @@ def normalize_platform_action_event(
                     {
                         "schema_version": "1.0",
                         "action_kind": "reaction",
-                        "operation": "observed_state",
+                        "operation": operation,
                         "actor_principal_id": actor,
                         "subject_principal_id": None,
                         "target_source_event_id": None,

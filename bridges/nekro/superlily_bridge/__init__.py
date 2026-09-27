@@ -45,6 +45,7 @@ from .directory_snapshots import (
 )
 from .history_recovery import HistoryRecovery
 from .media_archive import MediaArchive
+from .media_metadata import capture_image_metadata, enrich_image_segments
 from .platform_actions import platform_action_event_payload
 from .platform_api_audit import completed_api_call, is_audited_side_effect, started_api_call
 from .payloads import (
@@ -668,6 +669,10 @@ async def _observe_user_message(message: ChatMessage) -> tuple[dict[str, Any], s
         else:
             conv = {**conv, "name": group_names.get(str(conv["id"]))}
     segments, attachments = content_parts(message.content_data)
+    segments = enrich_image_segments(
+        segments,
+        _native_media_cache().pop(native_identity_cache_key(conv, message.message_id)),
+    )
     ref_msg_id = ref_msg_id_from_ext_data(message.ext_data)
     native_identity = _take_native_identity(conv, message.message_id)
     if native_identity is None:
@@ -810,6 +815,15 @@ def _native_identity_cache() -> NativeIdentityCache:
     return cache
 
 
+def _native_media_cache() -> NativeIdentityCache:
+    attribute = "_superlily_native_media_cache_v1"
+    cache = getattr(nonebot_message, attribute, None)
+    if cache is None:
+        cache = NativeIdentityCache(max_entries=512)
+        setattr(nonebot_message, attribute, cache)
+    return cache
+
+
 def _onebot_conversation(raw: dict[str, Any]) -> dict[str, str]:
     if raw.get("group_id") is not None:
         return {"id": str(raw["group_id"]), "type": "group"}
@@ -896,6 +910,10 @@ if not getattr(nonebot_message, _NATIVE_IDENTITY_HOOK_ATTR, False):
                 return
             conv = _onebot_conversation(raw)
             identity = native_message_identity(raw, event)
+            _native_media_cache().put(
+                native_identity_cache_key(conv, raw["message_id"]),
+                capture_image_metadata(raw.get("message")),
+            )
             _native_identity_cache().put(
                 native_identity_cache_key(conv, raw["message_id"]),
                 identity,

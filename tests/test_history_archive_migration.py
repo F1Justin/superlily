@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 REPOSITORY_ROOT = Path(__file__).parents[1]
 PARENT_REVISION = "0024_agent_product_flow"
 ARCHIVE_REVISION = "0025_legacy_history_archive"
-HEAD_REVISION = "0034_qq_media_archive"
+HEAD_REVISION = "0035_export_action_details"
 SQLITE_ARCHIVE_PREFIX = "archive_"
 
 BEHAVIOR_BATCH_ID = "batch-history-behavior-001"

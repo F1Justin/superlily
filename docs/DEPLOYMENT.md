@@ -1383,3 +1383,9 @@ worker 全部取得 Core receipt，最终 pending=0、quarantine=0。没有通�
 的新字段上报，再备份名称表、执行 Alembic downgrade 到 `0026`，最后恢复旧镜像；旧
 Core 不认识数据库中的 0027 revision，不能只换镜像。查询合同与时间语义见
 [`NAME_HISTORY.md`](NAME_HISTORY.md)。
+
+
+## 2026-09-27 ChatExporter QQ 动作与媒体修复
+
+已部署贴表情方向采集、媒体元数据保留、归档视图与 Nitori 导出修复。
+验证、边界及回退见 [部署记录](CHATEXPORTER_DEPLOYMENT_20260927.md)。

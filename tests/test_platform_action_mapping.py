@@ -88,8 +88,8 @@ def test_real_napcat_reaction_is_factual_observed_state(path: Path) -> None:
     event = build(load_module(path), real_reaction())
 
     assert event.capture is not None
-    assert event.capture.status == "complete"
-    assert event.capture.sanitizer_version == "onebot-v11-actions-v2"
+    assert event.capture.status == "partial"
+    assert event.capture.sanitizer_version == "onebot-v11-actions-v3"
     assert event.source_event_id.startswith("qq:action:v1:")
     assert len(event.actions) == 1
     action = event.actions[0]
@@ -654,3 +654,24 @@ async def test_both_bridge_payloads_persist_as_distinct_observations(client, app
         assert {action.actor_principal_id for action in actions} == {"1287260950"}
         assert {action.target_platform_message_id for action in actions} == {"1822167647"}
         assert len({action.observer_instance_id for action in actions}) == 2
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+@pytest.mark.parametrize("is_add,count,operation", [(True, 1, "add"), (False, 0, "remove"), (False, 2, "remove")])
+def test_reaction_preserves_explicit_direction_even_with_nonzero_count(path, is_add, count, operation):
+    module = load_module(path)
+    raw = real_reaction(is_add=is_add, likes=[{"emoji_id": "212", "count": count}])
+    event = build(module, raw)
+    assert event.actions[0].operation == operation
+    assert event.capture.status == "complete"
+    assert "raw.is_add" not in event.capture.omitted_fields
+    inverse = build(module, {**raw, "is_add": not is_add})
+    assert event.source_event_id != inverse.source_event_id
+
+
+@pytest.mark.parametrize("path", ACTION_PATHS)
+@pytest.mark.parametrize("value", [None, "false", 0, 1])
+def test_reaction_does_not_guess_direction_from_invalid_values(path, value):
+    event = build(load_module(path), real_reaction(is_add=value))
+    assert event.actions[0].operation == "observed_state"
+    assert event.actions[0].capture_status == "partial"
