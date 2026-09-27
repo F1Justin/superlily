@@ -1,6 +1,6 @@
 # ChatExporter QQ 动作与媒体修复（2026-09-27）
 
-已部署到 Nitori `/Users/justin/0Projects/chatExpoter`，当前提交 `19e6116`，
+已部署到 Nitori `/Users/justin/0Projects/chatExpoter`，当前提交 `f318231`，
 分支 `codex/actions-media-export`。Core 归档迁移为 `0035_export_action_details`。
 
 ## 最终行为
@@ -64,3 +64,23 @@ Nekro 插件的 __init__/platform_actions 文件，依次受控重启桥接。�
 为未引用文件。使用当前带迁移的 Core 镜像执行 `alembic downgrade 0034_qq_media_archive`，
 随后将 `deploy-lily-core:before-chatexporter-20260927` 标回 `deploy-lily-core:latest` 并
 仅重建 Core。迁移只修改视图，不删除历史数据；无需覆盖数据库或 spool。
+
+
+## 2 月旧历史跨来源合并
+
+Nitori 提交 `f318231` 补齐旧 Lily/Nekro 历史记录的展示合并。仅对同群、同实际平台
+发送者、规范化消息段相同、相差不超过一秒且双向唯一的候选合并；相同来源重复、
+有歧义的匹配、无法核对媒体身份的图片均保留。Nekro 内部用户编号使用归档中实际
+platform_userid/sender_nickname 呈现。采用短滑动窗口，保留已输出的邻近候选作为
+歧义证据，避免分页/秒边界及 A(0), B(1), A(2) 场景错误合并。页脚显示合并数，
+完整模式保留两路记录 ID、消息 ID 和时间；--all-sources 不合并。
+
+实测用户提供的 2026-02-21 21:00–21:29：211 条（Lily 101、Nekro 110）合并为
+114 条，97 对跨来源候选合并；完整来源仍为 211 条。一组机器人图片没有可靠的
+可比对标识，以及同源重复戳一戳，继续保留。35 项测试在 Nitori 通过；9 月导出
+正文逐字一致，仍为 1881 条。未修改数据库、未重启服务。
+
+新文件在 Nitori Downloads：`第二桃花源_20260221_210000_去重版.txt` 和
+`第二桃花源_20260221_210000_完整来源.txt`。本机副本及证据位于
+`run/chatexporter-feb-20260927/`。本次回退只需恢复 Nitori 的 `19e6116`；备份为
+`/Users/justin/.local/state/chat-exporter/backups/before-legacy-20260927.bundle`。
