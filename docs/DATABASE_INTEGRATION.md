@@ -8,8 +8,10 @@
 
 QQ 名称历史使用 `archive.identity_name_timeline_v1` 与
 `archive.conversation_name_timeline_v1`；字段语义和按 QQ 号查询见
-[`NAME_HISTORY.md`](NAME_HISTORY.md)。这两个视图不是 ChatExporter 接口，未授予
-`chat_exporter` 角色。
+[`NAME_HISTORY.md`](NAME_HISTORY.md)。2026-09-27 的 `0036_export_catalog` 向
+`chat_exporter` 增授 `identity_name_timeline_v1` 和 `conversation_catalog_v1` 的
+SELECT，用于补齐昵称和快速会话目录；群名称历史视图仍未直接授予，底层表仍不可读。
+部署验证见 [`CHATEXPORTER_DEPLOYMENT_20260927.md`](CHATEXPORTER_DEPLOYMENT_20260927.md)。
 
 本文面向需要读取 Superlily 数据，或把服务、Provider、机器人桥接器和脚本接入 Core 的开发者。它说明当前数据库的部署方式、数据边界和安全接入路径，但不替代协议与迁移本身：
 

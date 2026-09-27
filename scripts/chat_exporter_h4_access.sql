@@ -23,7 +23,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA archive
 
 GRANT USAGE ON SCHEMA archive TO chat_exporter;
 GRANT SELECT ON archive.message_timeline_v2,
-                archive.conversation_mappings
+                archive.conversation_mappings,
+                archive.conversation_catalog_v1,
+                archive.identity_name_timeline_v1
 TO chat_exporter;
 
 SELECT

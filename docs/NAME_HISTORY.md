@@ -1,7 +1,9 @@
 # QQ 名称观测历史
 
 `0027_name_observation_history` 将名称作为带来源的观测事实保存，而不是从消息表临时猜测。
-它不修改 ChatExporter，也不向 ChatExporter 的只读角色授予新对象。
+名称历史最初独立于 ChatExporter 部署。2026-09-27 的 `0036_export_catalog` 已让
+ChatExporter 读取 `identity_name_timeline_v1` 补齐缺失昵称，并读取
+`conversation_catalog_v1` 获取会话目录与名称；不直接读取底层名称观察表。
 
 ## 语义
 

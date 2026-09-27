@@ -1,7 +1,7 @@
 # ChatExporter QQ 动作与媒体修复（2026-09-27）
 
-已部署到 Nitori `/Users/justin/0Projects/chatExpoter`，当前提交 `f318231`，
-分支 `codex/actions-media-export`。Core 归档迁移为 `0035_export_action_details`。
+已部署到 Nitori `/Users/justin/0Projects/chatExpoter`，当前提交 `93bf68d`，
+分支 `codex/actions-media-export`。Core 归档迁移为 `0036_export_catalog`。
 
 ## 最终行为
 
@@ -45,8 +45,7 @@ Core ready 为 database=ok。两者 reporter/spool worker 均 running、pending=
 新 Nekro 图片已保留原始 sub_type。取消方向的接收/持久化由测试覆盖，验收时未观察到
 上线后的真实取消通知。旧记录缺失的方向不回填猜测。
 
-导出账号仍仅对 `archive.message_timeline_v2` 和 `archive.conversation_mappings`
-具有 SELECT 权限。服务恢复证据不等同于证明重启窗口的每一条历史消息都已完整补齐。
+动作与媒体部署阶段仅授权时间线与映射；目录改进增授的只读视图见下文。服务恢复证据不等同于证明重启窗口的每一条历史消息都已完整补齐。
 
 ## 产物与回退
 
@@ -84,3 +83,40 @@ platform_userid/sender_nickname 呈现。采用短滑动窗口，保留已输出
 `第二桃花源_20260221_210000_完整来源.txt`。本机副本及证据位于
 `run/chatexporter-feb-20260927/`。本次回退只需恢复 Nitori 的 `19e6116`；备份为
 `/Users/justin/.local/state/chat-exporter/backups/before-legacy-20260927.bundle`。
+
+
+## 昵称与快速会话目录
+
+Nitori 提交 `93bf68d` 使用已保存的昵称呈现旧 Nekro 系统撤回，区分原作者与管理员。
+仅处理已识别为系统发送者的 Nekro 归档行，不改写普通用户引用的同类文字。旧通知未
+保存目标消息 ID 时明确注明无法关联原文，不按时间邻近猜测。新结构化撤回沿用既有
+动作目标关联展示文本与媒体摘要。
+
+窗口内的 Nekro 昵称查询同时规范化 `platform_userid/sender_nickname`，与消息导出
+一致；缺失昵称从群内名称历史补齐。优先截止时间之前的记录，只有后期记录时显式
+标注“后期记录昵称”。手工别名继续优先。
+
+`0036_export_catalog` 新增 `archive.conversation_catalog_v1`，合并历史映射、名称
+观察、采集配置及群目录快照，不扫描消息正文、不统计全量消息数。刷新后的本地
+缓存包含会话名、未知计数（null）；兼容旧计数缓存。任一查询失败保留旧缓存，成功后
+原子替换。目录名称用于群聊/私聊选择和搜索，别名优先。
+
+Nitori 已安装版本端到端刷新实测 **1.209 秒**，140 个群聊、56 个私聊；数据库目录
+聚合实测 0.448 秒。导出账号增授 `conversation_catalog_v1` 与
+`identity_name_timeline_v1` SELECT；底层名称表和原始消息表仍不可读。
+
+二月样本仍为 114 条，三条撤回显示“潜水王”“潜水王”“安定”，保留无法关联内容
+说明。新文件 `第二桃花源_20260221_210000_昵称撤回修复版.txt` 已写入 Nitori Downloads，
+本机副本、计时及部署日志位于 `run/chatexporter-catalog-20260927/`。Nitori 39 项测试
+通过；独立 PostgreSQL/SQLite 迁移与归档 6 项通过，新增目录/只读权限测试通过。
+
+Core 镜像 `sha256:cca1c909ec017f883178ce48d206493371aa8cfc6b9c5fd8543eb6036dfed223`
+仅增添迁移文件；迁移成功后只重建 Core，readiness 为 status=ok/database=ok。
+本轮没有重启桥接、数据库或 NapCat。
+
+本轮回退：先恢复 Nitori 到 `f318231` 和备份的 conversations.json，再用当前 Core
+镜像降级到 `0035_export_action_details`，恢复镜像
+`deploy-lily-core:before-export-catalog-20260927` 并只重建 Core。Nitori bundle 为
+`~/.local/state/chat-exporter/backups/before-catalog-20260927.bundle`，缓存备份为同目录
+`conversations-before-catalog.json`。迁移仅删除新目录视图和撤销新增名称视图权限，
+不删除历史消息和名称观察。
