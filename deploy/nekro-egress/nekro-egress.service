@@ -1,0 +1,13 @@
+[Unit]
+Description=Nekro API egress health and rotation
+After=network-online.target docker.service clash-verge-service.service
+Wants=network-online.target
+[Service]
+User=justin
+Environment=NEKRO_EGRESS_TOKEN_FILE=/home/justin/superlily/deploy/nekro-egress/control.token
+Environment=NEKRO_EGRESS_STATE_FILE=/home/justin/nekro-egress-state.json
+ExecStart=/usr/bin/python3 /home/justin/superlily/deploy/nekro-egress/manager.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

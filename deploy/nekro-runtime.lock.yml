@@ -2,34 +2,25 @@ schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
 branch: superlily/runtime-v2.3.3
-commit: 3254ed24b556108f1030341bd4216e6ce426c918
-source_tree: a2c28f93ac4e6aecf6df0bb512bc9bb765308e79
-image_revision: 396e82a62d4ef10a9f580ff7ab799e34032c9e35
+commit: a284d80d8279c1e3282fb0bba129db5edf055ef5
+source_tree: 27c3af31d1d74f4e48936becc36d62ba8ebe445a
+image_revision: a284d80d8279c1e3282fb0bba129db5edf055ef5
 tag: null
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
-  id: sha256:5da3568727beb7f0d25baeef6847357818b1c4acfc0e79604513523db94327ad
+  tag: superlily/nekro-agent:2.3.3-superlily.13-egress.1
+  id: sha256:0272d2900ddf7049342a0a47729c4998f1dad529222d3232a290a53ef28971fd
 local_patch:
-  kind: qq-native-audio-plus-reference-transcript
-  base_image_id: sha256:df3a01581b7071939cea84e56f69fcc789314c58b964c7e08ed7ec16d98d3062
-  base_image_tag: superlily/nekro-agent:2.3.3-superlily.11-r2.1
-  dockerfile: deploy/Dockerfile.nekro-qq-voice
-  source_state: committed source; exact deployed overlay files below
+  kind: nekro-api-egress-rotation
+  base_image_tag: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
+  dockerfile: deploy/nekro-egress/Dockerfile
   files:
-    nekro_agent/adapters/interface/collector.py: 0fd1632989509c7d695c531993c556beb1959e9a3bc37191f700cefb2adcef46
-    nekro_agent/adapters/interface/schemas/extra.py: 48934f12afb6977dd72fab37734dc6eb3ec05a8c31a70f31ee84be5953b83044
-    nekro_agent/adapters/onebot_v11/adapter.py: 25e2c650a30cd2b502d80e7bf7646338f4df3b4ea74fc50951568fa97e1b8830
-    nekro_agent/adapters/onebot_v11/matchers/message.py: 5b6e1216cc6e60628a068fc1104b1f2550468be1619b00c44cf8a9be6e1143cd
-    nekro_agent/adapters/onebot_v11/tools/voice.py: 1f470a88d10de470194bb54d68a35c4eaf28dc2f9e18a714479ad88b7d955cb7
-    nekro_agent/services/message_service.py: 3b663c1c326192cd8cb31b16b80926afa90c48443ad0e70dcbc5259532ba4843
-    nekro_agent/core/config.py: 8edad9b6fb4d5fe0df502698d5f3bdd8e591fa65d1a8f84e4d9fde143c4c2e27
-    nekro_agent/services/agent/openai.py: 1a4367404c94e2ac8af83709659cf67e10bfac157d02f84369035c514a5c8d6f
-    nekro_agent/services/agent/templates/history.py: 6a477b5a95ea5157553d26f671505d90573eb0a4d6c68fbd5db8c6b5ed8d8c0b
-    nekro_agent/services/agent/templates/audio.py: e1f3e50fe77a80d85cb1b606af0d8a891c2eb711e0122da99c9b1b58ab72b2d5
+    nekro_agent/services/agent/run_agent.py: aec106c0480f1945a111e9bd0b4d28e3ea78b76c443c459b93de59d764d3d6c7
+    nekro_agent/services/agent/egress_client.py: 2a1dc723d0d914d613153c929cb412ebe3cabe92c20cb746e81961b002ba94a2
+    nekro_agent/services/agent/openai.py: 96d11961bf689ac44bb3c213df89917075b81e8b1017b597f5e63191ea68947e
 deployment:
   date: '2026-09-19'
   scope: r2-stages-1-and-2-plus-qq-voice-input
@@ -53,7 +44,14 @@ deployment:
   voice_scope: all-enabled-onebot-conversations
   audio_context: same-message-window-as-text
   audio_total_max_seconds: 960
-legacy_overlay_release: nekro-startup-permissions-production-20260828
+  egress:
+    date: '2026-10-02'
+    record: deploy/nekro-egress/README.md
+    model_fallback: false
+    candidates: 16
+    cooldown_seconds: 600
+    health_interval_seconds: 30
+legacy_overlay_release: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
 napcat:
   version: 4.18.28
   image: mlikiowa/napcat-docker:v4.18.28@sha256:2cc70b45244ae3fabc657ffc3aaa4de8fb893518171e519659ab83d80e6d36b5
