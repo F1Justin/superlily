@@ -1,26 +1,30 @@
 schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
-branch: codex/fix-onebot-attachment-identity
-commit: 503cf53d47adb61b9d9f1b34c247eb61e4c593b0
-source_tree: 23b18aac48863eb8e9a30744639c49e0c4a3223f
-image_revision: 503cf53d47adb61b9d9f1b34c247eb61e4c593b0
+branch: codex/deepseek-search-pilot
+commit: 28034f82f5d8e4551a13e974e70c3d992fcd865e
+source_tree: 2e62f24bec7c255e03c2519319fd72a88ccf91f2
+image_revision: 28034f82f5d8e4551a13e974e70c3d992fcd865e
 tag: null
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.15-attachment-identity.1
-  id: sha256:84d63e6771c7b4fa4559d06c6d40c0f449fc11f6df4b81456c940d4ef4706b1c
+  tag: superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.1
+  id: sha256:28f90d4a78c08c9d38d1f2b2d8be1ddb273bef3cc1fbe948130670fb38f6a15c
 local_patch:
-  kind: onebot-attachment-identity
-  base_image_tag: superlily/nekro-agent:2.3.3-superlily.14-argon-cache.1
-  dockerfile: docker/attachment-identity.Dockerfile
+  kind: deepseek-search-pilot
+  base_image_tag: superlily/nekro-agent:2.3.3-superlily.15-attachment-identity.1
+  dockerfile: docker/deepseek-search.Dockerfile
   files:
-    nekro_agent/adapters/onebot_v11/tools/attachments.py: d483afa248af7e64b9da30e4c1b9666863b66f7e774c5af06442a6aaf9806095
-    nekro_agent/adapters/onebot_v11/tools/convertor.py: 4837caac794460d7e4b52e756f89d08fec14550f89b968868d2a5eafe6b59842
-    nekro_agent/adapters/onebot_v11/matchers/message.py: 980f3b697c51bfb2664b810ec6ae5e06a98399f8ebae7753d3811b5101b71365
+    nekro_agent/services/agent/deepseek_search.py: d0892650a1e73d0f6b77030efa08e4575963112b6e86241680fe4eead34247b6
+    nekro_agent/services/plugin/base.py: 95de67cfa6f922f2a16a65feb4aef0f86959c720eb04c07884017e226156bb9d
+    nekro_agent/services/plugin/schema.py: 65c100487b100ebad9e088ee62db84b7e47394e6fdd0f58da08cb0e2b2dd15d7
+    nekro_agent/services/rpc_service.py: c6ee75490eb4d3ff9c6dba3c79db7e0ade73da4da6e55f33f36f726837184f57
+    nekro_agent/services/sandbox/rpc_grants.py: 838dccc385e89d4732eec9d0ee46ba4aaff795f720a1b7cb4a4110c93bd93e04
+    nekro_agent/services/sandbox/runner.py: d16f28516ec32c2e694ef01a8eec5d9e77c94da7c184970dc012dbfe458ac3e0
+    plugins/builtin/deepseek_search.py: 7d838094fba94f646cb715360e5ab66b3c2dbe02ad2c4a810eedd6bb7d54ba93
 deployment:
   date: '2026-09-19'
   scope: r2-stages-1-and-2-plus-qq-voice-input
@@ -57,6 +61,16 @@ deployment:
     rollback_backup: /home/justin/nekro/backups/attachment-incident-20261020
     tests: 117 passed, 1 skipped; isolated replay of actual incident files; sandbox
       UID 65534 read verified
+  deepseek_search:
+    date: '2026-10-20'
+    scope:
+    - onebot_v11-group_861651713
+    record: docs/DEEPSEEK_SEARCH_PILOT_20261020.md
+    rollback_backup: /home/justin/nekro/backups/deepseek-search-20261020
+    model: deepseek-flash
+    searches_per_task: 1
+    daily_limit: 100
+    openrouter_search_enabled: false
 legacy_overlay_release: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
 napcat:
   version: 4.18.28
