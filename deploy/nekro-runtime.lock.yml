@@ -2,17 +2,17 @@ schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
 branch: codex/deepseek-search-pilot
-commit: c40b75835c53da32e6c3626b5ea42befbfd85476
-source_tree: 63feca7d13faceb2bb807f459cd2ddc1d402d046
-image_revision: c40b75835c53da32e6c3626b5ea42befbfd85476
+commit: de5fbaae012c4a4a1c431b0ae8b9dcaa1e8f9a73
+source_tree: 9bf43b39db821d8a28d2717fc4575cf0f0525b02
+image_revision: de5fbaae012c4a4a1c431b0ae8b9dcaa1e8f9a73
 tag: null
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.2
-  id: sha256:fd30d9278183ceccacc2355a4781a86a773cf8d01fc39fcd6dc615c8f865735a
+  tag: superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.3
+  id: sha256:bfb6943012e46a931ba6a6e45b4c3d60ce1214915ec9fc95fc20e9c9afcae1d1
 local_patch:
   kind: deepseek-search-pilot
   base_image_tag: superlily/nekro-agent:2.3.3-superlily.15-attachment-identity.1
@@ -24,7 +24,7 @@ local_patch:
     nekro_agent/services/rpc_service.py: c6ee75490eb4d3ff9c6dba3c79db7e0ade73da4da6e55f33f36f726837184f57
     nekro_agent/services/sandbox/rpc_grants.py: 838dccc385e89d4732eec9d0ee46ba4aaff795f720a1b7cb4a4110c93bd93e04
     nekro_agent/services/sandbox/runner.py: d16f28516ec32c2e694ef01a8eec5d9e77c94da7c184970dc012dbfe458ac3e0
-    plugins/builtin/deepseek_search.py: 7d838094fba94f646cb715360e5ab66b3c2dbe02ad2c4a810eedd6bb7d54ba93
+    plugins/builtin/deepseek_search.py: ae0af7c976960a19a8f0659bf8a7208ba84c4a62d83dc8032a667aa8d8d98c87
 deployment:
   date: '2026-09-19'
   scope: r2-stages-1-and-2-plus-qq-voice-input
@@ -73,6 +73,7 @@ deployment:
     openrouter_search_enabled: false
     digest_prompt: 根据搜索结果回答search query的内容，100字以内回复
     digest_format: plain-text
+    console_output: DS answer and one usage line
 legacy_overlay_release: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
 napcat:
   version: 4.18.28

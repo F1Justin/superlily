@@ -18,7 +18,8 @@
 - 每任务最多搜索一次，每日最多 100 次尝试（UTC+8 日期）；启动即预留额度，失败不自动重试。
   任务去重为进程内状态，重启会清空；每日额度来自持久使用记录，重启不重置。
 - 搜索摘要只留在当前循环的临时上下文，不生成系统聊天记录或 Core 世界事实。
-  执行记录、诊断文件只保留费用、token、耗时、来源 URL 等观测信息。最终发送的回复
+  执行记录、诊断文件按用户要求显示 DS 回复正文与一行耗时、token、费用估算；
+  原始网页内容不保存，完整性能元数据另留使用账本。最终发送的回复
   仍遵循普通聊天档案语义。已有管理员开启的 prompt/debug 日志属于另外的诊断存储；
   当前生产 `SAVE_PROMPTS_LOG=false`。
 - 调用时再次检查会话范围；其他群与私聊既无方法签名，也无法通过 RPC 绕过范围。
@@ -27,9 +28,10 @@
 ## 网页观测
 
 Nekro WebUI → **沙盒日志** → 搜索 `deepseek_search` 或桃花源的 chat key → 点击记录展开。
-“执行代码”显示查询；“执行结果”显示 **DeepSeek 搜索与整理**，含状态、结果数、搜索与
-总耗时、DS token、公开价费用估算、来源 URL、任务关联标识和失败类型。
-该页既有模型性能信息仍表示莉莉模型的调用，不把 DS 估算冒充供应商账单或合入既有成本字段。
+“执行代码”显示查询；“执行结果”显示 DS 回复正文，空行后只保留一行：
+`耗时 … ms ｜ Token 输入/输出（入/出）｜ 费用估算 $…–$…`。
+不显示说明文字、状态清单或 JSON。完整元数据留在后台使用账本。
+该页既有模型性能信息仍表示莉莉模型的调用，DS 费用显示为估算。
 
 隔离测试记录 84887、84888、84890、84891、84892（搜索），84893（续答预览）
 均标记为 `DS搜索隔离测试`。这些记录不表示已发 QQ；试点的正常消息仍照常发送。
@@ -77,9 +79,9 @@ DS 没有返回实际美元扣费，所以其数字是公开价估算。失败�
 
 ## 部署、恢复与回滚
 
-- Runtime commit：`c40b75835c53da32e6c3626b5ea42befbfd85476`。
-- 镜像：`superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.2`。
-- Image ID：`sha256:fd30d9278183ceccacc2355a4781a86a773cf8d01fc39fcd6dc615c8f865735a`。
+- Runtime commit：`de5fbaae012c4a4a1c431b0ae8b9dcaa1e8f9a73`。
+- 镜像：`superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.3`。
+- Image ID：`sha256:bfb6943012e46a931ba6a6e45b4c3d60ce1214915ec9fc95fc20e9c9afcae1d1`。
 - Compose 与来源锁见 `deploy/nekro-compose.override.yml`、`deploy/nekro-runtime.lock.yml`。
 - 生产 `/api/health` 返回 `{"ok":true}`，容器 healthy；22:04:37 OneBot 重连，后续普通
   消息持续入库。84894 是部署后的普通群回复执行记录。部署后未主动发送测试群消息。
