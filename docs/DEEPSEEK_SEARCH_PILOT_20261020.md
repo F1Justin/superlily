@@ -11,8 +11,10 @@
   `need_content=false`，不调用 Fetch，不自动重试或升级搜索。
 - 只把独立查询、当前日期与每条最多 1200 字符的资料交给 `deepseek-flash`。
   整理关闭 thinking、最多 800 output tokens；不发送人格或群聊历史给 DS。
-- 验证 JSON、结束状态和引用编号；截断、无效引用或服务失败时返回未核实，
-  不将不完整归纳当作确定答案。搜索和整理总超时 40 秒。
+  按用户指定使用固定提示词：`根据搜索结果回答search query的内容，100字以内回复`。
+  整理结果以纯文本直接交给莉莉；来源 URL 留在管理观测记录中。
+- 验证结束状态与非空内容；截断或服务失败时返回未核实。
+  搜索和整理总超时 40 秒。
 - 每任务最多搜索一次，每日最多 100 次尝试（UTC+8 日期）；启动即预留额度，失败不自动重试。
   任务去重为进程内状态，重启会清空；每日额度来自持久使用记录，重启不重置。
 - 搜索摘要只留在当前循环的临时上下文，不生成系统聊天记录或 Core 世界事实。
@@ -35,14 +37,16 @@ Nekro WebUI → **沙盒日志** → 搜索 `deepseek_search` 或桃花源的 ch
 
 ## 验证与费用
 
-Runtime `poe lint`、插件显式 lint、`poe typecheck` 通过；完整测试 **162 passed, 1 skipped**。
+首次部署 Runtime `poe lint`、插件显式 lint、`poe typecheck` 通过；完整测试 **162 passed, 1 skipped**。
 测试覆盖会话权限、任务及日额度、零结果不调用整理、材料截断、引用越界、整理截断、
 费用计算、临时结果不生成系统历史及不泄漏到执行/诊断正文。
+当前短提示词版本已移除 JSON 格式及引用编号校验，lint、typecheck 与调整后的 10 项搜索测试通过。
 
 真实搜索与整理对 API 价格、Python 发布、东方锦上京发售及不存在的型号查询进行了小样本检查。
 无法核实的型号查询没有被当成已发布的事实。小样本不替代全量准确率评测。
 
-使用当前人格、模型组 `openrouter-taohuayuan` / `google/gemini-3-flash-preview`，
+以下是首版结构化整理格式的费用与回放记录，不代表当前短提示词的费用。
+使用当时人格、模型组 `openrouter-taohuayuan` / `google/gemini-3-flash-preview`，
 追加合成请求到生产当前最近 16 条历史（含一张图片）的隔离回放中，两条明确搜索请求
 调用了研究工具，道谢请求没有搜索。随后另用原生 `run_agent` 循环验证，
 仅在最终投递处截留预览，真实沙盒 RPC 和 DS 调用均执行：
@@ -73,9 +77,9 @@ DS 没有返回实际美元扣费，所以其数字是公开价估算。失败�
 
 ## 部署、恢复与回滚
 
-- Runtime commit：`28034f82f5d8e4551a13e974e70c3d992fcd865e`。
-- 镜像：`superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.1`。
-- Image ID：`sha256:28f90d4a78c08c9d38d1f2b2d8be1ddb273bef3cc1fbe948130670fb38f6a15c`。
+- Runtime commit：`c40b75835c53da32e6c3626b5ea42befbfd85476`。
+- 镜像：`superlily/nekro-agent:2.3.3-superlily.16-deepseek-search.2`。
+- Image ID：`sha256:fd30d9278183ceccacc2355a4781a86a773cf8d01fc39fcd6dc615c8f865735a`。
 - Compose 与来源锁见 `deploy/nekro-compose.override.yml`、`deploy/nekro-runtime.lock.yml`。
 - 生产 `/api/health` 返回 `{"ok":true}`，容器 healthy；22:04:37 OneBot 重连，后续普通
   消息持续入库。84894 是部署后的普通群回复执行记录。部署后未主动发送测试群消息。
