@@ -1,26 +1,26 @@
 schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
-branch: superlily/runtime-v2.3.3
-commit: a284d80d8279c1e3282fb0bba129db5edf055ef5
-source_tree: 27c3af31d1d74f4e48936becc36d62ba8ebe445a
-image_revision: a284d80d8279c1e3282fb0bba129db5edf055ef5
+branch: codex/fix-onebot-attachment-identity
+commit: 503cf53d47adb61b9d9f1b34c247eb61e4c593b0
+source_tree: 23b18aac48863eb8e9a30744639c49e0c4a3223f
+image_revision: 503cf53d47adb61b9d9f1b34c247eb61e4c593b0
 tag: null
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.13-egress.1
-  id: sha256:0272d2900ddf7049342a0a47729c4998f1dad529222d3232a290a53ef28971fd
+  tag: superlily/nekro-agent:2.3.3-superlily.15-attachment-identity.1
+  id: sha256:84d63e6771c7b4fa4559d06c6d40c0f449fc11f6df4b81456c940d4ef4706b1c
 local_patch:
-  kind: nekro-api-egress-rotation
-  base_image_tag: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
-  dockerfile: deploy/nekro-egress/Dockerfile
+  kind: onebot-attachment-identity
+  base_image_tag: superlily/nekro-agent:2.3.3-superlily.14-argon-cache.1
+  dockerfile: docker/attachment-identity.Dockerfile
   files:
-    nekro_agent/services/agent/run_agent.py: aec106c0480f1945a111e9bd0b4d28e3ea78b76c443c459b93de59d764d3d6c7
-    nekro_agent/services/agent/egress_client.py: 2a1dc723d0d914d613153c929cb412ebe3cabe92c20cb746e81961b002ba94a2
-    nekro_agent/services/agent/openai.py: 96d11961bf689ac44bb3c213df89917075b81e8b1017b597f5e63191ea68947e
+    nekro_agent/adapters/onebot_v11/tools/attachments.py: d483afa248af7e64b9da30e4c1b9666863b66f7e774c5af06442a6aaf9806095
+    nekro_agent/adapters/onebot_v11/tools/convertor.py: 4837caac794460d7e4b52e756f89d08fec14550f89b968868d2a5eafe6b59842
+    nekro_agent/adapters/onebot_v11/matchers/message.py: 980f3b697c51bfb2664b810ec6ae5e06a98399f8ebae7753d3811b5101b71365
 deployment:
   date: '2026-09-19'
   scope: r2-stages-1-and-2-plus-qq-voice-input
@@ -51,6 +51,12 @@ deployment:
     candidates: 16
     cooldown_seconds: 600
     health_interval_seconds: 30
+  attachment_identity:
+    date: '2026-10-20'
+    record: docs/NEKRO_ATTACHMENT_INCIDENT_20261020.md
+    rollback_backup: /home/justin/nekro/backups/attachment-incident-20261020
+    tests: 117 passed, 1 skipped; isolated replay of actual incident files; sandbox
+      UID 65534 read verified
 legacy_overlay_release: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
 napcat:
   version: 4.18.28

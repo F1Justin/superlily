@@ -1,11 +1,11 @@
 services:
   nekro_agent:
-    image: superlily/nekro-agent:2.3.3-superlily.14-argon-cache.1
+    image: superlily/nekro-agent:2.3.3-superlily.15-attachment-identity.1
     build:
       context: /home/justin/SuperLily-Nekro-Runtime
-      dockerfile: /home/justin/SuperLily-Nekro-Runtime/docker/argon-cache.Dockerfile
+      dockerfile: /home/justin/SuperLily-Nekro-Runtime/docker/attachment-identity.Dockerfile
       args:
-        VCS_REF: d0440045c57bfd84306cde44cae2461bee5e8b2e
+        VCS_REF: 503cf53d47adb61b9d9f1b34c247eb61e4c593b0
     networks:
     - nekro_network
     - superlily_bus
