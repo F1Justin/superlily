@@ -104,11 +104,11 @@ def split_inline_content(
     value: str,
     *,
     markdown_lite: bool = False,
-) -> tuple[tuple[Literal["text", "math", "strong"], str], ...]:
-    r"""Split reviewed inline content into text, math, and optional strong runs.
+) -> tuple[tuple[Literal["text", "math", "strong", "code"], str], ...]:
+    r"""Split reviewed inline content into text, math, strong, and code runs.
 
-    RenderDocument 1.2 deliberately recognizes only paired ``**strong**``
-    markers. Block Markdown, raw HTML, links, images, and nested emphasis remain
+    Markdown-lite recognizes paired strong markers and backtick code spans.
+    Block Markdown, raw HTML, links, images, and nested emphasis remain
     ordinary escaped text. Unmatched or empty markers are also literal text so
     a cosmetic model mistake cannot fail the whole render request.
     """
@@ -146,10 +146,23 @@ def split_inline_content(
             closing += 1
         return None
 
-    segments: list[tuple[Literal["text", "math", "strong"], str]] = []
+    segments: list[tuple[Literal["text", "math", "strong", "code"], str]] = []
     text: list[str] = []
     index = 0
     while index < len(value):
+        if value[index] == "`":
+            end = index + 1
+            while end < len(value) and value[end] == "`":
+                end += 1
+            marker = value[index:end]
+            closing = value.find(marker, end)
+            if closing > end:
+                if text:
+                    segments.append(("text", "".join(text)))
+                    text = []
+                segments.append(("code", value[end:closing]))
+                index = closing + len(marker)
+                continue
         if value[index : index + 2] == r"\$":
             text.append("$")
             index += 2

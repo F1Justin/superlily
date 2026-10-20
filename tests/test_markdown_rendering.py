@@ -20,6 +20,42 @@ def _payload(markdown: str) -> MarkdownDocumentIn:
     )
 
 
+def test_code_regions_keep_language_indentation_and_literal_tex() -> None:
+    document = markdown_to_render_document(_payload(
+        "执行 `notepad $PROFILE`。\n\n```powershell\n"
+        "$env:CHECK = 'Off'\n\n    \\input{secret}\n```"
+    ))
+    source = document_latex(document)
+    assert r"\begin{tcolorbox}" in source
+    assert r",title={powershell}" in source
+    assert r"\hspace*{4\fontdimen2\font}" in source
+    assert r"\strut\par" in source
+    assert r"\input{secret}" not in source
+    assert r"\ttfamily\small notepad \$PROFILE" in source
+    assert "`notepad" not in source
+
+
+@pytest.mark.parametrize("blank", ["___", r"\_\_\_", "______"])
+def test_fill_blanks_are_continuous_rules_in_prose(blank: str) -> None:
+    source = document_latex(markdown_to_render_document(_payload(
+        f"答案：{blank}。 **填空：{blank}**\n\n- 填入{blank}。"
+    )))
+    assert source.count(r"\rule[-0.2ex]") == 3
+
+
+def test_fill_blanks_preserve_code_identifiers_and_short_underscores() -> None:
+    source = document_latex(markdown_to_render_document(_payload(
+        "变量 foo___bar，短线 __，代码 `___`。\n\n```python\n___ = 1\n```"
+    )))
+    assert r"\rule[-0.2ex]" not in source
+    assert r"foo\_\_\_bar" in source
+
+
+def test_escaped_fill_blank_in_inline_math_is_a_rule() -> None:
+    source = document_latex(markdown_to_render_document(_payload(r"求 $x=\_\_\_$。")))
+    assert r"\(x=\rule[-0.2ex]{3em}{0.4pt}\)" in source
+
+
 def test_ordinary_markdown_lowers_to_safe_blocks_with_inline_math() -> None:
     document = markdown_to_render_document(
         _payload(

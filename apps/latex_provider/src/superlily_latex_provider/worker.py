@@ -188,17 +188,40 @@ def _escape_text(value: str) -> str:
     return text_latex(value)
 
 
+_FILL_BLANK_RE = re.compile(r"(?<![A-Za-z0-9_\\])(?:\\?_){3,}(?![A-Za-z0-9_])")
+
+
+def _fill_blank_latex(match: re.Match[str]) -> str:
+    width = min(12.0, max(3.0, match.group().count("_") * 0.55))
+    return rf"\rule[-0.2ex]{{{width:g}em}}{{0.4pt}}"
+
+
+def _prose_text_latex(value: str) -> str:
+    parts: list[str] = []
+    start = 0
+    for match in _FILL_BLANK_RE.finditer(value):
+        parts.extend((_escape_text(value[start:match.start()]), _fill_blank_latex(match)))
+        start = match.end()
+    parts.append(_escape_text(value[start:]))
+    return "".join(parts)
+
+
 def _mixed_text_latex(value: str, *, markdown_lite: bool) -> str:
     parts: list[str] = []
     for kind, content in split_inline_content(value, markdown_lite=markdown_lite):
         if kind == "math":
-            parts.append(r"\(" + content + r"\)")
+            parts.append(r"\(" + re.sub(r"(?:\\_){3,}", _fill_blank_latex, content) + r"\)")
+        elif kind == "code":
+            parts.append(
+                r"{\setlength{\fboxsep}{1.5pt}\colorbox{black!4}{\normalfont\ttfamily\small "
+                + _escape_text(content) + "}}"
+            )
         elif kind == "strong":
             parts.append(
                 r"\textbf{" + _mixed_text_latex(content, markdown_lite=False) + "}"
             )
         else:
-            parts.append(_escape_text(content))
+            parts.append(_prose_text_latex(content))
     return "".join(parts)
 
 
@@ -220,9 +243,10 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool, theme_id: str = "defau
     if block.kind in {"text", "paragraph"}:
         return _mixed_text_latex(block.text, markdown_lite=markdown_lite) + "\\par\n"
     if block.kind == "math":
+        latex = re.sub(r"(?:\\_){3,}", _fill_blank_latex, block.latex)
         if block.display:
-            return r"\[\displaystyle " + block.latex + r"\]" + "\n"
-        return r"\(" + block.latex + r"\)\par" + "\n"
+            return r"\[\displaystyle " + latex + r"\]" + "\n"
+        return r"\(" + latex + r"\)\par" + "\n"
     if block.kind == "list":
         environment = "enumerate" if block.ordered else "itemize"
         items = "".join(
@@ -247,15 +271,28 @@ def _leaf_block_latex(block: Any, *, markdown_lite: bool, theme_id: str = "defau
         )
     if isinstance(block, CodeBlock):
         language = (
-            r"{\scriptsize\sffamily " + _escape_text(block.language) + r"}\par "
+            r",title={" + _escape_text(block.language) + "}"
             if block.language
             else ""
         )
+        lines = []
+        for line in block.code.expandtabs(4).split("\n"):
+            indent = len(line) - len(line.lstrip(" "))
+            lines.append(
+                r"\noindent\hspace*{" + str(indent) + r"\fontdimen2\font}"
+                + (_escape_text(line[indent:]) if line[indent:] else r"\strut")
+                + r"\par"
+            )
         return (
-            r"\begingroup\small\ttfamily\raggedright "
+            r"\begin{tcolorbox}[width=\linewidth,colback=black!2,colframe=black!22,"
+            r"boxrule=0.35pt,arc=1pt,left=7pt,right=7pt,top=5pt,bottom=5pt,"
+            r"before skip=0.5em,after skip=0.5em,colbacktitle=black!6,"
+            r"coltitle=black!65,fonttitle=\normalfont\small,"
+            r"fontupper=\small\ttfamily,before upper={\raggedright\setlength{\parskip}{0pt}}"
             + language
-            + _escape_text(block.code)
-            + r"\par\endgroup"
+            + "]\n"
+            + "\n".join(lines)
+            + "\n" + r"\end{tcolorbox}"
             + "\n"
         )
     if isinstance(block, TableBlock):
