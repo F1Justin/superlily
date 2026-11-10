@@ -303,6 +303,7 @@ class HistoryRecovery:
 
     async def work_loop(self):
         while True:
+            progressed = False
             try:
                 for job in self.store.jobs(active_only=True):
                     if not self.report(job):
@@ -317,6 +318,7 @@ class HistoryRecovery:
                             await self.discover(bot, job)
                         else:
                             await self.page(bot, job)
+                            progressed = True
                     except Exception as exc:
                         job["attempts"] += 1
                         job["retry_at"] = time.time() + 60
@@ -327,4 +329,6 @@ class HistoryRecovery:
                         break
             except Exception:
                 logging.getLogger(__name__).exception("history recovery worker iteration failed")
-            await asyncio.sleep(5)
+            # api() already enforces the platform request interval. Only wait
+            # for the idle poll when no page completed in this pass.
+            await asyncio.sleep(0 if progressed else 5)
