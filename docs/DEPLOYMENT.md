@@ -278,6 +278,35 @@ The pre-rollout backup is
 
 ## 7. C0-D durable ingress rollout and rollback
 
+### Collector retention and rejection alerts
+
+Deploy Core with support for `ingress.allow_rebind` before updating either
+bridge. The previous strict request model rejects the new field with HTTP 422.
+After Core is ready, update one bridge, verify a real QQ event reached Core with
+its matching receipt, then update the other. Keep a compatible Core during
+rollback while either spool has pending envelopes containing the new field.
+Preserve both spool databases and the existing sequence bindings.
+
+Expired committed identities are pruned at most 10,000 per minute during
+ordinary traffic. Check both actual allocated file blocks and SQLite's page
+size, page count, freelist count and WAL size. Free SQLite pages are reusable
+inside the main file. The collector checkpoints normally and attempts to
+truncate a WAL larger than 16 MiB only when its lock is immediately available.
+An active reader can delay truncation. Verify again during ordinary writes
+without forcing the reader to disconnect.
+
+On the Core host install `deploy/superlily-ingress-quota.{service,timer}` in
+`~/.config/systemd/user/`, then run `systemctl --user daemon-reload` and
+`systemctl --user enable --now superlily-ingress-quota.timer`. The service reads
+the authenticated ingress status inside the Core container. Its first sample
+establishes each existing collector's baseline. A later increase is appended
+to `~/.local/state/superlily-ingress/alerts.sqlite3` and emitted as an error to
+`journalctl --user -u superlily-ingress-quota.service`. The append-only alert
+history survives a healthy heartbeat and process restarts. Alert IDs allow a
+journal consumer to deduplicate delivery if the process dies after emitting.
+The timer also exposes polling failures in the unit journal.
+
+
 C0-D1 through C0-D3 deployed on 2026-07-18 with bridge `0.4.0`; C0-D4 then
 deployed the same day with bridge `0.5.0`. Core migration head remains
 `0013_collection_reliability`; Lily and Nekro own independent SQLite

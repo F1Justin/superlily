@@ -15,6 +15,9 @@ from typing import Any
 from uuid import uuid4
 
 
+WAL_TRIM_BYTES = 16 * 1024 * 1024
+
+
 class SpoolError(RuntimeError):
     pass
 
@@ -117,6 +120,7 @@ class DurableIngressSpool:
             connection.execute("PRAGMA busy_timeout=2000")
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(f"PRAGMA journal_size_limit={WAL_TRIM_BYTES}")
             connection.execute("PRAGMA foreign_keys=ON")
             quick_check = connection.execute("PRAGMA quick_check").fetchone()
             if quick_check is None or quick_check[0] != "ok":
@@ -550,7 +554,19 @@ class DurableIngressSpool:
             ") ORDER BY identity.sequence LIMIT 10000)",
             (datetime.fromtimestamp(cutoff, timezone.utc).isoformat(),),
         )
-        connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        _, wal_pages, checkpointed = connection.execute(
+            "PRAGMA wal_checkpoint(PASSIVE)"
+        ).fetchone()
+        wal = Path(f"{self.path}-wal")
+        if wal_pages == checkpointed and wal.exists() and wal.stat().st_size > WAL_TRIM_BYTES:
+            # A reader can still hold a snapshot of fully checkpointed pages.
+            # Reclaim the file only if the truncate lock is immediately available.
+            busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+            connection.execute("PRAGMA busy_timeout=0")
+            try:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            finally:
+                connection.execute(f"PRAGMA busy_timeout={busy_timeout}")
         self._last_compact = now
 
     def status(self) -> dict[str, Any]:

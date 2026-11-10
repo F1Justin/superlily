@@ -1,0 +1,9 @@
+[Unit]
+Description=Record Superlily collector quota rejection alerts
+
+[Service]
+Type=oneshot
+UMask=0077
+StateDirectory=superlily-ingress
+ExecStart=/usr/bin/python3 %h/superlily/scripts/check_ingress_quota.py --state %S/superlily-ingress/alerts.sqlite3
+TimeoutStartSec=20

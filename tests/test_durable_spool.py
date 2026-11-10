@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import time
 import types
@@ -134,6 +135,32 @@ def test_spool_survives_restart_and_rejects_identity_reuse(path: Path, tmp_path:
     assert late_payload["ingress"] == pending.payload["ingress"]
     assert reopened.next_pending() is None
     reopened.close()
+
+
+def test_spool_trims_large_wal_without_waiting_for_a_reader(tmp_path):
+    module = load_module(SPOOL_PATHS[0], "spool")
+    database = tmp_path / "wal.sqlite3"
+    spool = module.DurableIngressSpool(str(database))
+    spool.open()
+    connection = spool._require_connection()
+    connection.execute("PRAGMA wal_autocheckpoint=0")
+    connection.execute("CREATE TABLE test_load (data BLOB)")
+    connection.execute("INSERT INTO test_load VALUES (zeroblob(?))", (module.WAL_TRIM_BYTES + 4096,))
+    reader = sqlite3.connect(database)
+    try:
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT length(data) FROM test_load").fetchone()[0] > module.WAL_TRIM_BYTES
+        wal = Path(f"{database}-wal")
+        assert wal.stat().st_size > module.WAL_TRIM_BYTES
+        spool.compact(force=True)
+        assert wal.stat().st_size > module.WAL_TRIM_BYTES
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 2000
+    finally:
+        reader.close()
+    spool.compact(force=True)
+    assert wal.stat().st_size == 0
+    assert spool.append_event(event_payload(), "after-checkpoint").sequence == 1
+    spool.close()
 
 
 async def test_expired_spool_binding_can_replay_without_a_duplicate_observation(client, tmp_path):

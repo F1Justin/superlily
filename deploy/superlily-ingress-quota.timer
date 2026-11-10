@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Superlily collector quota counters
+
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=30s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
