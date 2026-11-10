@@ -318,6 +318,7 @@ class DurableIngressSpool:
                     "sequence": int(identity["sequence"]),
                     "record_sha256": record_sha256,
                     "captured_at": str(identity["captured_at"]),
+                    "allow_rebind": True,
                 }
                 payload.clear()
                 payload.update(full_payload)
@@ -354,6 +355,7 @@ class DurableIngressSpool:
                     "sequence": sequence,
                     "record_sha256": record_sha256,
                     "captured_at": captured_at,
+                    "allow_rebind": True,
                 }
                 payload_json = _canonical_bytes(full_payload).decode("utf-8")
                 if len(payload_json.encode("utf-8")) > self.max_record_bytes:
@@ -538,6 +540,16 @@ class DurableIngressSpool:
             "AND CAST(strftime('%s', committed_at) AS INTEGER) < ?",
             (int(cutoff),),
         )
+        # Pending and quarantined records keep their bindings. Core can
+        # acknowledge an identical replay after a committed binding expires.
+        connection.execute(
+            "DELETE FROM spool_identities WHERE sequence IN ("
+            "SELECT identity.sequence FROM spool_identities AS identity "
+            "WHERE identity.captured_at < ? AND NOT EXISTS ("
+            "SELECT 1 FROM spool_records WHERE sequence = identity.sequence"
+            ") ORDER BY identity.sequence LIMIT 10000)",
+            (datetime.fromtimestamp(cutoff, timezone.utc).isoformat(),),
+        )
         connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
         self._last_compact = now
 
@@ -573,15 +585,15 @@ class DurableIngressSpool:
             pending = counts.get("pending", 0)
             quarantined = counts.get("quarantined", 0)
             quota_rejections = self._meta_int("quota_rejections")
+            last_error = self._get_meta("last_error") or None
             if quarantined or self._meta_int("quarantined_files"):
                 state = "quarantined"
-            elif quota_rejections or live_bytes >= int(self.quota_bytes * 0.9):
+            elif last_error == "spool_quota_exceeded" or live_bytes >= int(self.quota_bytes * 0.9):
                 state = "quota_pressure"
             elif pending:
                 state = "pending"
             else:
                 state = "healthy"
-            last_error = self._get_meta("last_error") or None
             return {
                 "schema_version": "1.0",
                 "enabled": True,

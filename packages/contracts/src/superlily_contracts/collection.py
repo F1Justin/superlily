@@ -22,6 +22,7 @@ class IngressRecordRef(WireModel):
     sequence: int = Field(ge=1)
     record_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     captured_at: AwareDatetime
+    allow_rebind: bool = False
 
     @field_validator("captured_at")
     @classmethod

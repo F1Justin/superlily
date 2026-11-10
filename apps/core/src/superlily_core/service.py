@@ -1660,11 +1660,15 @@ async def _ensure_ingress_receipt_locked(
     )).all())
     ingress = payload.ingress
     legacy_source = observation.metadata_json.get("history_reported_source_event_id", observation.reported_source_event_id)
-    existing = next((item for item in receipts if (
-        (getattr(item, "delivery_source_event_id", None) or legacy_source) == payload.source_event_id
-        or (ingress is not None and item.spool_id == ingress.spool_id
-            and item.collector_sequence == ingress.sequence)
-    )), None)
+    existing = None
+    if ingress is not None:
+        existing = next((item for item in receipts if item.spool_id == ingress.spool_id
+                         and item.collector_sequence == ingress.sequence), None)
+    if existing is None:
+        existing = next((item for item in receipts if (
+            getattr(item, "delivery_source_event_id", None) or legacy_source
+        ) == payload.source_event_id), None)
+    delivery_source_event_id = payload.source_event_id
     history_delivery = (payload.metadata.get("observation_method") == "onebot_history"
                         or observation.metadata_json.get("observation_method") == "onebot_history")
     if existing is None and receipts and not history_delivery:
@@ -1688,15 +1692,25 @@ async def _ensure_ingress_receipt_locked(
             normalized_actual_time = normalized_actual_time.replace(tzinfo=timezone.utc)
         if normalized_expected_time is not None and normalized_expected_time.tzinfo is None:
             normalized_expected_time = normalized_expected_time.replace(tzinfo=timezone.utc)
-        if (*actual[:3], normalized_actual_time) != (
-            *expected[:3],
-            normalized_expected_time,
+        if (*actual[:3], normalized_actual_time) == (*expected[:3], normalized_expected_time):
+            return existing
+        if not (
+            ingress is not None
+            and ingress.allow_rebind
+            and existing.spool_id == ingress.spool_id
+            and existing.collector_sequence is not None
+            and ingress.sequence > existing.collector_sequence
+            and existing.record_sha256 == ingress.record_sha256
+            and normalized_actual_time is not None
+            and normalized_expected_time > normalized_actual_time
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="event replay changed its durable spool binding",
             )
-        return existing
+        # Preserve the original receipt and give this delivery its own sequence.
+        # This also lets the collector advance its contiguous watermark.
+        delivery_source_event_id = f"spool-rebind:{existing.id}:{ingress.sequence}"
 
     if ingress is not None:
         collision = await session.scalar(
@@ -1722,7 +1736,7 @@ async def _ensure_ingress_receipt_locked(
     receipt = receipt_type(
         observation_id=observation.id,
         instance_id=observation.instance_id,
-        **({"delivery_source_event_id": payload.source_event_id} if receipts else {}),
+        **({"delivery_source_event_id": delivery_source_event_id} if receipts else {}),
         spool_id=ingress.spool_id if ingress else None,
         collector_sequence=ingress.sequence if ingress else None,
         record_sha256=ingress.record_sha256 if ingress else None,

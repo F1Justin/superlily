@@ -136,6 +136,55 @@ def test_spool_survives_restart_and_rejects_identity_reuse(path: Path, tmp_path:
     reopened.close()
 
 
+async def test_expired_spool_binding_can_replay_without_a_duplicate_observation(client, tmp_path):
+    module = load_module(SPOOL_PATHS[0], "spool")
+    spool = module.DurableIngressSpool(str(tmp_path / "expired.sqlite3"))
+    spool.open()
+    headers = {"Authorization": "Bearer lily-secret", "Idempotency-Key": "event-key-1"}
+    first = spool.append_event(event_payload(), "event-key-1")
+    response = await client.post("/v1/events", json=first.payload, headers=headers)
+    assert response.status_code == 201, response.text
+    original_receipt = response.json()
+    spool.acknowledge(first, original_receipt)
+
+    connection = spool._require_connection()
+    connection.execute("UPDATE spool_records SET committed_at = '2020-01-01T00:00:00+00:00'")
+    connection.execute("UPDATE spool_identities SET captured_at = '2020-01-01T00:00:00+00:00'")
+    spool.compact(force=True)
+    assert connection.execute("SELECT count(*) FROM spool_identities").fetchone()[0] == 0
+    second = spool.append_event(event_payload(), "event-key-1")
+    assert second.sequence == first.sequence + 1
+    assert second.record_sha256 == first.record_sha256
+
+    for override in ({"allow_rebind": False}, {"record_sha256": "f" * 64}):
+        rejected = dict(second.payload, ingress={**second.payload["ingress"], **override})
+        response = await client.post("/v1/events", json=rejected, headers=headers)
+        assert response.status_code == 409, response.text
+
+    response = await client.post("/v1/events", json=second.payload, headers=headers)
+    assert response.status_code == 200, response.text
+    rebound_receipt = response.json()
+    assert rebound_receipt["outcome"] == "duplicate"
+    assert rebound_receipt["observation_id"] == original_receipt["observation_id"]
+    assert rebound_receipt["sequence"] == rebound_receipt["highest_contiguous_sequence"] == second.sequence
+    spool.acknowledge(second, rebound_receipt)
+    for record, expected_receipt in ((first, original_receipt), (second, rebound_receipt)):
+        response = await client.post("/v1/events", json=record.payload, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["receipt_id"] == expected_receipt["receipt_id"]
+
+    # Retention must never remove an older pending or quarantined binding.
+    pending = spool.append_event(event_payload(2), "pending")
+    quarantined = spool.append_event(event_payload(3), "quarantined")
+    spool.quarantine(quarantined.sequence, "test quarantine")
+    connection.execute("UPDATE spool_identities SET captured_at = '2020-01-01T00:00:00+00:00'")
+    spool.compact(force=True)
+    assert spool.append_event(event_payload(2), "pending").sequence == pending.sequence
+    assert spool.next_pending().sequence == pending.sequence
+    assert spool.append_event(event_payload(3), "quarantined").sequence == quarantined.sequence
+    spool.close()
+
+
 @pytest.mark.parametrize("path", SPOOL_PATHS)
 def test_spool_preserves_order_and_quarantines_corrupt_records(
     path: Path,
