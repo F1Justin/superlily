@@ -28,6 +28,9 @@ from nekro_agent.schemas.agent_ctx import AgentCtx
 from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
+from . import astra as math_service
+from . import astra_observer, astra_style
+
 from .identity import (
     ClaimSuppression,
     NativeIdentityCache,
@@ -1129,6 +1132,13 @@ if not getattr(OneBotBot, "_superlily_claim_send_guard_v1", False):
         api: str,
         data: dict[str, Any],
     ) -> None:
+        # Nekro removes the processing emoji when Lily's script returns. While
+        # the same message has a delegated answer pending the worker owns removal.
+        if (api == "set_msg_emoji_like" and str(data.get("emoji_id")) == "212"
+                and str(data.get("set")).lower() == "false" and math_queue
+                and any(mid == str(data.get("message_id")) for _, mid in math_queue.held_reactions)
+                and next((b for b in get_bots().values() if isinstance(b, OneBotBot)), None) is bot):
+            raise MockApiException({})
         if not api.startswith("send_"):
             return
         api_started[id(data)] = time.monotonic()
@@ -1425,6 +1435,8 @@ async def _deliver_render_request(
     endpoint: str,
     payload: dict[str, Any],
     request_context: str,
+    reply_to: str | None = None,
+    sources: str = "",
     _theme_retry: int = 0,
     _renew_delivery: bool = False,
 ) -> str:
@@ -1466,6 +1478,7 @@ async def _deliver_render_request(
                 json={
                     "instance_id": config.INSTANCE_ID,
                     "delivery_plan_id": delivery_plan_id,
+                    **({"reply_to_platform_message_id":reply_to} if reply_to else {}),
                     "idempotency_key": f"nekro-delivery:{render_key}" + (":theme-renewal" if _renew_delivery else ""),
                 },
                 headers={"Authorization": f"Bearer {config.CORE_TOKEN}"},
@@ -1508,10 +1521,32 @@ async def _deliver_render_request(
                                 "safe_error_code": "theme_window_expired",
                             }
                         else:
-                            await _ctx.send_image(sandbox_path)
+                            body_text = payload.get("markdown", "")
+                            if sources:
+                                from nekro_agent.adapters.utils import adapter_utils
+                                from nekro_agent.schemas.agent_message import AgentMessageSegment, AgentMessageSegmentType
+                                from nekro_agent.services.chat.universal_chat_service import universal_chat_service
+
+                                segments = [
+                                    AgentMessageSegment(type=AgentMessageSegmentType.IMAGE, content=sandbox_path,
+                                                        history_text=body_text),
+                                    AgentMessageSegment(content="\n" + sources),
+                                ]
+                                await universal_chat_service.send_agent_message(
+                                    _ctx.chat_key, segments, await adapter_utils.get_adapter_for_ctx(_ctx),
+                                    _ctx, record=True, ref_msg_id=reply_to,
+                                )
+                            elif body_text or reply_to:
+                                await _ctx.ms.send_image(_ctx.chat_key, sandbox_path, _ctx,
+                                                         history_text=body_text or "", ref_msg_id=reply_to)
+                            else:
+                                await _ctx.send_image(sandbox_path)
                             send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
                 elif selected_family == "text" and isinstance(delivery_plan.get("fallback_text"), str):
-                    await _ctx.send_text(delivery_plan["fallback_text"])
+                    if reply_to:
+                        await _ctx.ms.send_text(_ctx.chat_key, "\n".join(filter(None, (delivery_plan["fallback_text"], sources))), _ctx, ref_msg_id=reply_to)
+                    else:
+                        await _ctx.send_text(delivery_plan["fallback_text"])
                     send_receipt = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
                 else:
                     send_receipt = {
@@ -1555,7 +1590,7 @@ async def _deliver_render_request(
             if send_receipt.get("safe_error_code") == "theme_window_expired" and _theme_retry == 0:
                 return await _deliver_render_request(
                     _ctx, endpoint=endpoint, payload=payload, request_context=request_context,
-                    _theme_retry=1, _renew_delivery=True,
+                    reply_to=reply_to, sources=sources, _theme_retry=1, _renew_delivery=True,
                 )
             if send_receipt["outcome"] == "succeeded":
                 return (
@@ -1579,7 +1614,7 @@ async def _deliver_render_request(
         )
         if error_code == "artifact_expired" and _theme_retry == 0:
             return await _deliver_render_request(
-                _ctx, endpoint=endpoint, payload=payload, request_context=request_context,
+                _ctx, endpoint=endpoint, payload=payload, request_context=request_context, reply_to=reply_to, sources=sources,
                 _theme_retry=1, _renew_delivery=_renew_delivery,
             )
         logger.warning(f"Lily Core rejected render request with status {exc.response.status_code} code={error_code}")
@@ -1676,6 +1711,44 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
         return "文档结构无效，请按约定的 blocks JSON 重试。"
 
 
+async def _deliver_astra(chat_key: str, origin: str, source: str | None, answer: str, sources: str) -> None:
+    if chat_key not in math_service.ENABLED_CHATS:
+        raise PermissionError("此群未启用深答")
+    ctx = await AgentCtx.create_by_chat_key(chat_key)
+    if not _render_allowed(ctx):
+        raise PermissionError("深答投递已关闭")
+    if len(answer) <= 450 and all(marker not in answer for marker in ("$", "\\(", "\\[", "```", "|", "**", "# ")):
+        await ctx.ms.send_text(ctx.chat_key, "\n".join(filter(None, (answer, sources))), ctx, ref_msg_id=origin)
+        return
+    status = await _deliver_render_request(
+        ctx, endpoint="/v1/markdown-documents", request_context=f"astra:{origin}", reply_to=origin, sources=sources,
+        payload={"schema_version": "1.0", "instance_id": config.INSTANCE_ID,
+                 "conversation_key": ctx.chat_key, "source_event_id": source, "markdown": answer},
+    )
+    if not status.startswith("INTERNAL_RENDER_DELIVERED"):
+        raise RuntimeError(status.split(".", 1)[0])
+
+
+math_queue: math_service.MathQueue | None = None
+
+
+@plugin.mount_collect_methods()
+async def bridge_methods(_ctx: AgentCtx):
+    return [method for method in plugin.sandbox_methods if method.func.__name__ != "astra"
+            or (_ctx.chat_key in math_service.ENABLED_CHATS and math_queue is not None and _render_allowed(_ctx))]
+
+
+@plugin.mount_sandbox_method(SandboxMethodType.TOOL, name="astra")
+async def astra(_ctx: AgentCtx) -> None:
+    """`astra()`：群友明确要求“深度思考”“详细调研”或表达同类意思时，即使题目简单，也直接调用 `astra()`，无需追问或解释调用理由。普通定义和经典、一眼能答准的问题直接答，例如“酉矩阵是什么”；其余需要推导、构造或核算的数学题，例如“构造满足条件的多项式”“按同构去重计算图的数量”，调用 `astra()`。Astra 能看到近期对话、原问题和图片，算好后直接回复原消息。你自己估计等待时间。预计很快，只写 `astra()`；预计较久，可以在同一段脚本里调用后用 `send_msg_text(_ck, ...)` 自己回一句。"""
+    if (_ctx.chat_key not in math_service.ENABLED_CHATS or not _ctx.container_key or not _ctx.origin_message_id
+            or math_queue is None or not _render_allowed(_ctx)):
+        raise PermissionError("此任务无法提交深答")
+    source, _ = _render_request_context(_ctx.chat_key)
+    visible = await astra_style.with_lily_examples(_ctx.chat_key, _ctx.visible_conversation, _ctx.origin_message_id, config.BOT_ID)
+    math_queue.submit(_ctx.chat_key, _ctx.origin_message_id, source, visible)
+
+
 @plugin.mount_init_method()
 async def init_bridge() -> None:
     global heartbeat_task, group_inventory_task, directory_snapshot_task, agent_delivery_task
@@ -1684,6 +1757,16 @@ async def init_bridge() -> None:
         logger.warning("Lily Core bridge disabled because CORE_TOKEN is empty")
         return
     await reporter.start()
+    global math_queue
+    if math_service.KEY.is_file():
+        data_dir = plugin.get_plugin_data_dir()
+        prompt_path = data_dir / "astra-instructions.txt"
+        if prompt_path.is_file():
+            instructions = prompt_path.read_text(encoding="utf-8")
+            math_queue = math_service.MathQueue(data_dir / "astra.sqlite3", _deliver_astra, instructions, astra_observer)
+            math_queue.start()
+        else:
+            logger.warning("Astra 未启用，缺少已审批的 astra-instructions.txt")
     global media_archive
     if config.MEDIA_ARCHIVE_ENABLED and reporter.spool_path:
         media_archive = MediaArchive(reporter.spool_path, reporter,
@@ -1746,6 +1829,11 @@ async def cleanup_bridge() -> None:
     group_inventory_task = None
     directory_snapshot_task = None
     agent_delivery_task = None
+    global math_queue
+    if math_queue and math_queue.task:
+        math_queue.task.cancel()
+        await asyncio.gather(math_queue.task, return_exceptions=True)
+    math_queue = None
     await reporter.stop()
 
 

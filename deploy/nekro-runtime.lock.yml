@@ -2,34 +2,31 @@ schema_version: 1
 repository: https://github.com/F1Justin/superlily-nekro-runtime
 local_checkout: /home/justin/SuperLily-Nekro-Runtime
 branch: superlily/runtime-v2.3.3
-commit: 3254ed24b556108f1030341bd4216e6ce426c918
-source_tree: a2c28f93ac4e6aecf6df0bb512bc9bb765308e79
-image_revision: 396e82a62d4ef10a9f580ff7ab799e34032c9e35
-tag: null
+commit: eaf437030480715bf07c7a66d03a1fa0a1d51027
+source_tree: 10c80f4471a18146e32bd1eac0e78db39bb8882d
+image_revision: eaf437030480715bf07c7a66d03a1fa0a1d51027
+tag: astra-two-groups-20261124
 upstream:
   repository: https://github.com/KroMiose/nekro-agent
   tag: v2.3.3
   commit: a34c32f853c3d530b2372b93f68f8bf2469c5333
 image:
-  tag: superlily/nekro-agent:2.3.3-superlily.12-qq-voice.5
-  id: sha256:5da3568727beb7f0d25baeef6847357818b1c4acfc0e79604513523db94327ad
+  tag: local/nekro-agent:2.3.3-astra-groups.2
+  id: sha256:0403a9aba8579806dc02bf6da75400278482263e4c80db7a3191ce7e6b5ed702
 local_patch:
-  kind: qq-native-audio-plus-reference-transcript
-  base_image_id: sha256:df3a01581b7071939cea84e56f69fcc789314c58b964c7e08ed7ec16d98d3062
-  base_image_tag: superlily/nekro-agent:2.3.3-superlily.11-r2.1
-  dockerfile: deploy/Dockerfile.nekro-qq-voice
-  source_state: committed source; exact deployed overlay files below
+  kind: astra-and-image-history
+  base_image_tag: local/nekro-agent:2.3.3-cloudflare-cache.7
+  dockerfile: docker/astra.Dockerfile
   files:
-    nekro_agent/adapters/interface/collector.py: 0fd1632989509c7d695c531993c556beb1959e9a3bc37191f700cefb2adcef46
-    nekro_agent/adapters/interface/schemas/extra.py: 48934f12afb6977dd72fab37734dc6eb3ec05a8c31a70f31ee84be5953b83044
-    nekro_agent/adapters/onebot_v11/adapter.py: 25e2c650a30cd2b502d80e7bf7646338f4df3b4ea74fc50951568fa97e1b8830
-    nekro_agent/adapters/onebot_v11/matchers/message.py: 5b6e1216cc6e60628a068fc1104b1f2550468be1619b00c44cf8a9be6e1143cd
-    nekro_agent/adapters/onebot_v11/tools/voice.py: 1f470a88d10de470194bb54d68a35c4eaf28dc2f9e18a714479ad88b7d955cb7
-    nekro_agent/services/message_service.py: 3b663c1c326192cd8cb31b16b80926afa90c48443ad0e70dcbc5259532ba4843
-    nekro_agent/core/config.py: 8edad9b6fb4d5fe0df502698d5f3bdd8e591fa65d1a8f84e4d9fde143c4c2e27
-    nekro_agent/services/agent/openai.py: 1a4367404c94e2ac8af83709659cf67e10bfac157d02f84369035c514a5c8d6f
-    nekro_agent/services/agent/templates/history.py: 6a477b5a95ea5157553d26f671505d90573eb0a4d6c68fbd5db8c6b5ed8d8c0b
-    nekro_agent/services/agent/templates/audio.py: e1f3e50fe77a80d85cb1b606af0d8a891c2eb711e0122da99c9b1b58ab72b2d5
+    nekro_agent/api/message.py: 64a03a6f2a2412b8ce5d6209eda64f583db34ea5ce929ffc433694d9489c02bc
+    nekro_agent/models/db_chat_message.py: d993e17afa04198c3455af072298125343004178920205f17f3820a32cd9083e
+    nekro_agent/schemas/agent_ctx.py: a1c6cd78a32ef065152dfce04798a4acf760d292ac539b1a8357ff58df6b6633
+    nekro_agent/schemas/agent_message.py: eac11a6582b5dc5b408c8053d77badcb9689944f3124455b0c631fd3a184e578
+    nekro_agent/services/message_service.py: 2fb25fe6c5c19d75c453fbddd51519078a54233c5e81012f52ae4891e6db5bcb
+    nekro_agent/services/agent/run_agent.py: b1acf618eddafbd315da55693ad7c1b432d55a61222eed4a6d9200b4294c3030
+    nekro_agent/services/agent/templates/compiler.py: 6eef77f46821e2c8c40d5eeda76fbe045c26b56a3f68601e6f4aed3e58686154
+    nekro_agent/services/agent/templates/history.py: d649761d4a73361c62beef5633a4ecdc329873051db62b52a5e2e3d3424a92a8
+    nekro_agent/services/agent/templates/image_history.py: d5b12a7c041008a5ea67a15a84c9a77852e8d9b74ccbb00f2dd4f8e0d530d5b5
 deployment:
   date: '2026-09-19'
   scope: r2-stages-1-and-2-plus-qq-voice-input
@@ -53,6 +50,14 @@ deployment:
   voice_scope: all-enabled-onebot-conversations
   audio_context: same-message-window-as-text
   audio_total_max_seconds: 960
+  astra:
+    date: '2026-11-24'
+    channels:
+    - onebot_v11-group_1080353942
+    - onebot_v11-group_861651713
+    model: gpt-6.2-astra
+    shared_monthly_queue_budget_usd: 100
+    rollback_backup: /home/justin/nekro/backups/astra-two-groups-20261124
 legacy_overlay_release: nekro-startup-permissions-production-20260828
 napcat:
   version: 4.18.28
