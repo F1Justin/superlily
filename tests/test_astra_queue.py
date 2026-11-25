@@ -13,6 +13,10 @@ astra = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(astra)
 
 
+async def compose(chat_key, origin, visible, answer, sources):
+    return "莉莉答：" + answer, "test-lily", False
+
+
 @pytest.mark.asyncio
 async def test_native_notice_failure_does_not_repeat_charged_request(tmp_path, monkeypatch):
     client_type = httpx.AsyncClient
@@ -31,6 +35,7 @@ async def test_native_notice_failure_does_not_repeat_charged_request(tmp_path, m
         data = json.loads(request.content)
         assert data["input"][0]["content"][:-1] == snapshot
         assert "123" in data["input"][0]["content"][-1]["text"]
+        assert data["instructions"] == astra.ASTRA_PROMPT
         assert data["tools"] == [{"type": "web_search"}]
         assert "max_tool_calls" not in data
         calls.append(request.url.path)
@@ -50,12 +55,11 @@ async def test_native_notice_failure_does_not_repeat_charged_request(tmp_path, m
         astra.httpx, "AsyncClient", lambda **kw: client_type(transport=httpx.MockTransport(provider), **kw)
     )
 
-    async def deliver(chat_key, origin, source, text, sources):
-        assert sources == ""
+    async def deliver(chat_key, origin, source, text, render):
         sent.append((origin, source, text))
         delivered.set()
 
-    queue = astra.MathQueue(tmp_path / "queue.sqlite3", deliver, "test prompt")
+    queue = astra.MathQueue(tmp_path / "queue.sqlite3", deliver, compose)
     queue.start()
 
     def submit():
@@ -80,7 +84,7 @@ async def test_native_notice_failure_does_not_repeat_charged_request(tmp_path, m
                 ("done", None, None)
             ]
         assert calls == ["/v1/responses/input_tokens", "/v1/responses"]
-        assert sent == [("123", "source", "呜哇哇啊啊~答复 呼噜呼噜~")]
+        assert sent == [("123", "source", "莉莉答：答复")]
     finally:
         queue.task.cancel()
         await asyncio.gather(queue.task, return_exceptions=True)
@@ -96,11 +100,14 @@ def test_annotated_web_sources_are_numbered_and_deduplicated():
 @pytest.mark.asyncio
 async def test_queue_keeps_processing_reaction_through_delivery_and_logs_once(tmp_path):
     started, delivering, finish, recorded = (asyncio.Event() for _ in range(4))
-    cleared, logs = [], []
+    marked, cleared, logs = [], [], []
 
     class Observer:
         def progress(self, chat_key, origin, stage):
             pass
+
+        async def add_sparkle(self, chat_key, origin):
+            marked.append(origin)
 
         async def clear_reaction(self, chat_key, origin):
             assert (chat_key, origin) not in queue.held_reactions
@@ -108,7 +115,7 @@ async def test_queue_keeps_processing_reaction_through_delivery_and_logs_once(tm
             return True
 
         async def write_record(self, row):
-            logs.append((row["origin"], row["answer"], row["state"]))
+            logs.append((row["origin"], row["answer"], row["final_answer"], row["state"]))
             recorded.set()
 
     async def generate(job_id, chat_key, origin, month, payload):
@@ -116,12 +123,12 @@ async def test_queue_keeps_processing_reaction_through_delivery_and_logs_once(tm
         with closing(queue.connect()) as db, db:
             db.execute("UPDATE questions SET answer='解答',state='ready' WHERE origin=?", (origin,))
 
-    async def deliver(chat_key, origin, source, answer, sources):
+    async def deliver(chat_key, origin, source, answer, render):
         delivering.set()
         await finish.wait()
         assert (chat_key, origin) in queue.held_reactions
 
-    queue = astra.MathQueue(tmp_path / "queue", deliver, "test prompt", Observer())
+    queue = astra.MathQueue(tmp_path / "queue", deliver, compose, Observer())
     queue.generate = generate
     queue.start()
     try:
@@ -133,17 +140,18 @@ async def test_queue_keeps_processing_reaction_through_delivery_and_logs_once(tm
         finish.set()
         await asyncio.wait_for(recorded.wait(), 2)
         assert not await queue.finish_records()
-        assert cleared == ["123"]
-        assert logs == [("123", "解答", "done")]
+        assert marked == cleared == ["123"]
+        assert logs == [("123", "解答", "莉莉答：解答", "done")]
     finally:
         queue.task.cancel()
         await asyncio.gather(queue.task, return_exceptions=True)
 
 
-def test_greetings_are_preserved_and_naked_formulas_stay_on_their_own_lines():
-    original = "呜哇哇啊啊～这一步成立。呼噜呼噜～"
-    assert astra.lily_voice(original) == original
-    assert astra.lily_voice("$$\nx=1\n$$") == "呜哇哇啊啊~\n\n$$\nx=1\n$$\n\n呼噜呼噜~"
+def test_notice_is_required_in_the_same_script_and_chat():
+    astra.require_notice('astra()\nsend_msg_text(_ck, "稍等")')
+    for script in ("astra()", "astra()\nsend_msg_text(_ck)", 'astra()\nsend_msg_text(other, "稍等")'):
+        with pytest.raises(ValueError):
+            astra.require_notice(script)
 
 
 @pytest.mark.asyncio
@@ -156,12 +164,12 @@ async def test_old_queue_and_equal_message_ids_in_two_groups(tmp_path):
     received = []
     both = asyncio.Event()
 
-    async def deliver(chat_key, origin, source, answer, sources):
+    async def deliver(chat_key, origin, source, answer, render):
         received.append((chat_key, origin, answer))
         if len(received) == 2:
             both.set()
 
-    queue = astra.MathQueue(path, deliver, "test persona")
+    queue = astra.MathQueue(path, deliver, compose)
 
     async def generate(job_id, chat_key, origin, month, payload):
         content = json.loads(payload)[0]["content"]
@@ -180,7 +188,7 @@ async def test_old_queue_and_equal_message_ids_in_two_groups(tmp_path):
         with pytest.raises(PermissionError):
             queue.submit("other", "123", None, [{"type": "input_text", "text": "private"}])
         await asyncio.wait_for(both.wait(), 2)
-        assert received == [(chat, "123", chat) for chat in groups]
+        assert received == [(chat, "123", "莉莉答：" + chat) for chat in groups]
         with closing(queue.connect()) as db:
             assert db.execute("SELECT chat_key,usd FROM questions WHERE origin='old'").fetchone() == (
                 groups[0],
@@ -189,3 +197,60 @@ async def test_old_queue_and_equal_message_ids_in_two_groups(tmp_path):
     finally:
         queue.task.cancel()
         await asyncio.gather(queue.task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_retry_and_restart_compose_saved_astra_result_without_regeneration(tmp_path):
+    sent = []
+    failed = asyncio.Event()
+    done = asyncio.Event()
+
+    async def broken(*args):
+        failed.set()
+        raise OSError("temporary")
+
+    async def deliver(chat, origin, source, text, render):
+        sent.append(text)
+        done.set()
+
+    queue = astra.MathQueue(tmp_path / "q", deliver, broken)
+    queue.start()
+    with closing(queue.connect()) as db, db:
+        db.execute(
+            "INSERT INTO questions(chat_key,origin,month,state,answer,payload) VALUES(?,?,?,'ready',?,?)",
+            (
+                astra.YUNFASHU,
+                "123",
+                "2026-11",
+                "完整原稿",
+                '[{"role":"user","content":[{"type":"input_text","text":"原题"}]}]',
+            ),
+        )
+    await asyncio.wait_for(failed.wait(), 2)
+    await queue.stop()
+    with closing(queue.connect()) as db, db:
+        assert db.execute("SELECT state,compose_attempts,answer FROM questions").fetchone() == (
+            "ready",
+            1,
+            "完整原稿",
+        )
+        db.execute("UPDATE questions SET retry_at=0")
+    queue = astra.MathQueue(queue.path, deliver, compose)
+    queue.start()
+    try:
+        await asyncio.wait_for(done.wait(), 2)
+        assert sent == ["莉莉答：完整原稿"]
+    finally:
+        await queue.stop()
+
+
+def test_lily_render_call_keeps_proof_and_surrounding_prose_without_running_code():
+    filename = Path("bridges/nekro/superlily_bridge/astra_continuation.py")
+    spec = importlib.util.spec_from_file_location("astra_continuation", filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source = "呜哇哇啊啊~\n\n```python\nproof = r'''$$\nx=1\n$$'''\nsubmit_rendered_markdown(proof)\n```\n呼噜呼噜~"
+    assert module.reply_body(source) == ("呜哇哇啊啊~\n\n$$\nx=1\n$$\n\n呼噜呼噜~", True)
+    assert module.reply_body("正文") == ("正文", False)
+    with pytest.raises(ValueError):
+        module.reply_body("submit_rendered_markdown(compute())")

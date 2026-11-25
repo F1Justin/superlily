@@ -1,5 +1,6 @@
 """Durable, single-worker queue for delegated group answers."""
 
+import ast
 import asyncio
 import json
 import re
@@ -17,13 +18,15 @@ import httpx
 YUNFASHU = "onebot_v11-group_1080353942"
 TAOHUAYUAN = "onebot_v11-group_861651713"
 ENABLED_CHATS = frozenset((YUNFASHU, TAOHUAYUAN))
+ASTRA_PROMPT = "这是一段群聊对话，根据标明的触发消息、近期对话和图片，弄清群友实际在问什么，思考并组织答复。"
 MODEL = "gpt-6.2-astra"
 API = "https://api.openai.com/v1/responses"
 OUTPUT_LIMIT = 16000
 SEARCH_FEE_ESTIMATE_USD = 0.08
 SEARCH_USD = 0.01
 KEY = Path("/run/secrets/yunfashu-astra.key")
-Deliver = Callable[[str, str, str | None, str, str], Awaitable[None]]
+Deliver = Callable[[str, str, str | None, str, bool], Awaitable[None]]
+Compose = Callable[[str, str, list[dict], str, str], Awaitable[tuple[str, str, bool]]]
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS questions(
     chat_key TEXT NOT NULL, origin TEXT NOT NULL, source TEXT, month TEXT NOT NULL, state TEXT NOT NULL,
@@ -47,6 +50,39 @@ def initialize_schema(db):
         db.execute("DROP TABLE single_group_questions")
     else:
         db.execute(SCHEMA)
+
+    columns = {row[1] for row in db.execute("PRAGMA table_info(questions)")}
+    for name, kind in (
+        ("final_answer", "TEXT"),
+        ("render_final", "INTEGER DEFAULT 0"),
+        ("lily_model", "TEXT"),
+        ("compose_attempts", "INTEGER DEFAULT 0"),
+        ("retry_at", "REAL DEFAULT 0"),
+    ):
+        if name not in columns:
+            db.execute(f"ALTER TABLE questions ADD COLUMN {name} {kind}")
+
+
+def require_notice(script: str) -> None:
+    """Validate the two adjacent RPC calls before accepting a paid job."""
+    statements = ast.parse(script).body
+    for first, second in zip(statements, statements[1:]):
+        if not isinstance(first, ast.Expr) or not isinstance(second, ast.Expr):
+            continue
+        start, notice = first.value, second.value
+        if (
+            isinstance(start, ast.Call)
+            and isinstance(start.func, ast.Name)
+            and start.func.id == "astra"
+            and isinstance(notice, ast.Call)
+            and isinstance(notice.func, ast.Name)
+            and notice.func.id == "send_msg_text"
+            and len(notice.args) == 2
+            and isinstance(notice.args[0], ast.Name)
+            and notice.args[0].id == "_ck"
+        ):
+            return
+    raise ValueError("请在同一段脚本中紧接 astra() 调用 send_msg_text(_ck, ...)，给群友回一句。")
 
 
 def cost(usage: dict) -> float:
@@ -90,18 +126,11 @@ def answer_with_sources(output: list[dict]) -> tuple[str, str]:
     return "\n".join(paragraphs).strip(), sources
 
 
-def lily_voice(answer: str) -> str:
-    if not answer.lstrip("#* ").startswith("呜哇哇啊啊"):
-        answer = "呜哇哇啊啊~" + ("\n\n" if answer.startswith(("#", "```", "$$", "|", "- ")) else "") + answer
-    if not answer.rstrip("~～！!。.* ").endswith("呼噜呼噜"):
-        answer += ("\n\n" if "\n" in answer else " ") + "呼噜呼噜~"
-    return answer
-
-
 class MathQueue:
-    def __init__(self, path: Path, deliver: Deliver, instructions: str, observer=None):
+    def __init__(self, path: Path, deliver: Deliver, compose: Compose, observer=None):
         self.observer = observer
-        self.instructions = instructions
+        self.compose = compose
+        self.mark_tasks: dict[tuple[str, str], asyncio.Task] = {}
         self.held_reactions: set[tuple[str, str]] = set()
         self.path = path
         self.deliver = deliver
@@ -123,10 +152,35 @@ class MathQueue:
             self.held_reactions = {
                 tuple(row)
                 for row in db.execute(
-                    "SELECT chat_key,origin FROM questions WHERE release_reaction=1 AND state IN ('queued','ready')"
+                    "SELECT chat_key,origin FROM questions WHERE release_reaction=1 AND state IN ('queued','ready','composed','uncertain')"
                 )
             }
+        for chat_key, origin in self.held_reactions:
+            self._schedule_sparkle(chat_key, origin)
         self.task = asyncio.create_task(self.run())
+
+    def _schedule_sparkle(self, chat_key, origin):
+        if self.observer:
+
+            async def mark():
+                for delay in (0, 1, 3):
+                    if delay:
+                        await asyncio.sleep(delay)
+                    try:
+                        await self.observer.add_sparkle(chat_key, origin)
+                        return
+                    except Exception as exc:
+                        self.observer.progress(chat_key, origin, f"添加 ✨ 失败 ({type(exc).__name__})")
+
+            self.mark_tasks[chat_key, origin] = asyncio.create_task(mark())
+
+    async def stop(self):
+        tasks = list(self.mark_tasks.values())
+        if self.task:
+            tasks.append(self.task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def submit(self, chat_key: str, origin: str, source: str | None, visible: list[dict]):
         if chat_key not in ENABLED_CHATS:
@@ -152,6 +206,7 @@ class MathQueue:
             ).rowcount
         if inserted and self.observer:
             self.held_reactions.add((chat_key, origin))
+            self._schedule_sparkle(chat_key, origin)
             self.observer.progress(chat_key, origin, "已排队")
         self.wakeup.set()
 
@@ -162,13 +217,16 @@ class MathQueue:
             db.row_factory = sqlite3.Row
             pending = db.execute(
                 "SELECT rowid AS job_id,* FROM questions WHERE state IN ('done','uncertain') "
-                "AND (release_reaction=1 OR logged=0) ORDER BY rowid"
+                "AND ((state='done' AND release_reaction=1) OR logged=0) ORDER BY rowid"
             ).fetchall()
         retry = False
         for row in pending:
             job_id, chat_key, origin = row["job_id"], row["chat_key"], row["origin"]
-            self.held_reactions.discard((chat_key, origin))
-            if row["release_reaction"]:
+            mark = self.mark_tasks.pop((chat_key, origin), None)
+            if mark:
+                await mark
+            if row["release_reaction"] and row["state"] == "done":
+                self.held_reactions.discard((chat_key, origin))
                 try:
                     if await self.observer.clear_reaction(chat_key, origin):
                         with closing(self.connect()) as db, db:
@@ -183,7 +241,7 @@ class MathQueue:
                     await self.observer.write_record(row)
                     with closing(self.connect()) as db, db:
                         db.execute(
-                            "UPDATE questions SET logged=1,answer=NULL,sources=NULL WHERE rowid=? AND state='done'",
+                            "UPDATE questions SET logged=1,answer=NULL,sources=NULL,final_answer=NULL,payload=NULL WHERE rowid=? AND state='done'",
                             (job_id,),
                         )
                         db.execute(
@@ -197,45 +255,89 @@ class MathQueue:
     async def run(self):
         while True:
             self.wakeup.clear()
-            retry = await self.finish_records()
+            await self.finish_records()
             with closing(self.connect()) as db:
                 row = db.execute(
-                    "SELECT rowid,chat_key,origin,source,month,state,payload,answer,sources FROM questions WHERE state IN ('queued','ready') ORDER BY rowid LIMIT 1"
+                    "SELECT rowid,chat_key,origin,source,month,state,payload,answer,sources,final_answer,compose_attempts,render_final FROM questions "
+                    "WHERE state IN ('queued','ready','composed') AND retry_at<=? ORDER BY rowid LIMIT 1",
+                    (time.time(),),
                 ).fetchone()
             if not row:
                 try:
-                    await asyncio.wait_for(self.wakeup.wait(), 30 if retry else None)
+                    await asyncio.wait_for(self.wakeup.wait(), 30)
                 except asyncio.TimeoutError:
                     pass
                 continue
-            job_id, chat_key, origin, source, month, state, payload, answer, sources = row
+            (
+                job_id,
+                chat_key,
+                origin,
+                source,
+                month,
+                state,
+                payload,
+                answer,
+                sources,
+                final_answer,
+                attempts,
+                render_final,
+            ) = row
             try:
                 if state == "queued":
                     if self.observer:
                         self.observer.progress(chat_key, origin, "正在调用")
                     await self.generate(job_id, chat_key, origin, month, payload)
                     continue
+                if state == "ready":
+                    visible = json.loads(payload)[0]["content"] if payload else []
+                    if self.observer:
+                        self.observer.progress(chat_key, origin, "莉莉正在组织答复")
+                    final_answer, model, render_final = await self.compose(
+                        chat_key, origin, visible, answer, sources or ""
+                    )
+                    if not final_answer.strip():
+                        raise ValueError("莉莉续答为空")
+                    with closing(self.connect()) as db, db:
+                        db.execute(
+                            "UPDATE questions SET state='composed',final_answer=?,lily_model=?,render_final=?,payload=NULL WHERE rowid=?",
+                            (final_answer, model, render_final, job_id),
+                        )
+                    continue
                 with closing(self.connect()) as db, db:
                     db.execute("UPDATE questions SET state='sending' WHERE rowid=?", (job_id,))
-                await self.deliver(chat_key, origin, source, answer, sources or "")
+                await self.deliver(chat_key, origin, source, final_answer, bool(render_final))
                 with closing(self.connect()) as db, db:
                     db.execute(
                         "UPDATE questions SET state='done',ended_at=? WHERE rowid=?", (time.time(), job_id)
                     )
                     if not self.observer:
-                        db.execute("UPDATE questions SET answer=NULL,sources=NULL WHERE rowid=?", (job_id,))
+                        db.execute(
+                            "UPDATE questions SET answer=NULL,sources=NULL,final_answer=NULL WHERE rowid=?",
+                            (job_id,),
+                        )
                 if self.observer:
                     self.observer.progress(chat_key, origin, "投递完成")
             except Exception as exc:
                 with closing(self.connect()) as db, db:
                     if state == "ready":
+                        failed = attempts + 1 >= 3
+                        db.execute(
+                            "UPDATE questions SET state=?, compose_attempts=compose_attempts+1, retry_at=?, error=COALESCE(?,error) WHERE rowid=?",
+                            (
+                                "uncertain" if failed else "ready",
+                                time.time() + 30,
+                                type(exc).__name__ if failed else None,
+                                job_id,
+                            ),
+                        )
+                    elif state == "composed":
                         db.execute(
                             "UPDATE questions SET state='uncertain',error=?,ended_at=? WHERE rowid=?",
                             (type(exc).__name__, time.time(), job_id),
                         )
                     else:
                         db.execute(
-                            "UPDATE questions SET state='ready',payload=NULL,answer=?,error=? WHERE rowid=?",
+                            "UPDATE questions SET state='ready',answer=?,error=? WHERE rowid=?",
                             ("这次深答没有完成，你可以引用原题再问我。", type(exc).__name__, job_id),
                         )
 
@@ -244,7 +346,7 @@ class MathQueue:
         data = {
             "model": MODEL,
             "input": json.loads(payload),
-            "instructions": self.instructions,
+            "instructions": ASTRA_PROMPT,
             "tools": [{"type": "web_search"}],
         }
         async with httpx.AsyncClient(timeout=httpx.Timeout(360, connect=10), trust_env=False) as client:
@@ -263,7 +365,7 @@ class MathQueue:
                 ).fetchone()[0]
                 if used + reserve > 100:
                     db.execute(
-                        "UPDATE questions SET state='ready',payload=NULL,error='budget',answer=? WHERE rowid=?",
+                        "UPDATE questions SET state='ready',error='budget',answer=? WHERE rowid=?",
                         ("本月深答剩余额度不足以完成这道题。", job_id),
                     )
                     return
@@ -300,11 +402,9 @@ class MathQueue:
             error = "生成未完成"
             sources = ""
             answer = "这次推导没有生成完整答案，你可以把想优先解决的一步告诉我。"
-        else:
-            answer = lily_voice(answer)
         with closing(self.connect()) as db, db:
             db.execute(
-                "UPDATE questions SET state='ready',payload=NULL,answer=?,sources=?,usd=?,usage=?,response_id=?,generated_at=?,error=? WHERE rowid=?",
+                "UPDATE questions SET state='ready',answer=?,sources=?,usd=?,usage=?,response_id=?,generated_at=?,error=? WHERE rowid=?",
                 (
                     answer,
                     sources,

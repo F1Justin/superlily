@@ -29,7 +29,7 @@ from nekro_agent.schemas.chat_message import ChatMessage
 from nekro_agent.schemas.signal import MsgSignal
 
 from . import astra as math_service
-from . import astra_observer, astra_style
+from . import astra_continuation, astra_observer
 
 from .identity import (
     ClaimSuppression,
@@ -1711,17 +1711,25 @@ async def submit_render_document(_ctx: AgentCtx, document_json: str) -> str:
         return "文档结构无效，请按约定的 blocks JSON 重试。"
 
 
-async def _deliver_astra(chat_key: str, origin: str, source: str | None, answer: str, sources: str) -> None:
+async def _deliver_lily_answer(chat_key: str, origin: str, source: str | None, answer: str, render: bool) -> None:
     if chat_key not in math_service.ENABLED_CHATS:
         raise PermissionError("此群未启用深答")
     ctx = await AgentCtx.create_by_chat_key(chat_key)
     if not _render_allowed(ctx):
         raise PermissionError("深答投递已关闭")
-    if len(answer) <= 450 and all(marker not in answer for marker in ("$", "\\(", "\\[", "```", "|", "**", "# ")):
-        await ctx.ms.send_text(ctx.chat_key, "\n".join(filter(None, (answer, sources))), ctx, ref_msg_id=origin)
+    if not render and len(answer) <= 450 and all(marker not in answer for marker in ("$", "\\(", "\\[", "```", "|", "**", "# ")):
+        future = asyncio.get_running_loop().create_future()
+        token = _render_send_receipt.set(future)
+        try:
+            await ctx.ms.send_text(ctx.chat_key, answer, ctx, ref_msg_id=origin)
+            receipt = await asyncio.wait_for(future, timeout=2)
+            if receipt["outcome"] != "succeeded" or not receipt.get("platform_message_id"):
+                raise RuntimeError("莉莉最终回复尚未确认")
+        finally:
+            _render_send_receipt.reset(token)
         return
     status = await _deliver_render_request(
-        ctx, endpoint="/v1/markdown-documents", request_context=f"astra:{origin}", reply_to=origin, sources=sources,
+        ctx, endpoint="/v1/markdown-documents", request_context=f"lily-astra:{origin}", reply_to=origin,
         payload={"schema_version": "1.0", "instance_id": config.INSTANCE_ID,
                  "conversation_key": ctx.chat_key, "source_event_id": source, "markdown": answer},
     )
@@ -1740,13 +1748,25 @@ async def bridge_methods(_ctx: AgentCtx):
 
 @plugin.mount_sandbox_method(SandboxMethodType.TOOL, name="astra")
 async def astra(_ctx: AgentCtx) -> None:
-    """`astra()`：群友明确要求“深度思考”“详细调研”或表达同类意思时，即使题目简单，也直接调用 `astra()`，无需追问或解释调用理由。普通定义和经典、一眼能答准的问题直接答，例如“酉矩阵是什么”；其余需要推导、构造或核算的数学题，例如“构造满足条件的多项式”“按同构去重计算图的数量”，调用 `astra()`。Astra 能看到近期对话、原问题和图片，算好后直接回复原消息。你自己估计等待时间。预计很快，只写 `astra()`；预计较久，可以在同一段脚本里调用后用 `send_msg_text(_ck, ...)` 自己回一句。"""
+    """`astra()`：群友明确要求“深度思考”“详细调研”或表达同类意思时，直接调用，无需追问或解释。普通定义和经典、一眼能答准的问题直接答，例如“酉矩阵是什么”；其余需要推导、构造或核算的数学题，例如“构造满足条件的多项式”“按同构去重计算图的数量”，调用 `astra()`。
+
+    每次决定调用 `astra()`，都必须在同一段脚本里接着用 `send_msg_text(_ck, ...)` 给群友回一句。用你自己的口吻，措辞可以随题目变化。例如：
+
+    ```python
+    astra()
+    send_msg_text(_ck, "呜哇哇啊啊~ 我来想一想！呼噜呼噜~")
+    ```
+    """
     if (_ctx.chat_key not in math_service.ENABLED_CHATS or not _ctx.container_key or not _ctx.origin_message_id
             or math_queue is None or not _render_allowed(_ctx)):
         raise PermissionError("此任务无法提交深答")
     source, _ = _render_request_context(_ctx.chat_key)
-    visible = await astra_style.with_lily_examples(_ctx.chat_key, _ctx.visible_conversation, _ctx.origin_message_id, config.BOT_ID)
-    math_queue.submit(_ctx.chat_key, _ctx.origin_message_id, source, visible)
+    from nekro_agent.services.sandbox.runner import RUN_CODE_FILENAME, workspace_store
+
+    task_id = _ctx.container_key.removeprefix("r2_")
+    script = workspace_store().control_dir(task_id) / "code" / RUN_CODE_FILENAME
+    math_service.require_notice(script.read_text(encoding="utf-8"))
+    math_queue.submit(_ctx.chat_key, _ctx.origin_message_id, source, _ctx.visible_conversation)
 
 
 @plugin.mount_init_method()
@@ -1760,13 +1780,8 @@ async def init_bridge() -> None:
     global math_queue
     if math_service.KEY.is_file():
         data_dir = plugin.get_plugin_data_dir()
-        prompt_path = data_dir / "astra-instructions.txt"
-        if prompt_path.is_file():
-            instructions = prompt_path.read_text(encoding="utf-8")
-            math_queue = math_service.MathQueue(data_dir / "astra.sqlite3", _deliver_astra, instructions, astra_observer)
-            math_queue.start()
-        else:
-            logger.warning("Astra 未启用，缺少已审批的 astra-instructions.txt")
+        math_queue = math_service.MathQueue(data_dir / "astra.sqlite3", _deliver_lily_answer, astra_continuation.compose, astra_observer)
+        math_queue.start()
     global media_archive
     if config.MEDIA_ARCHIVE_ENABLED and reporter.spool_path:
         media_archive = MediaArchive(reporter.spool_path, reporter,
@@ -1830,9 +1845,8 @@ async def cleanup_bridge() -> None:
     directory_snapshot_task = None
     agent_delivery_task = None
     global math_queue
-    if math_queue and math_queue.task:
-        math_queue.task.cancel()
-        await asyncio.gather(math_queue.task, return_exceptions=True)
+    if math_queue:
+        await math_queue.stop()
     math_queue = None
     await reporter.stop()
 

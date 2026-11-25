@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from nekro_agent.adapters.onebot_v11.core.bot import get_bot
 from nekro_agent.adapters.utils import adapter_utils
 from nekro_agent.api.core import logger
 from nekro_agent.core.os_env import PROMPT_LOG_DIR
@@ -23,9 +24,23 @@ def progress(chat_key, origin, stage):
     logger.info(f"Astra {stage} · {chat_key} · 原消息 {origin}")
 
 
+async def _sparkle(origin, enabled):
+    result = await get_bot().call_api(
+        "set_msg_emoji_like", message_id=int(origin), emoji_id=str(ord("✨")), set=enabled
+    )
+    if isinstance(result, dict) and (result.get("result") is False or result.get("errCode", 0)):
+        raise RuntimeError("QQ 未确认星光表情")
+
+
+async def add_sparkle(chat_key, origin):
+    await _sparkle(origin, True)
+
+
 async def clear_reaction(chat_key, origin):
     adapter = await adapter_utils.get_adapter_for_chat(chat_key)
-    return await adapter.set_message_reaction(origin, False)
+    thinking = await adapter.set_message_reaction(origin, False)
+    await _sparkle(origin, False)
+    return thinking
 
 
 def _log_path(chat_key, origin):
@@ -116,7 +131,9 @@ async def write_record(row):
             f"搜索 {actions['search']} 次 · 输入 {inputs} / 输出 {outputs} token · 估算费用 ${row['usd']:.6f}"
         )
     if answer:
-        summary.append(answer)
+        summary.append(("Astra 原稿\n" if row["lily_model"] else "") + answer)
+    if row["final_answer"]:
+        summary.append("莉莉答复\n" + row["final_answer"])
     extra = {
         "token_input": inputs,
         "token_output": outputs,
@@ -129,6 +146,7 @@ async def write_record(row):
         "server_tool_use": dict(actions),
         "response_id": row["response_id"],
         "origin_message_id": origin,
+        "lily_model": row["lily_model"],
     }
     if _log_path(chat_key, origin).is_file():
         extra["log_path"] = str(_log_path(chat_key, origin))
